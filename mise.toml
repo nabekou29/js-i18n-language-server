@@ -1,0 +1,13 @@
+# https://mise.jdx.dev/configuration.html
+[tools]
+node = "23.7.0"
+"npm:pnpm" = "10.2.0"
+
+[hooks]
+postinstall = "mise run pnpm-install"
+
+[tasks.pnpm-install]
+description = 'Installs dependencies with pnpm'
+run = 'pnpm install'
+sources = ['package.json', 'pnpm-lock.yaml', 'mise.toml']
+outputs = ['node_modules/.pnpm/lock.yaml']
