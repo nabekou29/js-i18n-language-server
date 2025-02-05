@@ -11,6 +11,9 @@ importers:
       glob:
         specifier: ^11.0.1
         version: 11.0.1
+      pjson:
+        specifier: ^1.0.9
+        version: 1.0.9
       vscode-languageserver:
         specifier: ^9.0.1
         version: 9.0.1
@@ -183,6 +186,9 @@ packages:
   path-scurry@2.0.0:
     resolution: {integrity: sha512-ypGJsmGtdXUOeM5u93TyeIEfEhM6s+ljAhrk5vAvSx8uyY/02OvrZnA0YNGUrPXfpJMgI1ODd3nwz8Npx4O4cg==}
     engines: {node: 20 || >=22}
+
+  pjson@1.0.9:
+    resolution: {integrity: sha512-4hRJH3YzkUpOlShRzhyxAmThSNnAaIlWZCAb27hd0pVUAXNUAHAO7XZbsPPvsCYwBFEScTmCCL6DGE8NyZ8BdQ==}
 
   shebang-command@2.0.0:
     resolution: {integrity: sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==}
@@ -379,6 +385,8 @@ snapshots:
     dependencies:
       lru-cache: 11.0.2
       minipass: 7.1.2
+
+  pjson@1.0.9: {}
 
   shebang-command@2.0.0:
     dependencies:

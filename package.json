@@ -2,6 +2,9 @@
   "name": "js-i18n-language-server",
   "version": "0.0.1",
   "description": "Language server for i18next translations",
+  "bin": {
+    "js-i18n-language-server": "./dist/main.js"
+  },
   "main": "dist/server.js",
   "type": "module",
   "keywords": ["i18n", "i18next", "language-server", "lsp"],

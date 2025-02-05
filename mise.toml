@@ -4,10 +4,18 @@ node = "23.7.0"
 "npm:pnpm" = "10.2.0"
 
 [hooks]
-postinstall = "mise run pnpm-install"
+postinstall = "mise run install-deps"
 
-[tasks.pnpm-install]
-description = 'Installs dependencies with pnpm'
+[tasks.install-deps]
+description = 'Installs dependencies'
 run = 'pnpm install'
 sources = ['package.json', 'pnpm-lock.yaml', 'mise.toml']
 outputs = ['node_modules/.pnpm/lock.yaml']
+
+[tasks.build]
+description = 'Builds the project'
+run = 'pnpm exec tsc'
+
+[tasks.watch]
+description = 'Watches the project for changes'
+run = 'pnpm exec tsc --watch'
