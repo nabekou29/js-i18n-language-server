@@ -1,4 +1,5 @@
-;; Call function to get `t`
+; Call function to get `t`
+;--------------------------------
 (variable_declarator
   name: (object_pattern
     [
@@ -28,9 +29,10 @@
     )
 ) @i18n.get_t
 
-;; Call `t` function
+; Call `t` function
+;--------------------------------
 
-;; Translation Component
+; Translation Component
 (jsx_element
   open_tag: (jsx_opening_element
     name: (identifier) @translation (#eq? @translation "Translation")
@@ -56,7 +58,7 @@
   )
 ) @i18n.get_t
 
-;; Trans Component
+; Trans Component
 (
   jsx_self_closing_element
     name: (identifier) @trans (#eq? @trans "Trans")

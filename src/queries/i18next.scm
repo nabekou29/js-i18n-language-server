@@ -1,4 +1,5 @@
-;; Call function to get `t`
+; Call function to get `t`
+;--------------------------------
 (variable_declarator
   name: (identifier) @i18n.t_func_name
   value:
@@ -9,7 +10,8 @@
       ] @get_fixed_t_func (#match? @get_fixed_t_func "getFixedT$")
       ;; 1: lang, 2: ns, 3: keyPrefix
       arguments: (arguments
-        (          [
+        (
+          [
             (string (string_fragment))
             (undefined)
             (null)
@@ -33,7 +35,8 @@
     )
 ) @i18n.get_t
 
-;; Call `t` function
+; Call `t` function
+;--------------------------------
 (call_expression
   function: [
     (identifier)
