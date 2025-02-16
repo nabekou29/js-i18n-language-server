@@ -136,13 +136,8 @@ export function findTFunctionCalls(
   const scopeStack = new ScopeStack();
   const results: FindTFunctionCallsResult[] = [];
 
-  const isTFunc = (tFuncName: string): boolean => {
-    if (framework.globalTFunctionNames.includes(tFuncName) || (scopeStack.stacks[tFuncName]?.length ?? 0) > 0) {
-      return true;
-    }
-
-    return false;
-  };
+  const isTFunc = (tFuncName: string): boolean =>
+    framework.globalTFunctionNames.includes(tFuncName) || (scopeStack.stacks[tFuncName]?.length ?? 0) > 0;
 
   for (const { name, node } of captures) {
     // Exit the scope if the node is outside the scope
@@ -290,10 +285,10 @@ class ScopeStack {
 
 function getParserLanguage(language: string): Language {
   switch (language) {
-    case 'typescript':
-      return TypeScript;
     case 'javascript':
       return JavaScript;
+    case 'typescript':
+      return TypeScript;
     default:
       return TSX;
   }

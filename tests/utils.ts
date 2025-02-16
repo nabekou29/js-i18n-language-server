@@ -10,6 +10,6 @@ import { resolve } from 'node:path';
  * @example
  * const jsonContent = loadFixture('path/to/test-data.json');
  */
-export function loadFixture(path: string) {
+export function loadFixtureFile(path: string) {
   return readFileSync(resolve(__dirname, `./fixtures/${path}`), 'utf-8');
 }

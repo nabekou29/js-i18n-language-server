@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { loadFixture } from '../tests/utils.js';
+import { loadFixtureFile } from '../tests/utils.js';
 import { findTFunctionCalls } from './analyzer.js';
 import type { Framework } from './framework/base.js';
 import { BuiltInFrameworks } from './framework/index.js';
@@ -17,7 +17,7 @@ describe('findTFunctionCalls', () => {
   ) {
     test(`should find t-function calls in ${file} (${framework.name})`, () => {
       // Arrange
-      const testFile = loadFixture(file);
+      const testFile = loadFixtureFile(file);
 
       // Act
       const result = findTFunctionCalls(testFile, framework, language).map((x) => ({

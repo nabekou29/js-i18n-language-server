@@ -7,12 +7,7 @@
   },
   "main": "dist/server.js",
   "type": "module",
-  "keywords": [
-    "i18n",
-    "i18next",
-    "language-server",
-    "lsp"
-  ],
+  "keywords": ["i18n", "i18next", "language-server", "lsp"],
   "author": "nabekou29",
   "license": "MIT",
   "dependencies": {

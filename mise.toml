@@ -4,7 +4,14 @@ node = "23.7.0"
 "npm:pnpm" = "10.2.0"
 
 [hooks]
-postinstall = "mise run install-deps"
+postinstall = [
+  "mise run install-deps",
+  "mise generate git-pre-commit --write --task=pre-commit"
+]
+
+[tasks.pre-commit]
+description = 'Runs pre-commit tasks'
+depends = ['format', 'lint']
 
 [tasks.install-deps]
 description = 'Installs dependencies'
@@ -28,3 +35,18 @@ run = 'pnpm exec vitest'
 [tasks.test-run]
 description = 'Runs tests'
 run = 'pnpm exec vitest run'
+
+[tasks.format]
+description = 'Formats the project'
+run = "pnpm exec biome format --write"
+
+[tasks.lint]
+description = 'Lints the project'
+run = "pnpm exec biome lint"
+
+[tasks.lint-fix]
+description = 'Lints the project and fixes issues'
+run = "pnpm exec biome lint --fix"
+
+[settings]
+experimental = true
