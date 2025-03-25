@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 
 import { readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { startServer } from './server.js';
 
 const args = process.argv;

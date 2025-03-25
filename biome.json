@@ -11,10 +11,19 @@
   },
   "formatter": {
     "enabled": true,
-    "useEditorconfig": true
+    "lineWidth": 120
   },
-  "organizeImports": {
-    "enabled": true
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": {
+          "level": "on",
+          "options": {
+            "groups": [":NODE:", ":BLANK_LINE:", ":PACKAGE:", ":PACKAGE_WITH_PROTOCOL:", ":BLANK_LINE:", ":PATH:"]
+          }
+        }
+      }
+    }
   },
   "linter": {
     "enabled": true,

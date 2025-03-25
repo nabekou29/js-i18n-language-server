@@ -1,6 +1,7 @@
 import {
   type CompletionItem,
   CompletionItemKind,
+  createConnection,
   Diagnostic,
   DiagnosticSeverity,
   DidChangeConfigurationNotification,
@@ -10,7 +11,6 @@ import {
   type TextDocumentPositionParams,
   TextDocumentSyncKind,
   TextDocuments,
-  createConnection,
 } from 'vscode-languageserver/lib/node/main.js';
 
 export function startServer() {

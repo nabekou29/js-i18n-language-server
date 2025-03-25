@@ -1,5 +1,4 @@
 import Parser, { type Language } from 'tree-sitter';
-
 import javascript from 'tree-sitter-javascript';
 import typescript from 'tree-sitter-typescript';
 
