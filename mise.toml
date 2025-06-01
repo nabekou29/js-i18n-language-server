@@ -1,0 +1,42 @@
+# https://mise.jdx.dev/configuration.html
+[settings]
+experimental = true
+
+[tools]
+rust = "nightly"
+hk = "1.2.0"
+pkl = "0.28.2"
+
+[env]
+LSP_BINARY = "js-i18n-language-server"
+
+[hooks]
+postinstall = "hk install"
+
+[tasks.build]
+description = "Build the LSP binary"
+run = "cargo build"
+sources = ["Cargo.toml", "src/**/*.rs"]
+outputs = ["target/debug/{{env.LSP_BINARY}}"]
+
+[tasks.build-install]
+description = "Build and install the LSP binary"
+run = "cargo install --path . --force --debug"
+sources = ["Cargo.toml", "src/**/*.rs"]
+outputs = ["{{env.CARGO_HOME}}/bin/{{env.LSP_BINARY}}"]
+
+[tasks.test]
+description = "Run tests"
+run = "cargo test --all-targets --all-features"
+
+[tasks.lint]
+description = "Run lints"
+run = "cargo clippy --all-targets --all-features"
+
+[tasks.lint-fix]
+description = "Run lints and fix them"
+run = "cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged"
+
+[tasks.format]
+description = "Format the code"
+run = "cargo fmt --all"
