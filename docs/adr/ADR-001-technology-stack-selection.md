@@ -3,8 +3,8 @@ title: "ADR-001: i18n LSP技術スタック選定"
 type: "Architecture Decision Record"
 adr_number: "001"
 created_date: "2025-06-01"
-author: "Kohei Watanabe"
-approver: "Kohei Watanabe"
+author: "@nabekou29"
+approver: "@nabekou29"
 status: "accepted"
 category: "technology"
 impact_level: "high"
@@ -233,7 +233,7 @@ concurrent_collections: "dashmap 5.5"
 
 ### フェーズ1: 基盤構築
 
-**期間:** 2週間
+**期間:**
 
 **実施内容:**
 
@@ -248,12 +248,12 @@ concurrent_collections: "dashmap 5.5"
 
 ### フェーズ2: コア機能実装
 
-**期間:** 4週間
+**期間:**
 
 **実施内容:**
 
 - [ ] tree-sitterによる構文解析統合
-- [ ] 翻訳ファイルのパース（JSON/YAML/TOML）
+- [ ] 翻訳ファイルのパース（JSON/YAML）
 - [ ] 補完・検証機能の実装
 
 **成功基準:**
@@ -263,7 +263,7 @@ concurrent_collections: "dashmap 5.5"
 
 ### フェーズ3: 最適化・統合
 
-**期間:** 2週間
+**期間:**
 
 **実施内容:**
 
@@ -363,4 +363,3 @@ concurrent_collections: "dashmap 5.5"
 ### 関連ADR
 
 - ADR-002: テスト戦略とカバレッジ目標
-

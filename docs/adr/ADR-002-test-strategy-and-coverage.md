@@ -3,8 +3,8 @@ title: "ADR-002: テスト戦略とカバレッジ目標"
 type: "Architecture Decision Record"
 adr_number: "002"
 created_date: "2025-06-02"
-author: "Kohei Watanabe"
-approver: "Kohei Watanabe"
+author: "@nabekou29"
+approver: "@nabekou29"
 status: "accepted"
 category: "process"
 impact_level: "high"
@@ -235,7 +235,7 @@ test_pyramid_distribution:
 
 ### フェーズ1: テストインフラ構築
 
-**期間:** 1週間
+**期間:**
 
 **実施内容:**
 
@@ -251,7 +251,7 @@ test_pyramid_distribution:
 
 ### フェーズ2: テストトロフィー実装
 
-**期間:** 3週間
+**期間:**
 
 **実施内容:**
 
@@ -269,7 +269,7 @@ test_pyramid_distribution:
 
 ### フェーズ3: 最適化・自動化
 
-**期間:** 1週間
+**期間:**
 
 **実施内容:**
 
@@ -385,4 +385,3 @@ test_pyramid_distribution:
 
 - 実装ガイド: テストトロフィー実装ベストプラクティス（今後作成予定）
 - CI/CD設定ガイド: 自動テスト環境構築手順（今後作成予定）
-
