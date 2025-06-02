@@ -1,1 +1,2 @@
-現在の変更をコミットしてください。コミットの仕方についてはガイド (guides/COMMIT_CONVENTION.md) を参考にしてください。
+ガイド (@docs/guides/commit-convention.md) を参考に、HEAD からの現在の変更をコミットしてください。
+必要に応じて複数回のコミットに分けてください。
