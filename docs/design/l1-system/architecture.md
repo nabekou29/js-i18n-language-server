@@ -94,7 +94,7 @@ graph TB
 | 構文解析             | tree-sitter      | インクリメンタル解析 [ADR-001]           |
 | キャッシュ           | dashmap          | 並行アクセス対応HashMap                  |
 | シリアライゼーション | serde/serde_json | LSPプロトコル処理                        |
-| ファイル監視         | notify           | 翻訳ファイル変更検知                     |
+| ファイル監視         | LSP標準          | workspace/didChangeWatchedFiles使用      |
 
 ## 4. データフロー設計
 
