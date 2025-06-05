@@ -1,0 +1,19 @@
+# https://mise.jdx.dev/configuration.html
+[tools]
+rust = "1.87.0"
+watchexec = "latest"
+
+[env]
+LSP_BINARY = "rust-lsp-tutorial"
+ 
+[tasks.build]
+description = "Build the LSP binary"
+run = "cargo build"
+sources = ["Cargo.toml", "src/**/*.rs"]
+outputs = ["target/debug/{{env.LSP_BINARY}}"]
+
+[tasks.build-install]
+description = "Build and install the LSP binary"
+run = "cargo install --path . --force --debug"
+sources = ["Cargo.toml", "src/**/*.rs"]
+outputs = [ "{{env.CARGO_HOME}}/bin/{{env.LSP_BINARY}}" ]

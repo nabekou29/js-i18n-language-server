@@ -1,0 +1,25 @@
+amends "package://github.com/jdx/hk/releases/download/v1.1.2/hk@1.1.2#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.1.2/hk@1.1.2#/Builtins.pkl"
+
+local linters = new Mapping<String, Step> {
+    ["rustfmt"] = Builtins.rustfmt
+    ["clippy"] = Builtins.cargo_clippy
+}
+
+hooks {
+    ["pre-commit"] {
+        fix = true
+        stash = "git"
+        steps = linters
+    }
+    ["pre-push"] {
+        steps = linters
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+    ["check"] {
+        steps = linters
+    }
+}
