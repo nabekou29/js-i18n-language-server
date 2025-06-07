@@ -1,7 +1,12 @@
 use serde_json::Value;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use tower_lsp::{
+    Client,
+    LanguageServer,
+    LspService,
+    Server,
+};
 
 #[derive(Debug)]
 struct Backend {
@@ -84,6 +89,7 @@ impl LanguageServer for Backend {
                 }),
                 ..ServerCapabilities::default()
             },
+            ..Default::default()
         })
     }
 

@@ -1,11 +1,18 @@
 # https://mise.jdx.dev/configuration.html
+[settings]
+experimental = true
+
 [tools]
 rust = "1.87.0"
-watchexec = "latest"
+hk = "1.1.2"
+pkl = "0.28.2"
 
 [env]
 LSP_BINARY = "rust-lsp-tutorial"
- 
+
+[hooks]
+postinstall = "hk install"
+
 [tasks.build]
 description = "Build the LSP binary"
 run = "cargo build"
@@ -17,3 +24,7 @@ description = "Build and install the LSP binary"
 run = "cargo install --path . --force --debug"
 sources = ["Cargo.toml", "src/**/*.rs"]
 outputs = [ "{{env.CARGO_HOME}}/bin/{{env.LSP_BINARY}}" ]
+
+[tasks.lint]
+description = "Run lints"
+run = "cargo clippy --all-targets --all-features"

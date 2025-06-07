@@ -2,8 +2,14 @@ amends "package://github.com/jdx/hk/releases/download/v1.1.2/hk@1.1.2#/Config.pk
 import "package://github.com/jdx/hk/releases/download/v1.1.2/hk@1.1.2#/Builtins.pkl"
 
 local linters = new Mapping<String, Step> {
-    ["rustfmt"] = Builtins.rustfmt
-    ["clippy"] = Builtins.cargo_clippy
+    ["cargo_fmt"] {
+        glob = "*.rs"
+        stage = "*.rs"
+        workspace_indicator = "Cargo.toml"
+        check = "cargo +nightly fmt --check --manifest-path {{workspace_indicator}}"
+        fix = "cargo +nightly fmt --manifest-path {{workspace_indicator}}"
+    }
+    ["cargo_clippy"] = Builtins.cargo_clippy
 }
 
 hooks {
