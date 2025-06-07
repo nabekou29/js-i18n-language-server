@@ -2,9 +2,9 @@
 title: "JS i18n Language Server System Design Document"
 type: "System Design Document"
 hierarchy_level: "L1-System"
-version: "v1.0"
+version: "v1.1"
 created_date: "2025-06-02"
-last_updated: "2025-06-02"
+last_updated: "2025-06-08"
 author: "@nabekou29"
 reviewers:
   - "@nabekou29"
@@ -18,7 +18,7 @@ JS i18n Language Serverは、JavaScript/TypeScriptプロジェクトにおける
 **関連文書:**
 
 - PRD: [/docs/prd.md](/docs/prd.md)
-- 主要ADR: [ADR-001 技術スタック選定](/docs/adr/ADR-001-technology-stack-selection.md), [ADR-002 テスト戦略](/docs/adr/ADR-002-test-strategy-and-coverage.md)
+- 主要ADR: [ADR-001 技術スタック選定](/docs/adr/ADR-001-technology-stack-selection.md), [ADR-002 テスト戦略](/docs/adr/ADR-002-test-strategy-and-coverage.md), [ADR-003 段階的実装アプローチ](/docs/adr/ADR-003-incremental-implementation-approach.md)
 
 ## 2. システム概要
 
@@ -299,7 +299,70 @@ tracing::info!(
 - **プレースホルダー型チェック:** TypeScript型情報との連携
 - **翻訳カバレッジレポート:** 未翻訳キーの可視化
 
-## 11. 参考資料
+## 11. 技術検証と本格実装
+
+### 技術検証（完了）
+
+[ADR-003](/docs/adr/ADR-003-incremental-implementation-approach.md)に基づき、LSP技術検証を実施しました。
+
+**目的:** LSPプロトコルとtower-lspフレームワークの理解
+
+**検証内容:**
+- ✅ 基本的なLSPサーバー構造（tower-lsp使用）
+- ✅ 診断機能（TODO/FIXME検出）
+- ✅ ホバー機能（固定メッセージ）
+- ✅ 補完機能（固定候補）
+- ✅ テキスト同期（インクリメンタル）
+- ✅ 統合テスト環境
+
+**得られた知見:**
+- tower-lspを使用したLSPサーバーの基本構造
+- Rustでの非同期処理パターン
+- 統合テスト中心のテスト戦略
+- LSPクライアントとの通信パターン
+
+### 本格実装計画
+
+技術検証で得られた知見を基に、JS i18n Language Serverの本格実装を開始します。
+
+**実装フェーズ:**
+
+1. **基礎機能実装**
+   - tree-sitterを使用したJavaScript/TypeScript構文解析
+   - 翻訳キー抽出機能
+   - 翻訳ファイル管理（JSON/YAML）
+   - 基本的な診断機能
+
+2. **中核機能実装**
+   - インテリジェントな自動補完
+   - 定義ジャンプ、リファレンス検索
+   - コードアクション
+   - キャッシングシステム
+
+3. **拡張機能実装**
+   - 複数i18nライブラリ対応
+   - 高度な設定システム
+   - パフォーマンス最適化
+
+**注意:** 技術検証実装は学習資料として保持し、本格実装は新規プロジェクトとして開始します。
+
+## 12. 開発環境
+
+### ツールチェーン
+
+| ツール | バージョン | 用途 |
+|-------|----------|------|
+| Rust | 1.78.0+ | 開発言語 |
+| mise | 最新 | 開発環境管理 |
+| rustfmt | 標準設定 | コードフォーマット |
+
+### 開発支援
+
+- **playground/nvim/**: Neovim用のLSPクライアント設定サンプル
+- **tests/fixtures/**: テスト用のサンプルコード
+- **mise.toml**: 開発環境の自動セットアップ
+
+## 13. 参考資料
 
 - [Language Server Protocol Specification](https://microsoft.github.io/language-server-protocol/)
 - [tower-lsp Documentation](https://github.com/ebkalderon/tower-lsp)

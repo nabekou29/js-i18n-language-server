@@ -3,6 +3,7 @@ title: "ADR-002: テスト戦略とカバレッジ目標"
 type: "Architecture Decision Record"
 adr_number: "002"
 created_date: "2025-06-02"
+modified_date: "2025-06-08"
 author: "@nabekou29"
 approver: "@nabekou29"
 status: "accepted"
@@ -21,7 +22,7 @@ impact_level: "high"
 **関連する決定:**
 
 - 置き換える決定: なし
-- 関連する決定: ADR-001（技術スタック選定）
+- 関連する決定: ADR-001（技術スタック選定）, ADR-003（段階的実装アプローチ）
 - この決定により置き換えられる: 将来的に更新
 
 ---
@@ -235,10 +236,11 @@ test_pyramid_distribution:
 
 ### フェーズ1: テストインフラ構築
 
-**期間:**
+**期間:** Phase 1-2で実施
 
 **実施内容:**
 
+- [x] 基本的な統合テスト環境の構築（hover_test.rs）
 - [ ] cargo-llvm-cov、insta、criterionのセットアップ
 - [ ] モック最小化TestServerインフラストラクチャ実装
 - [ ] マトリックスCI/CDパイプライン構築
@@ -248,6 +250,10 @@ test_pyramid_distribution:
 
 - テストツールの正常動作確認
 - CI/CDパイプラインの基本動作
+
+**現在の進捗:**
+- Phase 1（LSPチュートリアル）で基本的な統合テストを実装済み
+- tower-lspを使用したテストサーバーのセットアップ完了
 
 ### フェーズ2: テストトロフィー実装
 
@@ -376,6 +382,7 @@ test_pyramid_distribution:
 ### 関連ADR
 
 - ADR-001: i18n LSP技術スタック選定
+- ADR-003: 段階的実装アプローチ
 
 ---
 
