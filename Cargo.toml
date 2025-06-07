@@ -2,6 +2,11 @@
 name = "rust-lsp-tutorial"
 version = "0.1.0"
 edition = "2024"
+description = "A simple Language Server Protocol implementation in Rust"
+license = "MIT"
+repository = "https://github.com/nabekou29/js-i18n-language-server"
+keywords = ["lsp", "language-server", "tutorial"]
+categories = ["development-tools"]
 
 [dependencies]
 tracing-subscriber = "0.3"
@@ -13,3 +18,64 @@ serde_json = "1.0"
 [dev-dependencies]
 tokio-test = "0.4"
 pretty_assertions = "1.4"
+
+[lints.rust]
+# === 絶対禁止事項 ===
+unsafe_code = "forbid"                                  # unsafe は絶対禁止
+future_incompatible = { level = "deny", priority = -1 } # 将来互換性問題
+
+# === 必須品質要件 ===
+missing_docs = "deny"                                # 文書化必須
+unused_must_use = "deny"                             # Result/Option 無視禁止
+rust_2018_idioms = { level = "deny", priority = -1 } # 現代的記法必須
+
+# === 推奨品質要件 ===
+missing_debug_implementations = "warn" # Debug実装推奨
+missing_copy_implementations = "warn"  # Copy実装推奨
+unreachable_pub = "warn"               # 到達不可能pub警告
+trivial_casts = "warn"                 # 自明な変換警告
+trivial_numeric_casts = "warn"         # 自明な数値変換警告
+unused_import_braces = "warn"          # 不要なimport構文警告
+unused_qualifications = "warn"         # 不要な完全限定名警告
+
+# === 高度な品質要件 ===
+single_use_lifetimes = "warn"           # 単一使用ライフタイム
+unused_lifetimes = "warn"               # 未使用ライフタイム
+elided_lifetimes_in_paths = "warn"      # ライフタイム省略警告
+explicit_outlives_requirements = "warn" # 不要outlives境界
+
+[lints.clippy]
+# === グループルール（最大範囲） ===
+all = { level = "deny", priority = -1 }      # 全基本ルール エラー化
+pedantic = { level = "deny", priority = -1 } # 細かいルール エラー化
+nursery = { level = "deny", priority = -1 }  # 実験的ルール 警告
+cargo = { level = "deny", priority = -1 }    # Cargo.toml 品質
+
+# === 禁止事項（restriction から選択） ===
+panic = "deny"            # panic! 禁止
+unwrap_used = "deny"      # unwrap() 禁止
+expect_used = "deny"      # expect() 禁止
+indexing_slicing = "deny" # 配列インデックス禁止
+float_arithmetic = "deny" # 浮動小数点演算禁止
+
+# === セキュリティ強化 ===
+transmute_ptr_to_ptr = "forbid"        # ポインタ変換禁止
+cast_ptr_alignment = "forbid"          # ポインタアライメント
+missing_docs_in_private_items = "deny" # プライベート項目も文書化必須
+
+# === 出力制御 ===
+print_stdout = "deny" # 標準出力禁止
+print_stderr = "deny" # エラー出力禁止
+dbg_macro = "deny"    # dbg! マクロ禁止
+
+# === パフォーマンス強化 ===
+large_stack_arrays = "deny"          # 大きなスタック配列禁止
+large_types_passed_by_value = "deny" # 大きな型の値渡し禁止
+redundant_clone = "deny"             # 冗長なclone禁止
+
+# === 関数設計品質 ===
+too_many_arguments = "deny"   # 引数過多禁止
+cognitive_complexity = "deny" # 認知的複雑さ制限
+
+# === 許可事項 ===
+multiple_crate_versions = "allow" # 複数クレートバージョン許可 (回避が難しい)

@@ -1,17 +1,65 @@
+//! Rust LSP チュートリアルのバックエンド実装
+//!
+//! このクレートは、Language Server Protocol (LSP) を実装したシンプルなサーバーです。
+//! TODOとFIXMEコメントの検出、ホバー機能、コード補完などの基本的な機能を提供します。
+
 use serde_json::Value;
 use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
+use tower_lsp::lsp_types::{
+    CompletionItem,
+    CompletionOptions,
+    CompletionParams,
+    CompletionResponse,
+    Diagnostic,
+    DiagnosticSeverity,
+    DidChangeConfigurationParams,
+    DidChangeTextDocumentParams,
+    DidChangeWatchedFilesParams,
+    DidChangeWorkspaceFoldersParams,
+    DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams,
+    Documentation,
+    ExecuteCommandOptions,
+    ExecuteCommandParams,
+    Hover,
+    HoverContents,
+    HoverParams,
+    HoverProviderCapability,
+    InitializeParams,
+    InitializeResult,
+    InitializedParams,
+    MarkupContent,
+    MarkupKind,
+    MessageType,
+    OneOf,
+    Position,
+    Range,
+    ServerCapabilities,
+    TextDocumentSyncCapability,
+    TextDocumentSyncKind,
+    Url,
+    WorkDoneProgressOptions,
+    WorkspaceEdit,
+    WorkspaceFoldersServerCapabilities,
+    WorkspaceServerCapabilities,
+};
 use tower_lsp::{
     Client,
     LanguageServer,
 };
 
+/// LSPサーバーのバックエンド実装
 #[derive(Debug, Clone)]
 pub struct Backend {
+    /// LSPクライアントとの通信を担当
     pub client: Client,
 }
 
 impl Backend {
+    /// 診断情報をクライアントに送信
+    ///
+    /// ファイル内のTODOとFIXMEコメントを検出し、診断情報として報告します。
     pub async fn publish_diagnostics(&self, uri: Url, text: String) {
         let mut diagnostics = Vec::new();
 
@@ -19,8 +67,14 @@ impl Backend {
             if let Some(pos) = line.find("TODO") {
                 diagnostics.push(Diagnostic {
                     range: Range {
-                        start: Position { line: line_num as u32, character: pos as u32 },
-                        end: Position { line: line_num as u32, character: (pos + 4) as u32 },
+                        start: Position {
+                            line: line_num.try_into().unwrap_or(u32::MAX),
+                            character: pos.try_into().unwrap_or(u32::MAX),
+                        },
+                        end: Position {
+                            line: line_num.try_into().unwrap_or(u32::MAX),
+                            character: (pos + 4).try_into().unwrap_or(u32::MAX),
+                        },
                     },
                     severity: Some(DiagnosticSeverity::INFORMATION),
                     code: None,
@@ -36,8 +90,14 @@ impl Backend {
             if let Some(pos) = line.find("FIXME") {
                 diagnostics.push(Diagnostic {
                     range: Range {
-                        start: Position { line: line_num as u32, character: pos as u32 },
-                        end: Position { line: line_num as u32, character: (pos + 5) as u32 },
+                        start: Position {
+                            line: line_num.try_into().unwrap_or(u32::MAX),
+                            character: pos.try_into().unwrap_or(u32::MAX),
+                        },
+                        end: Position {
+                            line: line_num.try_into().unwrap_or(u32::MAX),
+                            character: (pos + 5).try_into().unwrap_or(u32::MAX),
+                        },
                     },
                     severity: Some(DiagnosticSeverity::WARNING),
                     code: None,
@@ -68,13 +128,13 @@ impl LanguageServer for Backend {
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
                     trigger_characters: Some(vec![".".to_string()]),
-                    work_done_progress_options: Default::default(),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
                     all_commit_characters: None,
-                    ..Default::default()
+                    completion_item: None,
                 }),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec!["dummy.do_something".to_string()],
-                    work_done_progress_options: Default::default(),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: Some(WorkspaceFoldersServerCapabilities {
@@ -85,7 +145,6 @@ impl LanguageServer for Backend {
                 }),
                 ..ServerCapabilities::default()
             },
-            ..Default::default()
         })
     }
 
@@ -130,8 +189,9 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         self.client.log_message(MessageType::INFO, "file changed!").await;
 
-        let text = &params.content_changes[0].text;
-        self.publish_diagnostics(params.text_document.uri, text.clone()).await;
+        if let Some(change) = params.content_changes.first() {
+            self.publish_diagnostics(params.text_document.uri, change.text.clone()).await;
+        }
     }
 
     async fn did_save(&self, _: DidSaveTextDocumentParams) {

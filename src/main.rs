@@ -1,3 +1,8 @@
+//! LSPサーバーのエントリーポイント
+//!
+//! このバイナリはLanguage Server Protocolを実装したサーバーを起動します。
+//! 標準入出力を通じてクライアントと通信します。
+
 use rust_lsp_tutorial::Backend;
 use tower_lsp::{
     LspService,

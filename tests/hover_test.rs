@@ -1,3 +1,12 @@
+//! LSPサーバーのホバー機能に関するテスト
+
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::panic)]
+#![allow(missing_docs)]
+#![allow(deprecated)]
+#![allow(clippy::match_wildcard_for_single_variants)]
+#![allow(clippy::unused_async)]
+
 use pretty_assertions::assert_eq;
 use rust_lsp_tutorial::Backend;
 use tower_lsp::lsp_types::*;
@@ -6,14 +15,14 @@ use tower_lsp::{
     LspService,
 };
 
-async fn create_test_backend() -> Backend {
+fn create_test_backend() -> Backend {
     let (service, _socket) = LspService::new(|client| Backend { client });
     service.inner().clone()
 }
 
 #[tokio::test]
 async fn test_hover_returns_markdown_content() {
-    let backend = create_test_backend().await;
+    let backend = create_test_backend();
 
     let hover_params = HoverParams {
         text_document_position_params: TextDocumentPositionParams {
@@ -43,7 +52,7 @@ async fn test_hover_returns_markdown_content() {
 
 #[tokio::test]
 async fn test_hover_capability_is_enabled() {
-    let backend = create_test_backend().await;
+    let backend = create_test_backend();
 
     let init_params = InitializeParams {
         process_id: None,
@@ -71,7 +80,7 @@ async fn test_hover_capability_is_enabled() {
 
 #[tokio::test]
 async fn test_hover_with_different_positions() {
-    let backend = create_test_backend().await;
+    let backend = create_test_backend();
 
     let positions = vec![
         Position { line: 0, character: 0 },
