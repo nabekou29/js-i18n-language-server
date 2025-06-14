@@ -4,10 +4,6 @@ type: "Architecture Decision Record"
 adr_number: "XXX"
 created_date: "YYYY-MM-DD"
 author: "[決定関与者名]"
-reviewers:
-  - "[レビュアー1]"
-  - "[レビュアー2]"
-approver: "[最終承認者]"
 status: "proposed" # proposed | accepted | rejected | deprecated | superseded
 category: "architecture" # architecture | technology | security | performance | process
 impact_level: "high" # high | medium | low

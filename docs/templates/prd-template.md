@@ -5,15 +5,7 @@ version: "v1.0"
 created_date: "YYYY-MM-DD"
 last_updated: "YYYY-MM-DD"
 author: "[プロダクトマネージャー名]"
-reviewers:
-  - "[ステークホルダー1]"
-  - "[ステークホルダー2]"
-  - "[ステークホルダー3]"
-approver: "[承認者名]"
 status: "draft" # draft | review | approved
-tags:
-  - "[プロダクト領域]"
-  - "[機能カテゴリ]"
 ---
 
 # [プロダクト名]

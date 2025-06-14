@@ -8,7 +8,3 @@
 - ドキュメントの作成方法は @docs/README.md を参照すること。
 - ドキュメントの作成には必ずテンプレートを使用すること。
 - `created_date` や `modified_date` を更新する場合は time:get_current_time から現在時間を取得すること。
-
-## 実装開始時
-
-- どの Asana のタスクを実装するかを確認すること。

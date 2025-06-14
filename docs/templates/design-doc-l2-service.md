@@ -7,8 +7,6 @@ version: "v1.0"
 created_date: "YYYY-MM-DD"
 last_updated: "YYYY-MM-DD"
 author: "[設計者名]"
-reviewers:
-  - "[レビュアー名]"
 status: "draft" # draft | review | approved
 ---
 

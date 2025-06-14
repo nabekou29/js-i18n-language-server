@@ -7,22 +7,11 @@
                 "https://mcp.deepwiki.com/sse"
             ]
         },
-        "github": {
-            "command": "docker",
-            "args": [
-                "run",
-                "-i",
-                "--rm",
-                "-e",
-                "GITHUB_PERSONAL_ACCESS_TOKEN",
-                "ghcr.io/github/github-mcp-server"
-            ]
-        },
-        "asana": {
+        "Context7": {
             "command": "bunx",
             "args": [
-                "mcp-remote",
-                "https://mcp.asana.com/sse"
+                "-y",
+                "@upstash/context7-mcp@latest"
             ]
         },
         "time": {
