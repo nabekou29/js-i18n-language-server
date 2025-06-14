@@ -1,12 +1,13 @@
 [package]
-name = "rust-lsp-tutorial"
+name = "js-i18n-language-server"
 version = "0.1.0"
 edition = "2024"
 description = "A simple Language Server Protocol implementation in Rust"
 license = "MIT"
 repository = "https://github.com/nabekou29/js-i18n-language-server"
-keywords = ["lsp", "language-server", "tutorial"]
+keywords = ["lsp", "language-server", "i18n", "javascript"]
 categories = ["development-tools"]
+readme = "README.md"
 
 [dependencies]
 tracing-subscriber = "0.3"
