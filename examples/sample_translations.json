@@ -1,0 +1,28 @@
+{
+  "common": {
+    "hello": "Hello, World!",
+    "welcome": "Welcome to our application",
+    "actions": {
+      "save": "Save",
+      "cancel": "Cancel",
+      "delete": "Delete"
+    }
+  },
+  "user": {
+    "profile": {
+      "name": "Name",
+      "email": "Email address",
+      "avatar": "Profile picture"
+    },
+    "settings": {
+      "language": "Language",
+      "timezone": "Timezone",
+      "notifications": "Notifications"
+    }
+  },
+  "errors": {
+    "required": "This field is required",
+    "invalid_email": "Please enter a valid email address",
+    "server_error": "An error occurred on the server"
+  }
+}
