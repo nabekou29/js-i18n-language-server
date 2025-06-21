@@ -3,7 +3,10 @@
 //! このモジュールは、翻訳キーや関数呼び出しの情報を表現するための
 //! 基本的な型を定義します。
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 /// 翻訳キーを表す構造体
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

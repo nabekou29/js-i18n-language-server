@@ -3,7 +3,11 @@
 //! .scmファイルからクエリを読み込み、言語別に管理します。
 
 use std::collections::HashMap;
-use tree_sitter::{Language, Query};
+
+use tree_sitter::{
+    Language,
+    Query,
+};
 
 /// クエリセット（複数のクエリをまとめたもの）
 pub struct QuerySet {

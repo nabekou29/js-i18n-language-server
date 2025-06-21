@@ -2,10 +2,14 @@
 //!
 //! JavaScript/TypeScriptコードを解析し、i18n関連の情報を抽出します。
 
-use tree_sitter::{Language, Parser};
+use tree_sitter::{
+    Language,
+    Parser,
+};
 
 use crate::analyzer::extractor::{
-    extract_translation_calls, extract_translation_calls_with_queries,
+    extract_translation_calls,
+    extract_translation_calls_with_queries,
 };
 use crate::analyzer::query_loader::QueryLoader;
 use crate::analyzer::types::TranslationCall;

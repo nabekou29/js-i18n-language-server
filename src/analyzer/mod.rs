@@ -9,5 +9,11 @@ pub mod query_loader;
 pub mod types;
 
 pub use i18n_analyzer::I18nAnalyzer;
-pub use query_loader::{QueryLoader, QuerySet};
-pub use types::{TranslationCall, TranslationKey};
+pub use query_loader::{
+    QueryLoader,
+    QuerySet,
+};
+pub use types::{
+    TranslationCall,
+    TranslationKey,
+};
