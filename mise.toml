@@ -3,7 +3,7 @@
 experimental = true
 
 [tools]
-rust = "1.87.0"
+rust = "nightly"
 hk = "1.2.0"
 pkl = "0.28.2"
 
@@ -24,6 +24,10 @@ description = "Build and install the LSP binary"
 run = "cargo install --path . --force --debug"
 sources = ["Cargo.toml", "src/**/*.rs"]
 outputs = ["{{env.CARGO_HOME}}/bin/{{env.LSP_BINARY}}"]
+
+[tasks.test]
+description = "Run tests"
+run = "cargo test --all-targets --all-features"
 
 [tasks.lint]
 description = "Run lints"
