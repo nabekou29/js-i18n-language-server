@@ -4,8 +4,8 @@ experimental = true
 
 [tools]
 rust = "nightly"
-hk = "1.2.0"
-pkl = "0.28.2"
+hk = "1.10.2"
+pkl = "0.29.0"
 
 [env]
 LSP_BINARY = "js-i18n-language-server"
@@ -40,3 +40,11 @@ run = "cargo clippy --all-targets --all-features --fix --allow-dirty --allow-sta
 [tasks.format]
 description = "Format the code"
 run = "cargo fmt --all"
+
+[tasks.install-components]
+description = "Install components"
+run = [
+  "rustup component add rust-analyzer",
+  "rustup component add rustfmt",
+  "rustup component add clippy",
+]
