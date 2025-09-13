@@ -2,6 +2,9 @@
 
 /// TODO: doc
 pub mod analyzer;
+pub mod config;
+
+use std::sync::Arc;
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
@@ -37,18 +40,32 @@ use tower_lsp::{
     LanguageServer,
 };
 
+use crate::config::{
+    ConfigManager,
+    ServerSettings,
+};
+
 /// Backend
 #[derive(Debug, Clone)]
 pub struct Backend {
-    /// The LSP client that communicates with the editor.
+    /// TODO
     pub client: Client,
+    /// TODO
+    pub config_manager: Arc<ConfigManager>,
 }
 
 impl Backend {}
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        if let Some(settings) = params
+            .initialization_options
+            .and_then(|opts| serde_json::from_value::<ServerSettings>(opts).ok())
+        {
+            self.config_manager.update_global_settings(settings.js_i18n).await;
+        }
+
         Ok(InitializeResult {
             server_info: None,
             capabilities: ServerCapabilities {

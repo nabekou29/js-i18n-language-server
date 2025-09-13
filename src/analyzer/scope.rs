@@ -1,3 +1,4 @@
+//! スコープ管理モジュール
 use std::collections::HashMap;
 
 use tree_sitter::Node;
