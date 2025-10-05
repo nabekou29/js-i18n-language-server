@@ -3,6 +3,7 @@
 /// TODO: doc
 pub mod analyzer;
 pub mod config;
+pub mod indexer;
 
 use std::sync::Arc;
 
@@ -32,6 +33,7 @@ use tower_lsp::lsp_types::{
     TextDocumentSyncCapability,
     TextDocumentSyncKind,
     WorkDoneProgressOptions,
+    WorkspaceFolder,
     WorkspaceFoldersServerCapabilities,
     WorkspaceServerCapabilities,
 };
@@ -39,11 +41,13 @@ use tower_lsp::{
     Client,
     LanguageServer,
 };
+use tracing::debug;
 
 use crate::config::{
     ConfigManager,
     ServerSettings,
 };
+use crate::indexer::workspace::WorkspaceIndexer;
 
 /// Backend
 #[derive(Debug, Clone)]
@@ -52,9 +56,22 @@ pub struct Backend {
     pub client: Client,
     /// TODO
     pub config_manager: Arc<ConfigManager>,
+    /// TODO
+    pub workspace_indexer: Arc<WorkspaceIndexer>,
 }
 
-impl Backend {}
+impl Backend {
+    /// ワークスペースフォルダを取得
+    ///
+    /// クライアントからワークスペースフォルダのリストを取得します。
+    /// フォルダが設定されていない場合は空のVecを返します。
+    ///
+    /// # Errors
+    /// クライアントとの通信に失敗した場合
+    async fn get_workspace_folders(&self) -> Result<Vec<WorkspaceFolder>> {
+        self.client.workspace_folders().await.map(Option::unwrap_or_default)
+    }
+}
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
@@ -98,6 +115,23 @@ impl LanguageServer for Backend {
 
     async fn initialized(&self, _: InitializedParams) {
         self.client.log_message(MessageType::INFO, "initialized!").await;
+
+        if let Ok(workspace_folders) = self.get_workspace_folders().await {
+            self.client
+                .log_message(MessageType::INFO, format!("Workspace folders: {workspace_folders:?}"))
+                .await;
+
+            for folder in workspace_folders {
+                if let Ok(workspace_path) = folder.uri.to_file_path()
+                    && let Err(_) = self
+                        .workspace_indexer
+                        .index_workspace(&workspace_path, &self.config_manager)
+                        .await
+                {
+                    self.client.log_message(MessageType::ERROR, "error indexing workspace").await;
+                }
+            }
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -133,6 +167,8 @@ impl LanguageServer for Backend {
     }
 
     async fn hover(&self, _params: HoverParams) -> Result<Option<Hover>> {
+        debug!("Hover params: {:?}", _params);
+
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
