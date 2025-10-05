@@ -4,8 +4,8 @@ experimental = true
 
 [tools]
 rust = "nightly"
-hk = "1.10.2"
-pkl = "0.29.0"
+hk = "1.18.3"
+pkl = "0.29.1"
 
 [env]
 LSP_BINARY = "js-i18n-language-server"
