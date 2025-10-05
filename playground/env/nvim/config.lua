@@ -35,3 +35,17 @@ require("lazy.minit").repro({
         },
     },
 })
+
+vim.lsp.log.set_level("info")
+vim.lsp.config("js_i18n_ls", {
+    cmd = { "js-i18n-language-server" },
+    filetypes = { "javascript", "typescript", "javascriptreact", "typescriptreact", "jons" },
+    root_markers = { "package.json", ".git" },
+})
+vim.lsp.enable({ "js_i18n_ls" })
+
+-- Register command
+vim.api.nvim_create_user_command("LspRestart", function()
+    vim.lsp.stop_client(vim.lsp.get_clients())
+    vim.cmd("edit")
+end, {})
