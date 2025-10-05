@@ -2,6 +2,10 @@
 
 use std::string::ToString;
 
+use tower_lsp::lsp_types::{
+    Position,
+    Range,
+};
 use tree_sitter::{
     Language,
     Node,
@@ -11,15 +15,14 @@ use tree_sitter::{
     StreamingIteratorMut,
 };
 
-use crate::analyzer::error::AnalyzerError;
 use crate::analyzer::scope::{
     ScopeInfo,
     Scopes,
 };
 use crate::analyzer::types::{
+    AnalyzerError,
     CallTransFnDetail,
     GetTransFnDetail,
-    Range,
     TransFnCall,
     capture_names,
 };
@@ -41,6 +44,16 @@ fn get_closest_node<'a>(node: Node<'a>, target_types: &[&str]) -> Option<Node<'a
     }
 
     None
+}
+
+/// Gets the range of a tree-sitter node
+fn get_node_range(node: Node<'_>) -> Range {
+    let start_pos = node.start_position();
+    let end_pos = node.end_position();
+    Range::new(
+        Position::new(start_pos.row as u32, end_pos.column as u32),
+        Position::new(end_pos.row as u32, end_pos.column as u32),
+    )
 }
 
 /// Extracts translation function calls from a Tree-sitter syntax tree.
@@ -138,7 +151,7 @@ pub fn analyze_trans_fn_calls(
                                 |prefix| format!("{}.{}", prefix, &call_trans_fn.key),
                             ),
                             arg_key: call_trans_fn.key.clone(),
-                            arg_key_node: Range::from(arg_key_node),
+                            arg_key_node: get_node_range(arg_key_node),
                         });
                     }
 

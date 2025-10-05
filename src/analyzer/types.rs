@@ -4,10 +4,9 @@ use serde::{
     Deserialize,
     Serialize,
 };
-use tree_sitter::{
-    Node,
-    Point,
-};
+use thiserror::Error;
+use tower_lsp::lsp_types::Range;
+use tree_sitter::Node;
 
 /// TODO: doc
 pub mod capture_names {
@@ -37,36 +36,6 @@ pub struct TransFnCall {
     pub arg_key: String,
     /// Translation key node
     pub arg_key_node: Range,
-}
-
-/// Represents a position in the source code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Position {
-    /// The line number (0-based).
-    pub line: usize,
-    /// The character index in the line (0-based).
-    pub character: usize,
-}
-
-impl From<Point> for Position {
-    fn from(point: Point) -> Self {
-        Self { line: point.row, character: point.column }
-    }
-}
-
-/// Represents a range in the source code, defined by a start and end position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Range {
-    /// The start position of the range.
-    pub start: Position,
-    /// The end position of the range.
-    pub end: Position,
-}
-
-impl From<Node<'_>> for Range {
-    fn from(node: Node<'_>) -> Self {
-        Self { start: node.start_position().into(), end: node.end_position().into() }
-    }
 }
 
 /// Details about a `trans_fn` call
@@ -113,4 +82,21 @@ impl GetTransFnDetail {
         self.key_prefix = Some(key_prefix.into());
         self
     }
+}
+
+/// Defines errors that may occur during the analysis process
+#[derive(Error, Debug)]
+pub enum AnalyzerError {
+    /// Error when failing to set the language for the parser
+    #[error("Failed to set language for parser: {0}")]
+    LanguageSetup(#[from] tree_sitter::LanguageError),
+    /// Error when failing to read a file
+    #[error("Failed to read file: {0}")]
+    InvalidPath(String),
+    /// Error when failing to parse source code
+    #[error("Failed to parse source code")]
+    ParseFailed,
+    /// Error when failing to execute a query
+    #[error("Query execution failed: {0}")]
+    QueryExecution(String),
 }

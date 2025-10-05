@@ -1,4 +1,3 @@
-pub mod error;
 pub mod extractor;
 pub mod query_loader;
 pub mod scope;
