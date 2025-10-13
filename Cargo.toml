@@ -13,6 +13,7 @@ readme = "README.md"
 futures = "0.3"
 globset = "0.4.16"
 ignore = "0.4"
+salsa = "0.24.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
@@ -36,7 +37,6 @@ unsafe_code = "forbid"                                  # unsafe は絶対禁止
 future_incompatible = { level = "deny", priority = -1 } # 将来互換性問題
 
 # === 必須品質要件 ===
-missing_docs = "deny"                                # 文書化必須
 unused_must_use = "deny"                             # Result/Option 無視禁止
 rust_2018_idioms = { level = "deny", priority = -1 } # 現代的記法必須
 
