@@ -1,9 +1,13 @@
 //! Backend for the LSP server
 
-/// TODO: doc
-pub mod analyzer;
 pub mod config;
+pub mod db;
 pub mod indexer;
+pub mod input;
+pub mod interned;
+pub mod ir;
+pub mod syntax;
+pub mod types;
 
 use std::sync::Arc;
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use tree_sitter::Node;
 
-use crate::analyzer::types::GetTransFnDetail;
+use super::types::GetTransFnDetail;
 
 /// スコープ情報を保持する構造体
 #[derive(Debug, Clone)]

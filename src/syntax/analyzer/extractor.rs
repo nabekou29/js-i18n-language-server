@@ -15,11 +15,11 @@ use tree_sitter::{
     StreamingIteratorMut,
 };
 
-use crate::analyzer::scope::{
+use crate::syntax::analyzer::scope::{
     ScopeInfo,
     Scopes,
 };
-use crate::analyzer::types::{
+use crate::syntax::analyzer::types::{
     AnalyzerError,
     CallTransFnDetail,
     GetTransFnDetail,
@@ -47,11 +47,12 @@ fn get_closest_node<'a>(node: Node<'a>, target_types: &[&str]) -> Option<Node<'a
 }
 
 /// Gets the range of a tree-sitter node
+#[allow(clippy::cast_possible_truncation)]
 fn get_node_range(node: Node<'_>) -> Range {
     let start_pos = node.start_position();
     let end_pos = node.end_position();
     Range::new(
-        Position::new(start_pos.row as u32, end_pos.column as u32),
+        Position::new(start_pos.row as u32, start_pos.column as u32),
         Position::new(end_pos.row as u32, end_pos.column as u32),
     )
 }
@@ -305,7 +306,7 @@ mod tests {
     fn queries(js_lang: Language) -> Vec<Query> {
         let mut queries = Vec::new();
 
-        let i18next_query = include_str!("../../queries/javascript/react-i18next.scm");
+        let i18next_query = include_str!("../../../queries/javascript/react-i18next.scm");
         queries.push(Query::new(&js_lang, i18next_query).expect("Failed to parse i18next query"));
         queries
     }
