@@ -13,7 +13,6 @@ use globset::{
 use ignore::WalkBuilder;
 use tokio::sync::RwLock;
 use tower_lsp::lsp_types::Url;
-use tracing::debug;
 
 use crate::config::ConfigManager;
 use crate::indexer::types::{
@@ -43,7 +42,7 @@ impl WorkspaceIndexer {
         workspace_path: &Path,
         config_manager: &ConfigManager,
     ) -> Result<(), IndexerError> {
-        debug!(workspace_path = %workspace_path.display(), "Indexing workspace");
+        tracing::debug!(workspace_path = %workspace_path.display(), "Indexing workspace");
         let workspace_uri = Url::from_file_path(workspace_path)
             .map_err(|()| IndexerError::InvalidPath(workspace_path.display().to_string()))?;
         let settings = config_manager.get_document_settings(&workspace_uri).await;
@@ -51,11 +50,33 @@ impl WorkspaceIndexer {
         let exclude_patterns = &settings.exclude_patterns;
 
         let files = Self::find_source_files(workspace_path, include_patterns, exclude_patterns)?;
-        for file in files {
-            debug!("Indexing file: {}", file.display());
-        }
+        // 並列処理でファイルをインデックス
+        let futures: Vec<_> = files.iter().map(|file| self.index_file(file)).collect();
+
+        futures::future::join_all(futures).await;
 
         Ok(())
+    }
+
+    /// 単一ファイルをインデックス
+    async fn index_file(&self, file_path: &PathBuf) -> Result<(), IndexerError> {
+        // ファイル内容を読み込み
+        let content = match tokio::fs::read_to_string(file_path).await {
+            Ok(content) => content,
+            Err(e) => {
+                tracing::warn!("Failed to read file {:?}: {}", file_path, e);
+                return Ok(()); // ファイル読み込みエラーは警告として扱い、処理を続行
+            }
+        };
+
+        // ファイルURIを作成
+        let Ok(uri) = Url::from_file_path(file_path) else {
+            tracing::warn!("Failed to create URI for file {:?}", file_path);
+            return Ok(());
+        };
+
+        // ファイル内容を解析してインデックスに追加
+        self.update_file(&uri, &content)
     }
 
     /// ソースファイルを検索
@@ -102,7 +123,7 @@ impl WorkspaceIndexer {
             let entry = match result {
                 Ok(entry) => entry,
                 Err(err) => {
-                    debug!(?err, "Failed to read directory entry");
+                    tracing::debug!(?err, "Failed to read directory entry");
                     continue;
                 }
             };
@@ -126,5 +147,13 @@ impl WorkspaceIndexer {
         }
 
         Ok(found_files)
+    }
+
+    /// ファイル内容を更新
+    ///
+    /// # Errors
+    /// 現在はエラーを返さない（TODO: 実装予定）
+    pub const fn update_file(&self, _uri: &Url, _content: &str) -> Result<(), IndexerError> {
+        Ok(())
     }
 }
