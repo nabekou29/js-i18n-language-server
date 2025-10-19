@@ -149,6 +149,7 @@ pub fn analyze_trans_fn_calls(
                         calls.push(TransFnCall {
                             key: scope_info.trans_fn.key_prefix.as_ref().map_or_else(
                                 || call_trans_fn.key.clone(),
+                                // TODO: key_separator は設定から取得するようにする
                                 |prefix| format!("{}.{}", prefix, &call_trans_fn.key),
                             ),
                             arg_key: call_trans_fn.key.clone(),
@@ -287,6 +288,7 @@ fn parse_call_trans_fn_captures<'a>(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::expect_used, clippy::panic)]
 mod tests {
+    use googletest::prelude::*;
     use rstest::*;
     use tree_sitter::{
         Language,
@@ -320,10 +322,13 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 1);
-        let call = &calls[0];
-        assert_eq!(call.key, "hello.world");
-        assert_eq!(call.arg_key, "hello.world");
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("hello.world")),
+                field!(TransFnCall.arg_key, eq("hello.world"))
+            ]]
+        );
     }
 
     #[rstest]
@@ -337,10 +342,14 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 3);
-        assert_eq!(calls[0].key, "key1");
-        assert_eq!(calls[1].key, "key2");
-        assert_eq!(calls[2].key, "key3");
+        assert_that!(
+            calls,
+            elements_are![
+                field!(TransFnCall.key, eq("key1")),
+                field!(TransFnCall.key, eq("key2")),
+                field!(TransFnCall.key, eq("key3"))
+            ]
+        );
     }
 
     #[rstest]
@@ -352,9 +361,13 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].key, "custom.key");
-        assert_eq!(calls[0].arg_key, "custom.key");
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("custom.key")),
+                field!(TransFnCall.arg_key, eq("custom.key"))
+            ]]
+        );
     }
 
     #[rstest]
@@ -364,7 +377,7 @@ mod tests {
                 const { t } = useTranslation();
                 t("funcA.key");
             }
-            
+
             function funcB() {
                 const { t } = useTranslation();
                 t("funcB.key");
@@ -373,9 +386,13 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].key, "funcA.key");
-        assert_eq!(calls[1].key, "funcB.key");
+        assert_that!(
+            calls,
+            elements_are![
+                field!(TransFnCall.key, eq("funcA.key")),
+                field!(TransFnCall.key, eq("funcB.key"))
+            ]
+        );
     }
 
     #[rstest]
@@ -383,21 +400,25 @@ mod tests {
         let code = r#"
             const { t } = useTranslation();
             t("outer.key");
-            
+
             if (true) {
                 const { t } = useTranslation();
                 t("block.key");
             }
-            
+
             t("outer.key2");
             "#;
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 3);
-        assert_eq!(calls[0].key, "outer.key");
-        assert_eq!(calls[1].key, "block.key");
-        assert_eq!(calls[2].key, "outer.key2");
+        assert_that!(
+            calls,
+            elements_are![
+                field!(TransFnCall.key, eq("outer.key")),
+                field!(TransFnCall.key, eq("block.key")),
+                field!(TransFnCall.key, eq("outer.key2"))
+            ]
+        );
     }
 
     #[rstest]
@@ -406,27 +427,31 @@ mod tests {
             function outer() {
                 const { t } = useTranslation();
                 t("outer.key");
-                
+
                 if (true) {
                     const { t } = useTranslation();
                     t("nested.key");
-                    
+
                     if (true) {
                         t("deeply.nested.key");
                     }
                 }
-                
+
                 t("outer.key2");
             }
             "#;
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 4);
-        assert_eq!(calls[0].key, "outer.key");
-        assert_eq!(calls[1].key, "nested.key");
-        assert_eq!(calls[2].key, "deeply.nested.key");
-        assert_eq!(calls[3].key, "outer.key2");
+        assert_that!(
+            calls,
+            elements_are![
+                field!(TransFnCall.key, eq("outer.key")),
+                field!(TransFnCall.key, eq("nested.key")),
+                field!(TransFnCall.key, eq("deeply.nested.key")),
+                field!(TransFnCall.key, eq("outer.key2"))
+            ]
+        );
     }
 
     #[rstest]
@@ -434,21 +459,25 @@ mod tests {
         let code = r#"
             const { t } = useTranslation();
             t("original.key");
-            
+
             {
                 const { t } = useTranslation();
                 t("shadowed.key");
             }
-            
+
             t("original.key2");
             "#;
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 3);
-        assert_eq!(calls[0].key, "original.key");
-        assert_eq!(calls[1].key, "shadowed.key");
-        assert_eq!(calls[2].key, "original.key2");
+        assert_that!(
+            calls,
+            elements_are![
+                field!(TransFnCall.key, eq("original.key")),
+                field!(TransFnCall.key, eq("shadowed.key")),
+                field!(TransFnCall.key, eq("original.key2"))
+            ]
+        );
     }
 
     // 3. key_prefix機能テスト
@@ -462,9 +491,14 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].key, "common.button.save"); // プレフィックスが適用される
-        assert_eq!(calls[0].arg_key, "button.save"); // 元のキー
+        // プレフィックスが適用されたkeyと、元のarg_keyをチェック
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("common.button.save")),
+                field!(TransFnCall.arg_key, eq("button.save"))
+            ]]
+        );
     }
 
     #[rstest]
@@ -472,23 +506,27 @@ mod tests {
         let code = r#"
             const { t } = useTranslation();
             t("no.prefix");
-            
+
             {
                 const { t } = useTranslation("translation", { keyPrefix: "form" });
                 t("field.name");
                 t("field.email");
             }
-            
+
             t("no.prefix.again");
             "#;
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 4);
-        assert_eq!(calls[0].key, "no.prefix");
-        assert_eq!(calls[1].key, "form.field.name"); // プレフィックス適用
-        assert_eq!(calls[2].key, "form.field.email"); // プレフィックス適用
-        assert_eq!(calls[3].key, "no.prefix.again");
+        assert_that!(
+            calls,
+            elements_are![
+                field!(TransFnCall.key, eq("no.prefix")),
+                field!(TransFnCall.key, eq("form.field.name")),
+                field!(TransFnCall.key, eq("form.field.email")),
+                field!(TransFnCall.key, eq("no.prefix.again"))
+            ]
+        );
     }
 
     #[rstest]
@@ -500,9 +538,13 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].key, "simple.key"); // プレフィックスなし
-        assert_eq!(calls[0].arg_key, "simple.key");
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("simple.key")),
+                field!(TransFnCall.arg_key, eq("simple.key"))
+            ]]
+        );
     }
 
     // 4. エッジケーステスト
@@ -513,7 +555,7 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 0);
+        assert_that!(calls, is_empty()); // 空チェックに最適
     }
 
     #[rstest]
@@ -526,25 +568,24 @@ mod tests {
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
         // デフォルトスコープ "t" が存在するため、呼び出しは検出される
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].key, "undefined.key");
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("undefined.key"))]);
     }
 
     #[rstest]
     fn test_invalid_arguments(queries: Vec<Query>, js_lang: Language) {
         let code = r#"
             const { t } = useTranslation();
-            
+
             // 有効な呼び出し
             t("valid.key");
-            
+
             // 無効な呼び出し（数値引数）
             t(123);
-            
+
             // 無効な呼び出し（変数引数）
             const key = "variable.key";
             t(key);
-            
+
             // 無効な呼び出し（テンプレート文字列）
             t(`template.${key}`);
             "#;
@@ -552,8 +593,7 @@ mod tests {
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
         // 文字列リテラルのみが有効
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].key, "valid.key");
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("valid.key"))]);
     }
 
     // 4.5. テーブルドリブンテスト - 引数パターン
@@ -589,13 +629,14 @@ mod tests {
         let calls = analyze_trans_fn_calls(&code, &js_lang, &queries)
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
-        assert_eq!(calls.len(), 1, "Should find exactly 1 call, found {}", calls.len());
-        assert_eq!(
-            calls[0].key, expected_key,
-            "Key mismatch: expected '{}', got '{}'",
-            expected_key, calls[0].key
+        // keyとarg_keyの両方をチェック
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq(expected_key)),
+                field!(TransFnCall.arg_key, eq(expected_key))
+            ]]
         );
-        assert_eq!(calls[0].arg_key, expected_key, "arg_key should match expected key");
     }
 
     /// 複数引数を持つ翻訳関数呼び出しのテスト
@@ -620,21 +661,9 @@ mod tests {
         let calls = analyze_trans_fn_calls(&code, &js_lang, &queries)
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
-        // 期待される検出数を確認
-        assert_eq!(
-            calls.len(),
-            expected_count,
-            "Should find exactly {} call(s), found {}",
-            expected_count,
-            calls.len()
-        );
-
-        // 最初のキー名から "key." で始まることを確認
-        assert!(
-            calls[0].key.starts_with("key."),
-            "Key should start with 'key.', got '{}'",
-            calls[0].key
-        );
+        // 期待される検出数と、最初のキーが"key."で始まることを確認
+        assert_that!(calls, len(eq(expected_count)));
+        assert_that!(calls[0].key.as_str(), starts_with("key."));
     }
 
     /// 無効な引数パターンのテスト
@@ -662,7 +691,7 @@ mod tests {
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
         // 無効な引数パターンは検出されない
-        assert_eq!(calls.len(), 0, "Should not detect any calls for invalid pattern");
+        assert_that!(calls, is_empty()); // 空チェック
     }
 
     #[rstest]
@@ -670,52 +699,50 @@ mod tests {
         let code = r#"
             function App() {
                 const { t } = useTranslation();
-                
+
                 function Header() {
                     const { t } = useTranslation("common", { keyPrefix: "header" });
                     t("navigation.home");
                     t("navigation.about");
                 }
-                
+
                 function Content() {
                     const { t } = useTranslation("pages");
                     t("home.welcome");
-                    
+
                     if (true) {
                         const { t } = useTranslation("pages", { keyPrefix: "home.section" });
                         t("features.title");
                         t("features.description");
                     }
-                    
+
                     t("home.footer");
                 }
-                
+
                 t("global.loading");
                 Header();
                 Content();
                 t("global.error");
-                
+
                 return null;
             }
             "#;
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
 
-        assert_eq!(calls.len(), 8);
         // 実際の解析順序（関数定義が先に解析される）
-        // ヘッダースコープ（keyPrefixあり）
-        assert_eq!(calls[0].key, "header.navigation.home");
-
-        assert_eq!(calls[1].key, "header.navigation.about");
-        // コンテンツスコープ（keyPrefixなし）
-        assert_eq!(calls[2].key, "home.welcome");
-        // ネストしたスコープ（keyPrefixあり）
-        assert_eq!(calls[3].key, "home.section.features.title");
-        assert_eq!(calls[4].key, "home.section.features.description");
-        // コンテンツスコープに戻る
-        assert_eq!(calls[5].key, "home.footer");
-        // メイン実行部分のグローバルスコープ
-        assert_eq!(calls[6].key, "global.loading");
-        assert_eq!(calls[7].key, "global.error");
+        assert_that!(
+            calls,
+            elements_are![
+                field!(TransFnCall.key, eq("header.navigation.home")), /* ヘッダースコープ（keyPrefixあり） */
+                field!(TransFnCall.key, eq("header.navigation.about")), //
+                field!(TransFnCall.key, eq("home.welcome")), // コンテンツスコープ（keyPrefixなし）
+                field!(TransFnCall.key, eq("home.section.features.title")), /* ネストしたスコープ（keyPrefixあり） */
+                field!(TransFnCall.key, eq("home.section.features.description")),
+                field!(TransFnCall.key, eq("home.footer")), // コンテンツスコープに戻る
+                field!(TransFnCall.key, eq("global.loading")), // メイン実行部分のグローバルスコープ
+                field!(TransFnCall.key, eq("global.error"))
+            ]
+        );
     }
 }
