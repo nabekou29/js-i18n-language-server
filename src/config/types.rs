@@ -2,6 +2,51 @@ use serde::{
     Deserialize,
     Serialize,
 };
+use thiserror::Error;
+
+/// 設定のバリデーションエラー
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+#[error("Configuration error in '{field_path}': {message}")]
+pub struct ValidationError {
+    /// エラーが発生したフィールドのJSONパス（例: "includePatterns[0]"）
+    pub field_path: String,
+    /// エラーメッセージ
+    pub message: String,
+}
+
+impl ValidationError {
+    /// 新しいバリデーションエラーを作成
+    #[must_use]
+    pub fn new(field_path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self { field_path: field_path.into(), message: message.into() }
+    }
+}
+
+/// 設定管理に関するエラー
+#[derive(Error, Debug)]
+pub enum ConfigError {
+    /// バリデーションエラー（複数のエラーを含む）
+    #[error("Configuration validation failed:\n{}", format_validation_errors(.0))]
+    ValidationErrors(Vec<ValidationError>),
+
+    /// ファイル読み込みエラー
+    #[error("Failed to load configuration file: {0}")]
+    IoError(#[from] std::io::Error),
+
+    /// JSON パースエラー
+    #[error("Failed to parse configuration: {0}")]
+    ParseError(#[from] serde_json::Error),
+}
+
+/// `ValidationError` のリストを読みやすい文字列に整形
+fn format_validation_errors(errors: &[ValidationError]) -> String {
+    errors
+        .iter()
+        .enumerate()
+        .map(|(i, err)| format!("  {}. {} - {}", i + 1, err.field_path, err.message))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -10,7 +55,7 @@ pub struct ServerSettings {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct I18nSettings {
     /// 翻訳ファイル
     pub translation_files: TranslationFilesConfig,
@@ -27,7 +72,7 @@ pub struct I18nSettings {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct TranslationFilesConfig {
     pub file_pattern: String,
 }
@@ -36,33 +81,68 @@ impl I18nSettings {
     /// 設定をバリデーションする
     ///
     /// # Errors
-    /// - `key_separator` が空の場合
-    pub fn validate(&self) -> Result<(), Vec<String>> {
+    /// - 必須フィールドが空の場合
+    /// - glob パターンが不正な場合
+    /// - 区切り文字が無効な場合
+    pub fn validate(&self) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
+
+        // key_separator のチェック
+        if self.key_separator.is_empty() {
+            errors.push(ValidationError::new(
+                "keySeparator",
+                "The separator cannot be empty. Please specify a separator, for example: \".\" (dot)",
+            ));
+        }
+
+        // namespace_separator のチェック
+        if let Some(sep) = &self.namespace_separator
+            && sep.is_empty()
+        {
+            errors.push(ValidationError::new(
+                    "namespaceSeparator",
+                    "The separator cannot be empty. Please specify a separator (e.g., \":\"), or remove this field",
+                ));
+        }
 
         // include_patterns のチェック
         if self.include_patterns.is_empty() {
-            errors.push("include_patterns cannot be empty".to_string());
+            errors.push(ValidationError::new(
+                "includePatterns",
+                "At least one pattern is required. Example: [\"**/*.{js,ts,tsx}\"]",
+            ));
         }
 
-        // glob パターンの妥当性チェック
-        for pattern in &self.include_patterns {
+        // include_patterns の glob パターン妥当性チェック
+        for (index, pattern) in self.include_patterns.iter().enumerate() {
             if let Err(e) = globset::Glob::new(pattern) {
-                errors.push(format!("Invalid include pattern '{pattern}': {e}"));
+                errors.push(ValidationError::new(
+                    format!("includePatterns[{index}]"),
+                    format!("Invalid glob pattern '{pattern}': {e}"),
+                ));
             }
         }
 
-        for pattern in &self.exclude_patterns {
+        // exclude_patterns の glob パターン妥当性チェック
+        for (index, pattern) in self.exclude_patterns.iter().enumerate() {
             if let Err(e) = globset::Glob::new(pattern) {
-                errors.push(format!("Invalid exclude pattern '{pattern}': {e}"));
+                errors.push(ValidationError::new(
+                    format!("excludePatterns[{index}]"),
+                    format!("Invalid glob pattern '{pattern}': {e}"),
+                ));
             }
         }
 
-        // translation_files のバリデーション
-        if let Err(e) = globset::Glob::new(&self.translation_files.file_pattern) {
-            errors.push(format!(
-                "Invalid translation file pattern '{}': {}",
-                self.translation_files.file_pattern, e
+        // translation_files.file_pattern のバリデーション
+        if self.translation_files.file_pattern.is_empty() {
+            errors.push(ValidationError::new(
+                "translationFiles.filePattern",
+                "The pattern cannot be empty. Example: \"**/{locales,messages}/*.json\"",
+            ));
+        } else if let Err(e) = globset::Glob::new(&self.translation_files.file_pattern) {
+            errors.push(ValidationError::new(
+                "translationFiles.filePattern",
+                format!("Invalid glob pattern '{}': {e}", self.translation_files.file_pattern),
             ));
         }
 
@@ -70,12 +150,16 @@ impl I18nSettings {
     }
 }
 
+impl Default for TranslationFilesConfig {
+    fn default() -> Self {
+        Self { file_pattern: "**/{locales,messages}/*.json".to_string() }
+    }
+}
+
 impl Default for I18nSettings {
     fn default() -> Self {
         Self {
-            translation_files: TranslationFilesConfig {
-                file_pattern: "**/{locales,messages}/*.json".to_string(),
-            },
+            translation_files: TranslationFilesConfig::default(),
             include_patterns: vec!["**/*.{js,jsx,ts,tsx}".to_string()],
             exclude_patterns: vec!["node_modules/**".to_string()],
             key_separator: ".".to_string(),
@@ -100,16 +184,178 @@ mod tests {
     }
 
     #[rstest]
-    fn validate_invalid_include_pattern() {
+    fn deserialize_partial_settings() {
+        // 一部のフィールドのみを持つ JSON
+        let json = r#"{"namespaceSeparator": ":"}"#;
+
+        let settings: I18nSettings = serde_json::from_str(json).unwrap();
+
+        // 省略されたフィールドはデフォルト値になる
+        assert_that!(settings.key_separator, eq("."));
+        assert_that!(settings.include_patterns, len(eq(1)));
+        assert_that!(settings.namespace_separator, some(eq(":")));
+    }
+
+    #[rstest]
+    fn deserialize_empty_settings() {
+        // 空の JSON オブジェクト
+        let json = "{}";
+
+        let settings: I18nSettings = serde_json::from_str(json).unwrap();
+
+        // 全てのフィールドがデフォルト値になる
+        assert_that!(settings.key_separator, eq("."));
+        assert_that!(settings.include_patterns, elements_are![eq("**/*.{js,jsx,ts,tsx}")]);
+        assert_that!(settings.exclude_patterns, elements_are![eq("node_modules/**")]);
+        assert_that!(settings.translation_files.file_pattern, eq("**/{locales,messages}/*.json"));
+    }
+
+    #[rstest]
+    fn validate_invalid_key_separator_empty() {
+        let settings = I18nSettings { key_separator: String::new(), ..I18nSettings::default() };
+        let result = settings.validate();
+
+        assert_that!(
+            result,
+            err(elements_are![all![
+                field!(ValidationError.field_path, eq("keySeparator")),
+                field!(ValidationError.message, contains_substring("cannot be empty"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn validate_invalid_namespace_separator_empty() {
+        let settings =
+            I18nSettings { namespace_separator: Some(String::new()), ..I18nSettings::default() };
+        let result = settings.validate();
+
+        assert_that!(
+            result,
+            err(elements_are![all![
+                field!(ValidationError.field_path, eq("namespaceSeparator")),
+                field!(ValidationError.message, contains_substring("cannot be empty"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn validate_invalid_include_patterns_empty() {
+        let settings = I18nSettings {
+            include_patterns: vec![], // 空のパターン
+            ..I18nSettings::default()
+        };
+        let result = settings.validate();
+
+        assert_that!(
+            result,
+            err(elements_are![all![
+                field!(ValidationError.field_path, eq("includePatterns")),
+                field!(ValidationError.message, contains_substring("At least one pattern"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn validate_invalid_include_pattern_invalid_glob() {
         let settings = I18nSettings {
             include_patterns: vec!["**/*.{js,ts".to_string()], // 不正なパターン
             ..I18nSettings::default()
         };
 
         let result = settings.validate();
-        assert_that!(result, err(anything())); // Result型のErrチェックに最適
-        let errors = result.err().unwrap();
-        assert_that!(errors, len(eq(1)));
-        assert_that!(&errors[0], contains_substring("Invalid include pattern")); // 文字列の部分一致チェックに最適
+
+        assert_that!(
+            result,
+            err(elements_are![all![
+                field!(ValidationError.field_path, eq("includePatterns[0]")),
+                field!(ValidationError.message, contains_substring("Invalid glob pattern")),
+                field!(ValidationError.message, contains_substring("**/*.{js,ts"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn validate_invalid_exclude_pattern_invalid_glob() {
+        let settings = I18nSettings {
+            exclude_patterns: vec![
+                "node_modules/**".to_string(),
+                "dist/**".to_string(),
+                "invalid[pattern".to_string(),
+            ], // 不正なパターン
+            ..I18nSettings::default()
+        };
+
+        let result = settings.validate();
+
+        assert_that!(
+            result,
+            err(elements_are![all![
+                field!(ValidationError.field_path, eq("excludePatterns[2]")),
+                field!(ValidationError.message, contains_substring("Invalid glob pattern")),
+                field!(ValidationError.message, contains_substring("invalid[pattern"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn validate_invalid_translation_file_pattern_empty() {
+        let settings = I18nSettings {
+            translation_files: TranslationFilesConfig { file_pattern: String::new() },
+            ..I18nSettings::default()
+        };
+
+        let result = settings.validate();
+
+        assert_that!(
+            result,
+            err(elements_are![all![
+                field!(ValidationError.field_path, eq("translationFiles.filePattern")),
+                field!(ValidationError.message, contains_substring("cannot be empty"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn validate_invalid_translation_file_pattern_invalid_glob() {
+        let settings = I18nSettings {
+            translation_files: TranslationFilesConfig {
+                file_pattern: "**/{locales,messages/*.json".to_string(), // 不正なパターン
+            },
+
+            ..I18nSettings::default()
+        };
+
+        let result = settings.validate();
+
+        assert_that!(
+            result,
+            err(elements_are![all![
+                field!(ValidationError.field_path, eq("translationFiles.filePattern")),
+                field!(ValidationError.message, contains_substring("Invalid glob pattern"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn config_error_validation_errors_format() {
+        // 複数のバリデーションエラーを持つ設定
+        let settings = I18nSettings {
+            key_separator: String::new(), // エラー1
+            include_patterns: vec![],     // エラー2
+            ..I18nSettings::default()
+        };
+
+        let validation_result = settings.validate();
+        let errors = validation_result.unwrap_err();
+        let config_error = ConfigError::ValidationErrors(errors);
+
+        let error_message = format!("{config_error}");
+        // エラーメッセージに詳細が含まれていることを確認
+        assert_that!(error_message, contains_substring("Configuration validation failed"));
+        assert_that!(error_message, contains_substring("1. keySeparator"));
+        assert_that!(error_message, contains_substring("cannot be empty"));
+        assert_that!(error_message, contains_substring("2. includePatterns"));
+        assert_that!(error_message, contains_substring("At least one pattern"));
     }
 }

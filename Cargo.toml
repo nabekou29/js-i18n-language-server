@@ -90,3 +90,4 @@ cognitive_complexity = "deny" # 認知的複雑さ制限
 
 # === 許可事項 ===
 multiple_crate_versions = "allow" # 複数クレートバージョン許可 (回避が難しい)
+missing_errors_doc = "allow"      # エラー文書化省略許可
