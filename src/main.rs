@@ -7,6 +7,7 @@ use js_i18n_language_server::{
     config::ConfigManager,
     indexer::workspace::WorkspaceIndexer,
 };
+use tokio::sync::Mutex;
 use tower_lsp::{
     LspService,
     Server,
@@ -18,6 +19,7 @@ use tracing_appender::rolling::{
 
 #[tokio::main]
 async fn main() {
+    // TODO: リリース前にログ設計を見直す
     let file_appender = RollingFileAppender::new(Rotation::DAILY, "/tmp/js_i18n_lsp", "lsp.log");
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -27,7 +29,7 @@ async fn main() {
         .with_writer(file_appender)
         .init();
 
-    let config_manager = Arc::new(ConfigManager::new());
+    let config_manager = Arc::new(Mutex::new(ConfigManager::new()));
     let workspace_indexer = Arc::new(WorkspaceIndexer::new());
 
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());

@@ -288,6 +288,7 @@ fn parse_call_trans_fn_captures<'a>(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::expect_used, clippy::panic)]
 mod tests {
+
     use googletest::prelude::*;
     use rstest::*;
     use tree_sitter::{
@@ -641,15 +642,14 @@ mod tests {
 
     /// 複数引数を持つ翻訳関数呼び出しのテスト
     #[rstest]
-    #[case::with_object(r#"t("key.with.object", { count: 1 })"#, 1)]
-    #[case::with_number(r#"t("key.with.number", 42)"#, 1)]
-    #[case::with_variable(r#"t("key.with.variable", someVariable)"#, 1)]
-    #[case::with_multiple_args(r#"t("key.multiple.args", arg1, arg2, arg3)"#, 1)]
+    #[case::with_object(r#"t("key.with.object", { count: 1 })"#)]
+    #[case::with_number(r#"t("key.with.number", 42)"#)]
+    #[case::with_variable(r#"t("key.with.variable", someVariable)"#)]
+    #[case::with_multiple_args(r#"t("key.multiple.args", arg1, arg2, arg3)"#)]
     fn test_multiple_arguments_ignored(
         queries: Vec<Query>,
         js_lang: Language,
         #[case] t_call: &str,
-        #[case] expected_count: usize,
     ) {
         let code = format!(
             "
@@ -662,8 +662,7 @@ mod tests {
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
         // 期待される検出数と、最初のキーが"key."で始まることを確認
-        assert_that!(calls, len(eq(expected_count)));
-        assert_that!(calls[0].key.as_str(), starts_with("key."));
+        assert_that!(calls, elements_are![field!(TransFnCall.key, starts_with("key."))]);
     }
 
     /// 無効な引数パターンのテスト

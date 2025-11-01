@@ -43,9 +43,7 @@ impl WorkspaceIndexer {
         config_manager: &ConfigManager,
     ) -> Result<(), IndexerError> {
         tracing::debug!(workspace_path = %workspace_path.display(), "Indexing workspace");
-        let workspace_uri = Url::from_file_path(workspace_path)
-            .map_err(|()| IndexerError::InvalidPath(workspace_path.display().to_string()))?;
-        let settings = config_manager.get_document_settings(&workspace_uri).await;
+        let settings = config_manager.get_settings();
         let include_patterns = &settings.include_patterns;
         let exclude_patterns = &settings.exclude_patterns;
 
