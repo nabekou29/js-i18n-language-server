@@ -55,6 +55,7 @@ pub(super) fn load_from_workspace(
 /// # Errors
 /// - ファイル読み込みエラー
 /// - JSON パースエラー
+#[allow(dead_code)]
 pub(super) fn load_from_package_json(
     workspace_root: &Path,
 ) -> Result<Option<I18nSettings>, ConfigError> {

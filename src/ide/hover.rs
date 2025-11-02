@@ -1,5 +1,7 @@
 //! Hover implementation
 
+use std::fmt::Write as _;
+
 use crate::db::I18nDatabase;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
@@ -35,7 +37,7 @@ pub fn generate_hover_content(
     translations_found.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (language, value) in translations_found {
-        content.push_str(&format!("**{language}**: {value}\n"));
+        let _ = writeln!(content, "**{language}**: {value}");
     }
 
     Some(content)

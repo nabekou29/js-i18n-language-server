@@ -63,6 +63,18 @@ pub struct Backend {
     pub translations: Arc<Mutex<Vec<Translation>>>,
 }
 
+impl std::fmt::Debug for Backend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Backend")
+            .field("config_manager", &"<ConfigManager>")
+            .field("workspace_indexer", &"<WorkspaceIndexer>")
+            .field("db", &"<I18nDatabaseImpl>")
+            .field("source_files", &"<HashMap<PathBuf, SourceFile>>")
+            .field("translations", &"<Vec<Translation>>")
+            .finish_non_exhaustive()
+    }
+}
+
 impl Backend {
     /// ワークスペースフォルダを取得
     ///
@@ -303,11 +315,14 @@ impl LanguageServer for Backend {
                 source_files.insert(file_path.clone(), source_file);
                 source_file
             };
+            drop(source_files);
 
             // 診断メッセージを生成
             let translations = self.translations.lock().await;
             let diagnostics =
                 crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations);
+            drop(db);
+            drop(translations);
 
             (source_file, diagnostics)
             // ここでロックが自動的に解放される
@@ -370,6 +385,7 @@ impl LanguageServer for Backend {
         };
 
         tracing::debug!("Generated hover content for key: {}", key.text(&*db));
+        drop(db);
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
