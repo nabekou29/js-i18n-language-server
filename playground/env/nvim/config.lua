@@ -1,11 +1,6 @@
 vim.env.LAZY_STDPATH = ".repro_minimal"
 load(vim.fn.system("curl -s https://raw.githubusercontent.com/folke/lazy.nvim/main/bootstrap.lua"))()
 
-vim.opt.number = true
-vim.opt.tabstop = 2
-vim.opt.shiftwidth = 2
-vim.opt.swapfile = false
-
 require("lazy.minit").repro({
     spec = {
         { "windwp/nvim-autopairs", opts = {} },
@@ -36,7 +31,19 @@ require("lazy.minit").repro({
     },
 })
 
+vim.opt.number = true
+vim.opt.tabstop = 2
+vim.opt.shiftwidth = 2
+vim.opt.swapfile = false
+
+vim.diagnostic.config({
+    virtual_text = {},
+    underline = true,
+    update_in_insert = true,
+})
+
 vim.lsp.log.set_level("info")
+
 vim.lsp.config("js_i18n_ls", {
     cmd = { "js-i18n-language-server" },
     filetypes = { "javascript", "typescript", "javascriptreact", "typescriptreact", "jons" },
