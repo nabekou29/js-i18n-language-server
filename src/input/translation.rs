@@ -1,9 +1,295 @@
 //! 翻訳ファイル入力定義
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::path::Path;
+use std::sync::LazyLock;
 
 use serde_json::Value;
+
+/// RFC 5646 language codes
+/// Based on <http://tools.ietf.org/html/rfc5646>
+static LANGUAGE_CODES: LazyLock<HashSet<String>> = LazyLock::new(|| {
+    [
+        "af",
+        "af-ZA",
+        "ar",
+        "ar-AE",
+        "ar-BH",
+        "ar-DZ",
+        "ar-EG",
+        "ar-IQ",
+        "ar-JO",
+        "ar-KW",
+        "ar-LB",
+        "ar-LY",
+        "ar-MA",
+        "ar-OM",
+        "ar-QA",
+        "ar-SA",
+        "ar-SY",
+        "ar-TN",
+        "ar-YE",
+        "az",
+        "az-AZ",
+        "az-Cyrl-AZ",
+        "be",
+        "be-BY",
+        "bg",
+        "bg-BG",
+        "bs-BA",
+        "ca",
+        "ca-ES",
+        "cs",
+        "cs-CZ",
+        "cy",
+        "cy-GB",
+        "da",
+        "da-DK",
+        "de",
+        "de-AT",
+        "de-CH",
+        "de-DE",
+        "de-LI",
+        "de-LU",
+        "dv",
+        "dv-MV",
+        "el",
+        "el-GR",
+        "en",
+        "en-AU",
+        "en-BZ",
+        "en-CA",
+        "en-CB",
+        "en-GB",
+        "en-IE",
+        "en-JM",
+        "en-NZ",
+        "en-PH",
+        "en-TT",
+        "en-US",
+        "en-ZA",
+        "en-ZW",
+        "eo",
+        "es",
+        "es-AR",
+        "es-BO",
+        "es-CL",
+        "es-CO",
+        "es-CR",
+        "es-DO",
+        "es-EC",
+        "es-ES",
+        "es-GT",
+        "es-HN",
+        "es-MX",
+        "es-NI",
+        "es-PA",
+        "es-PE",
+        "es-PR",
+        "es-PY",
+        "es-SV",
+        "es-UY",
+        "es-VE",
+        "et",
+        "et-EE",
+        "eu",
+        "eu-ES",
+        "fa",
+        "fa-IR",
+        "fi",
+        "fi-FI",
+        "fo",
+        "fo-FO",
+        "fr",
+        "fr-BE",
+        "fr-CA",
+        "fr-CH",
+        "fr-FR",
+        "fr-LU",
+        "fr-MC",
+        "gl",
+        "gl-ES",
+        "gu",
+        "gu-IN",
+        "he",
+        "he-IL",
+        "hi",
+        "hi-IN",
+        "hr",
+        "hr-BA",
+        "hr-HR",
+        "hu",
+        "hu-HU",
+        "hy",
+        "hy-AM",
+        "id",
+        "id-ID",
+        "is",
+        "is-IS",
+        "it",
+        "it-CH",
+        "it-IT",
+        "ja",
+        "ja-JP",
+        "ka",
+        "ka-GE",
+        "kk",
+        "kk-KZ",
+        "kn",
+        "kn-IN",
+        "ko",
+        "ko-KR",
+        "kok",
+        "kok-IN",
+        "ky",
+        "ky-KG",
+        "lt",
+        "lt-LT",
+        "lv",
+        "lv-LV",
+        "mi",
+        "mi-NZ",
+        "mk",
+        "mk-MK",
+        "mn",
+        "mn-MN",
+        "mr",
+        "mr-IN",
+        "ms",
+        "ms-BN",
+        "ms-MY",
+        "mt",
+        "mt-MT",
+        "nb",
+        "nb-NO",
+        "nl",
+        "nl-BE",
+        "nl-NL",
+        "nn-NO",
+        "ns",
+        "ns-ZA",
+        "pa",
+        "pa-IN",
+        "pl",
+        "pl-PL",
+        "ps",
+        "ps-AR",
+        "pt",
+        "pt-BR",
+        "pt-PT",
+        "qu",
+        "qu-BO",
+        "qu-EC",
+        "qu-PE",
+        "ro",
+        "ro-RO",
+        "ru",
+        "ru-RU",
+        "sa",
+        "sa-IN",
+        "se",
+        "se-FI",
+        "se-NO",
+        "se-SE",
+        "sk",
+        "sk-SK",
+        "sl",
+        "sl-SI",
+        "sq",
+        "sq-AL",
+        "sr-BA",
+        "sr-Cyrl-BA",
+        "sr-SP",
+        "sr-Cyrl-SP",
+        "sv",
+        "sv-FI",
+        "sv-SE",
+        "sw",
+        "sw-KE",
+        "syr",
+        "syr-SY",
+        "ta",
+        "ta-IN",
+        "te",
+        "te-IN",
+        "th",
+        "th-TH",
+        "tl",
+        "tl-PH",
+        "tn",
+        "tn-ZA",
+        "tr",
+        "tr-TR",
+        "tt",
+        "tt-RU",
+        "ts",
+        "uk",
+        "uk-UA",
+        "ur",
+        "ur-PK",
+        "uz",
+        "uz-UZ",
+        "uz-Cyrl-UZ",
+        "vi",
+        "vi-VN",
+        "xh",
+        "xh-ZA",
+        "zh",
+        "zh-CN",
+        "zh-HK",
+        "zh-MO",
+        "zh-SG",
+        "zh-TW",
+        "zu",
+        "zu-ZA",
+    ]
+    .iter()
+    .flat_map(|code| {
+        let code = (*code).to_string();
+        let normalized = normalize_language_code(&code);
+        vec![code, normalized]
+    })
+    .collect()
+});
+
+/// Normalize language code (lowercase and replace - with _)
+fn normalize_language_code(code: &str) -> String {
+    code.to_lowercase().replace('-', "_")
+}
+
+/// Detect language from file path heuristically
+///
+/// Splits the path by '/' and '.', then searches backwards for a part
+/// that matches a known language code.
+///
+/// # Examples
+/// - `locales/en.json` → `en`
+/// - `messages/ja-JP.json` → `ja-JP`
+/// - `translations/en_US/common.json` → `en_US`
+///
+/// # Arguments
+/// * `file_path` - File path to detect language from
+///
+/// # Returns
+/// Detected language code or "unknown"
+fn detect_language_from_path(file_path: &Path) -> String {
+    // Split path by '/' and '.'
+    let path_str = file_path.to_string_lossy();
+    let parts: Vec<&str> = path_str.split(&['/', '.']).collect();
+
+    // Search backwards for a known language code
+    for part in parts.iter().rev() {
+        let normalized = normalize_language_code(part);
+        if LANGUAGE_CODES.contains(&normalized) || LANGUAGE_CODES.contains(*part) {
+            return (*part).to_string();
+        }
+    }
+
+    "unknown".to_string()
+}
 
 /// 翻訳データを表す Salsa Input
 #[salsa::input]
@@ -59,8 +345,7 @@ pub fn flatten_json(
 
     if let Value::Object(map) = json {
         for (key, value) in map {
-            let full_key =
-                if let Some(p) = prefix { format!("{p}{separator}{key}") } else { key.clone() };
+            let full_key = prefix.map_or_else(|| key.clone(), |p| format!("{p}{separator}{key}"));
 
             match value {
                 Value::String(s) => {
@@ -114,8 +399,8 @@ pub fn load_translation_file(
     // フラット化
     let keys = flatten_json(&json, separator, None);
 
-    // 言語コードをファイル名から抽出（例: en.json -> "en"）
-    let language = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown").to_string();
+    // ファイルパスから言語コードを検出
+    let language = detect_language_from_path(file_path);
 
     Ok(Translation::new(db, language, file_path.to_string_lossy().to_string(), keys))
 }
