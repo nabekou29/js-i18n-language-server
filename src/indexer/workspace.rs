@@ -15,6 +15,10 @@ use tower_lsp::lsp_types::Url;
 use crate::config::ConfigManager;
 use crate::indexer::types::IndexerError;
 use crate::input::source::SourceFile;
+use crate::input::translation::{
+    Translation,
+    load_translation_file,
+};
 
 /// TODO
 #[derive(Clone, Copy, Debug, Default)]
@@ -36,12 +40,13 @@ impl WorkspaceIndexer {
         workspace_path: &Path,
         config_manager: &ConfigManager,
         source_files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
-    ) -> Result<(), IndexerError> {
+    ) -> Result<Vec<Translation>, IndexerError> {
         tracing::debug!(workspace_path = %workspace_path.display(), "Indexing workspace");
         let settings = config_manager.get_settings();
         let include_patterns = &settings.include_patterns;
         let exclude_patterns = &settings.exclude_patterns;
 
+        // ソースファイルをインデックス
         let files = Self::find_source_files(workspace_path, include_patterns, exclude_patterns)?;
 
         tracing::info!(file_count = files.len(), "Found source files");
@@ -59,9 +64,38 @@ impl WorkspaceIndexer {
         }
         drop(source_files_guard);
 
+        // 翻訳ファイルをインデックス
+        let translation_pattern = vec![settings.translation_files.file_pattern.clone()];
+        let translation_files =
+            Self::find_source_files(workspace_path, &translation_pattern, exclude_patterns)?;
+
+        tracing::info!(translation_file_count = translation_files.len(), "Found translation files");
+
+        let mut translations = Vec::new();
+        for file_path in &translation_files {
+            match load_translation_file(&db, file_path, &settings.key_separator) {
+                Ok(translation) => {
+                    tracing::debug!(
+                        file_path = %file_path.display(),
+                        language = translation.language(&db),
+                        key_count = translation.keys(&db).len(),
+                        "Loaded translation file"
+                    );
+                    translations.push(translation);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        file_path = %file_path.display(),
+                        error = %e,
+                        "Failed to load translation file"
+                    );
+                }
+            }
+        }
+
         tracing::info!("Workspace indexing complete");
 
-        Ok(())
+        Ok(translations)
     }
 
     /// 単一ファイルをインデックス
