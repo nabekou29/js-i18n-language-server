@@ -76,6 +76,8 @@ pub fn generate_diagnostics(
 mod tests {
     use std::collections::HashMap;
 
+    use googletest::prelude::*;
+
     use super::*;
     use crate::db::I18nDatabaseImpl;
     use crate::input::source::{
@@ -84,7 +86,7 @@ mod tests {
     };
     use crate::input::translation::Translation;
 
-    #[test]
+    #[googletest::test]
     fn test_generate_diagnostics_with_missing_key() {
         let db = I18nDatabaseImpl::default();
 
@@ -111,12 +113,18 @@ mod tests {
         let diagnostics = generate_diagnostics(&db, source_file, &[translation]);
 
         // "common.missing" キーが存在しないため診断メッセージが生成されることを確認
-        assert!(!diagnostics.is_empty());
-        assert!(diagnostics.iter().any(|d| d.message.contains("common.missing")));
-        assert!(diagnostics.iter().all(|d| d.severity == Some(DiagnosticSeverity::WARNING)));
+        expect_that!(diagnostics, not(is_empty()));
+        expect_that!(
+            diagnostics,
+            contains(field!(Diagnostic.message, contains_substring("common.missing")))
+        );
+        expect_that!(
+            diagnostics,
+            each(field!(Diagnostic.severity, some(eq(&DiagnosticSeverity::WARNING))))
+        );
     }
 
-    #[test]
+    #[googletest::test]
     fn test_generate_diagnostics_all_keys_exist() {
         let db = I18nDatabaseImpl::default();
 
@@ -143,10 +151,10 @@ mod tests {
         let diagnostics = generate_diagnostics(&db, source_file, &[translation]);
 
         // 全てのキーが存在するため、診断メッセージは生成されない
-        assert!(diagnostics.is_empty());
+        expect_that!(diagnostics, is_empty());
     }
 
-    #[test]
+    #[googletest::test]
     fn test_generate_diagnostics_multiple_translations() {
         let db = I18nDatabaseImpl::default();
 
@@ -178,6 +186,6 @@ mod tests {
         let diagnostics = generate_diagnostics(&db, source_file, &[translation_en, translation_ja]);
 
         // 両方の翻訳ファイルの和集合でチェックされるため、診断メッセージは生成されない
-        assert!(diagnostics.is_empty());
+        expect_that!(diagnostics, is_empty());
     }
 }

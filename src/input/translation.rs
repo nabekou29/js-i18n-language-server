@@ -407,11 +407,12 @@ pub fn load_translation_file(
 
 #[cfg(test)]
 mod tests {
+    use googletest::prelude::*;
     use serde_json::json;
 
     use super::*;
 
-    #[test]
+    #[googletest::test]
     fn test_flatten_json_simple() {
         let json = json!({
             "hello": "Hello",
@@ -420,12 +421,12 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        assert_eq!(result.get("hello"), Some(&"Hello".to_string()));
-        assert_eq!(result.get("goodbye"), Some(&"Goodbye".to_string()));
-        assert_eq!(result.len(), 2);
+        expect_that!(result.get("hello"), some(eq(&"Hello".to_string())));
+        expect_that!(result.get("goodbye"), some(eq(&"Goodbye".to_string())));
+        expect_that!(result.len(), eq(2));
     }
 
-    #[test]
+    #[googletest::test]
     fn test_flatten_json_nested() {
         let json = json!({
             "common": {
@@ -439,13 +440,13 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        assert_eq!(result.get("common.hello"), Some(&"Hello".to_string()));
-        assert_eq!(result.get("common.goodbye"), Some(&"Goodbye".to_string()));
-        assert_eq!(result.get("errors.notFound"), Some(&"Not found".to_string()));
-        assert_eq!(result.len(), 3);
+        expect_that!(result.get("common.hello"), some(eq(&"Hello".to_string())));
+        expect_that!(result.get("common.goodbye"), some(eq(&"Goodbye".to_string())));
+        expect_that!(result.get("errors.notFound"), some(eq(&"Not found".to_string())));
+        expect_that!(result.len(), eq(3));
     }
 
-    #[test]
+    #[googletest::test]
     fn test_flatten_json_deep_nested() {
         let json = json!({
             "a": {
@@ -457,11 +458,11 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        assert_eq!(result.get("a.b.c"), Some(&"Deep value".to_string()));
-        assert_eq!(result.len(), 1);
+        expect_that!(result.get("a.b.c"), some(eq(&"Deep value".to_string())));
+        expect_that!(result.len(), eq(1));
     }
 
-    #[test]
+    #[googletest::test]
     fn test_flatten_json_custom_separator() {
         let json = json!({
             "common": {
@@ -471,10 +472,10 @@ mod tests {
 
         let result = flatten_json(&json, "_", None);
 
-        assert_eq!(result.get("common_hello"), Some(&"Hello".to_string()));
+        expect_that!(result.get("common_hello"), some(eq(&"Hello".to_string())));
     }
 
-    #[test]
+    #[googletest::test]
     fn test_flatten_json_non_string_values() {
         let json = json!({
             "number": 42,
@@ -484,8 +485,8 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        assert_eq!(result.get("number"), Some(&"42".to_string()));
-        assert_eq!(result.get("boolean"), Some(&"true".to_string()));
-        assert_eq!(result.get("null"), Some(&"null".to_string()));
+        expect_that!(result.get("number"), some(eq(&"42".to_string())));
+        expect_that!(result.get("boolean"), some(eq(&"true".to_string())));
+        expect_that!(result.get("null"), some(eq(&"null".to_string())));
     }
 }
