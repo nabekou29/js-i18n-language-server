@@ -44,6 +44,7 @@ use crate::config::ConfigManager;
 use crate::db::I18nDatabaseImpl;
 use crate::indexer::workspace::WorkspaceIndexer;
 use crate::input::source::SourceFile;
+use crate::input::translation::Translation;
 
 /// LSP Backend
 #[derive(Clone)]
@@ -58,6 +59,8 @@ pub struct Backend {
     pub db: Arc<Mutex<I18nDatabaseImpl>>,
     /// `SourceFile` 管理（ファイルパス → `SourceFile`）
     pub source_files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
+    /// 翻訳データ
+    pub translations: Arc<Mutex<Vec<Translation>>>,
 }
 
 impl Backend {
@@ -83,8 +86,9 @@ impl Backend {
         let new_db = I18nDatabaseImpl::default();
         *self.db.lock().await = new_db;
 
-        // source_files をクリア
+        // source_files と translations をクリア
         self.source_files.lock().await.clear();
+        self.translations.lock().await.clear();
 
         // ワークスペースを再インデックス
         if let Ok(workspace_folders) = self.get_workspace_folders().await {
@@ -94,16 +98,24 @@ impl Backend {
                     let db = self.db.lock().await.clone();
                     let source_files = self.source_files.clone();
 
-                    if let Err(error) = self
+                    match self
                         .workspace_indexer
                         .index_workspace(db, &workspace_path, &config_manager, source_files)
                         .await
                     {
-                        self.client
-                            .log_message(MessageType::ERROR, format!("Reindexing failed: {error}"))
-                            .await;
-                    } else {
-                        self.client.log_message(MessageType::INFO, "Reindexing complete").await;
+                        Ok(translations) => {
+                            // 翻訳データを保存
+                            *self.translations.lock().await = translations;
+                            self.client.log_message(MessageType::INFO, "Reindexing complete").await;
+                        }
+                        Err(error) => {
+                            self.client
+                                .log_message(
+                                    MessageType::ERROR,
+                                    format!("Reindexing failed: {error}"),
+                                )
+                                .await;
+                        }
                     }
                 }
             }
@@ -135,7 +147,7 @@ impl LanguageServer for Backend {
             server_info: None,
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::INCREMENTAL,
+                    TextDocumentSyncKind::FULL,
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
@@ -180,17 +192,26 @@ impl LanguageServer for Backend {
                     // source_files をクローン（Arc のクローンは安価）
                     let source_files = self.source_files.clone();
 
-                    if let Err(error) = self
+                    match self
                         .workspace_indexer
                         .index_workspace(db, &workspace_path, &config_manager, source_files)
                         .await
                     {
-                        self.client
-                            .log_message(
-                                MessageType::ERROR,
-                                format!("error indexing workspace: {error}"),
-                            )
-                            .await;
+                        Ok(translations) => {
+                            // 翻訳データを保存
+                            *self.translations.lock().await = translations;
+                            self.client
+                                .log_message(MessageType::INFO, "Workspace indexing complete")
+                                .await;
+                        }
+                        Err(error) => {
+                            self.client
+                                .log_message(
+                                    MessageType::ERROR,
+                                    format!("error indexing workspace: {error}"),
+                                )
+                                .await;
+                        }
                     }
                 }
             }
@@ -254,14 +275,14 @@ impl LanguageServer for Backend {
             return;
         };
 
-        // 変更内容を取得（最後の変更を使用）
+        // 変更内容を取得（FULL sync なので全体のテキストが送られてくる）
         let Some(change) = params.content_changes.into_iter().last() else {
             return;
         };
         let new_content = change.text;
 
         // ファイル内容を更新して解析
-        let key_usages_count = {
+        let (_source_file, diagnostics) = {
             // データベースのロックを取得（可変参照が必要）
             let mut db = self.db.lock().await;
             let mut source_files = self.source_files.lock().await;
@@ -283,24 +304,22 @@ impl LanguageServer for Backend {
                 source_file
             };
 
-            // analyze_source を実行（Salsa が自動的に差分計算）
-            let key_usages = crate::syntax::analyze_source(&*db, source_file);
-            key_usages.len()
+            // 診断メッセージを生成
+            let translations = self.translations.lock().await;
+            let diagnostics =
+                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations);
+
+            (source_file, diagnostics)
             // ここでロックが自動的に解放される
         };
 
-        self.client
-            .log_message(
-                MessageType::LOG,
-                format!(
-                    "File changed: {}, found {} key usages",
-                    file_path.display(),
-                    key_usages_count
-                ),
-            )
-            .await;
+        // 診断メッセージを送信
+        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
 
-        // TODO: Phase 4 で診断メッセージを送信
+        tracing::debug!(
+            uri = %uri,
+            "File changed and diagnostics sent"
+        );
     }
 
     async fn did_save(&self, _: DidSaveTextDocumentParams) {

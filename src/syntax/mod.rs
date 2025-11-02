@@ -18,6 +18,10 @@ pub fn analyze_source(db: &dyn I18nDatabase, file: SourceFile) -> Vec<KeyUsage<'
     let tree_sitter_lang = language.tree_sitter_language();
     let queries = analyzer::query_loader::load_queries(language);
 
+    tracing::debug!("Analyzing source file '{}' with language '{:?}'", file.uri(db), language);
+    tracing::debug!("Source text:\n{}", text);
+    tracing::debug!("Using queries: {:?}", queries);
+
     let trans_fn_calls =
         analyzer::extractor::analyze_trans_fn_calls(text, &tree_sitter_lang, &queries)
             .unwrap_or_default();
