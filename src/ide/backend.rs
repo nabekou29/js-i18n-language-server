@@ -1,5 +1,7 @@
 //! LSP Backend 実装
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -41,6 +43,7 @@ use tower_lsp::{
 use crate::config::ConfigManager;
 use crate::db::I18nDatabaseImpl;
 use crate::indexer::workspace::WorkspaceIndexer;
+use crate::input::source::SourceFile;
 
 /// LSP Backend
 #[derive(Clone)]
@@ -53,6 +56,8 @@ pub struct Backend {
     pub workspace_indexer: Arc<WorkspaceIndexer>,
     /// Salsa データベース
     pub db: Arc<Mutex<I18nDatabaseImpl>>,
+    /// `SourceFile` 管理（ファイルパス → `SourceFile`）
+    pub source_files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
 }
 
 impl Backend {
@@ -65,6 +70,44 @@ impl Backend {
     /// クライアントとの通信に失敗した場合
     async fn get_workspace_folders(&self) -> Result<Vec<WorkspaceFolder>> {
         self.client.workspace_folders().await.map(Option::unwrap_or_default)
+    }
+
+    /// ワークスペースを再インデックス
+    ///
+    /// 新しい Salsa データベースを作成して、全ファイルを再インデックスします。
+    /// これにより、設定変更が反映され、古いキャッシュがクリアされます。
+    async fn reindex_workspace(&self) {
+        self.client.log_message(MessageType::INFO, "Reindexing workspace...").await;
+
+        // 新しい Salsa データベースを作成（古いキャッシュをクリア）
+        let new_db = I18nDatabaseImpl::default();
+        *self.db.lock().await = new_db;
+
+        // source_files をクリア
+        self.source_files.lock().await.clear();
+
+        // ワークスペースを再インデックス
+        if let Ok(workspace_folders) = self.get_workspace_folders().await {
+            for folder in workspace_folders {
+                if let Ok(workspace_path) = folder.uri.to_file_path() {
+                    let config_manager = self.config_manager.lock().await;
+                    let db = self.db.lock().await.clone();
+                    let source_files = self.source_files.clone();
+
+                    if let Err(error) = self
+                        .workspace_indexer
+                        .index_workspace(db, &workspace_path, &config_manager, source_files)
+                        .await
+                    {
+                        self.client
+                            .log_message(MessageType::ERROR, format!("Reindexing failed: {error}"))
+                            .await;
+                    } else {
+                        self.client.log_message(MessageType::INFO, "Reindexing complete").await;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -134,9 +177,12 @@ impl LanguageServer for Backend {
                     // Database をクローン（Salsa のクローンは安価）
                     let db = self.db.lock().await.clone();
 
+                    // source_files をクローン（Arc のクローンは安価）
+                    let source_files = self.source_files.clone();
+
                     if let Err(error) = self
                         .workspace_indexer
-                        .index_workspace(db, &workspace_path, &config_manager)
+                        .index_workspace(db, &workspace_path, &config_manager, source_files)
                         .await
                     {
                         self.client
@@ -162,17 +208,20 @@ impl LanguageServer for Backend {
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         self.client.log_message(MessageType::INFO, "configuration changed!").await;
 
-        // 設定を更新（Phase 1: 基本的な更新のみ、Phase 3 で再インデックスを実装予定）
+        // 設定を更新
         if let Ok(new_settings) =
             serde_json::from_value::<crate::config::I18nSettings>(params.settings)
         {
             let mut config_manager = self.config_manager.lock().await;
             match config_manager.update_settings(new_settings) {
                 Ok(()) => {
+                    drop(config_manager); // ロックを解放
                     self.client
                         .log_message(MessageType::INFO, "Configuration updated successfully")
                         .await;
-                    // TODO: Phase 3 で再インデックスをトリガー
+
+                    // 設定変更後、ワークスペースを再インデックス
+                    self.reindex_workspace().await;
                 }
                 Err(error) => {
                     self.client
@@ -194,8 +243,64 @@ impl LanguageServer for Backend {
         self.client.log_message(MessageType::INFO, "file opened!").await;
     }
 
-    async fn did_change(&self, _params: DidChangeTextDocumentParams) {
-        self.client.log_message(MessageType::INFO, "file changed!").await;
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        use salsa::Setter;
+
+        let uri = params.text_document.uri;
+
+        // ファイルパスを取得
+        let Ok(file_path) = uri.to_file_path() else {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            return;
+        };
+
+        // 変更内容を取得（最後の変更を使用）
+        let Some(change) = params.content_changes.into_iter().last() else {
+            return;
+        };
+        let new_content = change.text;
+
+        // ファイル内容を更新して解析
+        let key_usages_count = {
+            // データベースのロックを取得（可変参照が必要）
+            let mut db = self.db.lock().await;
+            let mut source_files = self.source_files.lock().await;
+
+            // 既存の SourceFile を探すか新規作成
+            let source_file = if let Some(existing) = source_files.get(&file_path) {
+                // 既存の SourceFile がある場合、内容を更新（Salsa が自動的に依存クエリを無効化）
+                existing.set_text(&mut *db).to(new_content);
+                *existing
+            } else {
+                // 新しい SourceFile を作成
+                use crate::input::source::{
+                    ProgrammingLanguage,
+                    SourceFile,
+                };
+                let language = ProgrammingLanguage::from_uri(uri.as_str());
+                let source_file = SourceFile::new(&*db, uri.to_string(), new_content, language);
+                source_files.insert(file_path.clone(), source_file);
+                source_file
+            };
+
+            // analyze_source を実行（Salsa が自動的に差分計算）
+            let key_usages = crate::syntax::analyze_source(&*db, source_file);
+            key_usages.len()
+            // ここでロックが自動的に解放される
+        };
+
+        self.client
+            .log_message(
+                MessageType::LOG,
+                format!(
+                    "File changed: {}, found {} key usages",
+                    file_path.display(),
+                    key_usages_count
+                ),
+            )
+            .await;
+
+        // TODO: Phase 4 で診断メッセージを送信
     }
 
     async fn did_save(&self, _: DidSaveTextDocumentParams) {

@@ -33,9 +33,15 @@ async fn main() {
     let config_manager = Arc::new(Mutex::new(ConfigManager::new()));
     let workspace_indexer = Arc::new(WorkspaceIndexer::new());
     let db = Arc::new(Mutex::new(I18nDatabaseImpl::default()));
+    let source_files = Arc::new(Mutex::new(std::collections::HashMap::new()));
 
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
-    let (service, socket) =
-        LspService::new(|client| Backend { client, config_manager, workspace_indexer, db });
+    let (service, socket) = LspService::new(|client| Backend {
+        client,
+        config_manager,
+        workspace_indexer,
+        db,
+        source_files,
+    });
     Server::new(stdin, stdout, socket).serve(service).await;
 }
