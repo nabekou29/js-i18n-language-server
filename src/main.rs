@@ -5,6 +5,7 @@ use std::sync::Arc;
 use js_i18n_language_server::{
     Backend,
     config::ConfigManager,
+    db::I18nDatabaseImpl,
     indexer::workspace::WorkspaceIndexer,
 };
 use tokio::sync::Mutex;
@@ -31,9 +32,10 @@ async fn main() {
 
     let config_manager = Arc::new(Mutex::new(ConfigManager::new()));
     let workspace_indexer = Arc::new(WorkspaceIndexer::new());
+    let db = Arc::new(Mutex::new(I18nDatabaseImpl::default()));
 
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
     let (service, socket) =
-        LspService::new(|client| Backend { client, config_manager, workspace_indexer });
+        LspService::new(|client| Backend { client, config_manager, workspace_indexer, db });
     Server::new(stdin, stdout, socket).serve(service).await;
 }

@@ -1,37 +1,26 @@
 //! TODO
+use std::path::Path;
 use std::path::PathBuf;
-use std::{
-    collections::HashMap,
-    path::Path,
-    sync::Arc,
-};
 
 use globset::{
     Glob,
     GlobSetBuilder,
 };
 use ignore::WalkBuilder;
-use tokio::sync::RwLock;
 use tower_lsp::lsp_types::Url;
 
 use crate::config::ConfigManager;
-use crate::indexer::types::{
-    IndexerError,
-    KeyUsageLocation,
-};
+use crate::indexer::types::IndexerError;
 
 /// TODO
 #[derive(Clone, Debug, Default)]
-pub struct WorkspaceIndexer {
-    /// TODO
-    usage_index: Arc<RwLock<HashMap<String, Vec<KeyUsageLocation>>>>,
-}
+pub struct WorkspaceIndexer {}
 
 impl WorkspaceIndexer {
     /// 新しいインデクサーを作成
     #[must_use]
-    pub fn new() -> Self {
-        Self { usage_index: Arc::new(RwLock::new(HashMap::new())) }
+    pub const fn new() -> Self {
+        Self {}
     }
 
     /// ワークスペースをインデックス
@@ -39,6 +28,7 @@ impl WorkspaceIndexer {
     /// # Errors
     pub async fn index_workspace(
         &self,
+        db: crate::db::I18nDatabaseImpl,
         workspace_path: &Path,
         config_manager: &ConfigManager,
     ) -> Result<(), IndexerError> {
@@ -48,16 +38,26 @@ impl WorkspaceIndexer {
         let exclude_patterns = &settings.exclude_patterns;
 
         let files = Self::find_source_files(workspace_path, include_patterns, exclude_patterns)?;
+
+        tracing::info!(file_count = files.len(), "Found source files");
+
         // 並列処理でファイルをインデックス
-        let futures: Vec<_> = files.iter().map(|file| self.index_file(file)).collect();
+        // 各ファイルに対して database のクローンを作成（Salsa のクローンは安価）
+        let futures: Vec<_> = files.iter().map(|file| self.index_file(db.clone(), file)).collect();
 
         futures::future::join_all(futures).await;
+
+        tracing::info!("Workspace indexing complete");
 
         Ok(())
     }
 
     /// 単一ファイルをインデックス
-    async fn index_file(&self, file_path: &PathBuf) -> Result<(), IndexerError> {
+    async fn index_file(
+        &self,
+        db: crate::db::I18nDatabaseImpl,
+        file_path: &PathBuf,
+    ) -> Result<(), IndexerError> {
         // ファイル内容を読み込み
         let content = match tokio::fs::read_to_string(file_path).await {
             Ok(content) => content,
@@ -74,7 +74,7 @@ impl WorkspaceIndexer {
         };
 
         // ファイル内容を解析してインデックスに追加
-        self.update_file(&uri, &content)
+        self.update_file(&db, &uri, &content)
     }
 
     /// ソースファイルを検索
@@ -149,9 +149,39 @@ impl WorkspaceIndexer {
 
     /// ファイル内容を更新
     ///
+    /// Salsa を使ってファイルを解析し、キー使用箇所を抽出してインデックスに保存します。
+    ///
     /// # Errors
-    /// 現在はエラーを返さない（TODO: 実装予定）
-    pub const fn update_file(&self, _uri: &Url, _content: &str) -> Result<(), IndexerError> {
+    /// 現在はエラーを返さない
+    pub fn update_file(
+        &self,
+        db: &crate::db::I18nDatabaseImpl,
+        uri: &Url,
+        content: &str,
+    ) -> Result<(), IndexerError> {
+        use crate::input::source::{
+            ProgrammingLanguage,
+            SourceFile,
+        };
+
+        // ファイルの言語を推論
+        let language = ProgrammingLanguage::from_uri(uri.as_str());
+
+        // SourceFile を作成（Salsa Input）
+        let source_file = SourceFile::new(db, uri.to_string(), content.to_string(), language);
+
+        // analyze_source クエリを実行（Salsa が自動的にキャッシュ）
+        let key_usages = crate::syntax::analyze_source(db, source_file);
+
+        tracing::debug!(
+            uri = %uri,
+            usages_count = key_usages.len(),
+            "Analyzed file"
+        );
+
+        // TODO: usage_index に保存する実装
+        // 現在は解析のみ実施
+
         Ok(())
     }
 }

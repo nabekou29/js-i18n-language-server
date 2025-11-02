@@ -39,10 +39,11 @@ use tower_lsp::{
 };
 
 use crate::config::ConfigManager;
+use crate::db::I18nDatabaseImpl;
 use crate::indexer::workspace::WorkspaceIndexer;
 
 /// LSP Backend
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Backend {
     /// LSP クライアント
     pub client: Client,
@@ -50,6 +51,8 @@ pub struct Backend {
     pub config_manager: Arc<Mutex<ConfigManager>>,
     /// ワークスペースインデクサー
     pub workspace_indexer: Arc<WorkspaceIndexer>,
+    /// Salsa データベース
+    pub db: Arc<Mutex<I18nDatabaseImpl>>,
 }
 
 impl Backend {
@@ -127,9 +130,13 @@ impl LanguageServer for Backend {
                 if let Ok(workspace_path) = folder.uri.to_file_path() {
                     // ConfigManager をロックして参照を取得
                     let config_manager = self.config_manager.lock().await;
+
+                    // Database をクローン（Salsa のクローンは安価）
+                    let db = self.db.lock().await.clone();
+
                     if let Err(error) = self
                         .workspace_indexer
-                        .index_workspace(&workspace_path, &config_manager)
+                        .index_workspace(db, &workspace_path, &config_manager)
                         .await
                     {
                         self.client
