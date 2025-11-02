@@ -330,13 +330,51 @@ impl LanguageServer for Backend {
         self.client.log_message(MessageType::INFO, "file closed!").await;
     }
 
-    async fn hover(&self, _params: HoverParams) -> Result<Option<Hover>> {
-        tracing::debug!("Hover params: {:?}", _params);
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        tracing::debug!(uri = %uri, line = position.line, character = position.character, "Hover request");
+
+        // ファイルパスを取得
+        let Ok(file_path) = uri.to_file_path() else {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            return Ok(None);
+        };
+
+        // SourceFile を取得
+        let source_file = {
+            let source_files = self.source_files.lock().await;
+            source_files.get(&file_path).copied()
+        };
+
+        let Some(source_file) = source_file else {
+            tracing::debug!("Source file not found in cache: {}", file_path.display());
+            return Ok(None);
+        };
+
+        // カーソル位置の翻訳キーを取得
+        let db = self.db.lock().await;
+        let source_position = crate::types::SourcePosition::from(position);
+        let Some(key) = crate::syntax::key_at_position(&*db, source_file, source_position) else {
+            tracing::debug!("No translation key found at position");
+            return Ok(None);
+        };
+
+        // 翻訳内容を取得
+        let translations = self.translations.lock().await;
+        let Some(hover_text) = crate::ide::hover::generate_hover_content(&*db, key, &translations)
+        else {
+            tracing::debug!("No translations found for key: {}", key.text(&*db));
+            return Ok(None);
+        };
+
+        tracing::debug!("Generated hover content for key: {}", key.text(&*db));
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: "**Hello from LSP!**\n\nThis is a hover message.".to_string(),
+                value: hover_text,
             }),
             range: None,
         }))
