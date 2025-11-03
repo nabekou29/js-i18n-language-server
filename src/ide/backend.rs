@@ -272,8 +272,52 @@ impl LanguageServer for Backend {
         self.client.log_message(MessageType::INFO, "watched files have changed!").await;
     }
 
-    async fn did_open(&self, _params: DidOpenTextDocumentParams) {
+    async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        use crate::input::source::{
+            ProgrammingLanguage,
+            SourceFile,
+        };
+
         self.client.log_message(MessageType::INFO, "file opened!").await;
+
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+
+        // ファイルパスを取得
+        let Ok(file_path) = uri.to_file_path() else {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            return;
+        };
+
+        // ファイル内容を作成して解析
+        let diagnostics = {
+            let db = self.db.lock().await;
+            let mut source_files = self.source_files.lock().await;
+
+            // 新しい SourceFile を作成（did_open なので常に新規作成）
+            let language = ProgrammingLanguage::from_uri(uri.as_str());
+            let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
+            source_files.insert(file_path.clone(), source_file);
+
+            drop(source_files);
+
+            // 診断メッセージを生成
+            let translations = self.translations.lock().await;
+            let diagnostics =
+                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations);
+            drop(db);
+            drop(translations);
+
+            diagnostics
+        };
+
+        // 診断メッセージを送信
+        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
+
+        tracing::debug!(
+            uri = %uri,
+            "File opened and diagnostics sent"
+        );
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
