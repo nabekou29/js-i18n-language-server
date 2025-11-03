@@ -51,6 +51,10 @@ vim.lsp.config("js_i18n_ls", {
 })
 vim.lsp.enable({ "js_i18n_ls" })
 
+vim.keymap.set("n", "gd", "<cmd>lua vim.lsp.buf.definition()<cr>")
+vim.keymap.set("n", "gr", "<cmd>lua vim.lsp.buf.references()<cr>")
+vim.keymap.set("n", "K", "<cmd>lua vim.lsp.buf.hover()<cr>")
+
 -- Register command
 vim.api.nvim_create_user_command("LspRestart", function()
     vim.lsp.stop_client(vim.lsp.get_clients())
