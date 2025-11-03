@@ -46,7 +46,7 @@ vim.lsp.log.set_level("info")
 
 vim.lsp.config("js_i18n_ls", {
     cmd = { "js-i18n-language-server" },
-    filetypes = { "javascript", "typescript", "javascriptreact", "typescriptreact", "jons" },
+    filetypes = { "javascript", "typescript", "javascriptreact", "typescriptreact", "json" },
     root_markers = { "package.json", ".git" },
 })
 vim.lsp.enable({ "js_i18n_ls" })

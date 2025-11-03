@@ -1,5 +1,5 @@
 {
-  "exists-key": "Key",
+  "key": "Key",
   "nested": {
     "key": "Nested Key"
   }
