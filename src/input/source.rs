@@ -28,14 +28,18 @@ pub enum ProgrammingLanguage {
 
 impl ProgrammingLanguage {
     /// ファイル URI から言語を推論
+    ///
+    /// # Returns
+    /// 対応する言語、またはサポート対象外の場合は `None`
     #[must_use]
-    pub fn from_uri(uri: &str) -> Self {
+    pub fn from_uri(uri: &str) -> Option<Self> {
         let file_path = Path::new(uri);
         match file_path.extension().and_then(|ext| ext.to_str()) {
-            Some("tsx") => Self::Tsx,
-            Some("ts") => Self::TypeScript,
-            Some("jsx") => Self::Jsx,
-            _ => Self::JavaScript,
+            Some("tsx") => Some(Self::Tsx),
+            Some("ts") => Some(Self::TypeScript),
+            Some("jsx") => Some(Self::Jsx),
+            Some("js") => Some(Self::JavaScript),
+            _ => None,
         }
     }
 
@@ -58,13 +62,15 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case::tsx("file.tsx", ProgrammingLanguage::Tsx)]
-    #[case::ts("file.ts", ProgrammingLanguage::TypeScript)]
-    #[case::jsx("file.jsx", ProgrammingLanguage::Jsx)]
-    #[case::js("file.js", ProgrammingLanguage::JavaScript)]
-    #[case::no_ext("file", ProgrammingLanguage::JavaScript)]
-    #[case::multiple_dots("file.config.ts", ProgrammingLanguage::TypeScript)]
-    fn test_from_uri(#[case] uri: &str, #[case] expected: ProgrammingLanguage) {
+    #[case::tsx("file.tsx", Some(ProgrammingLanguage::Tsx))]
+    #[case::ts("file.ts", Some(ProgrammingLanguage::TypeScript))]
+    #[case::jsx("file.jsx", Some(ProgrammingLanguage::Jsx))]
+    #[case::js("file.js", Some(ProgrammingLanguage::JavaScript))]
+    #[case::multiple_dots("file.config.ts", Some(ProgrammingLanguage::TypeScript))]
+    #[case::json("file.json", None)]
+    #[case::no_ext("file", None)]
+    #[case::unknown_ext("file.txt", None)]
+    fn test_from_uri(#[case] uri: &str, #[case] expected: Option<ProgrammingLanguage>) {
         let lang = ProgrammingLanguage::from_uri(uri);
         assert_eq!(lang, expected);
     }

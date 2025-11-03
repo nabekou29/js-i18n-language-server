@@ -9,6 +9,11 @@ use std::sync::LazyLock;
 
 use serde_json::Value;
 
+use crate::types::{
+    SourcePosition,
+    SourceRange,
+};
+
 /// RFC 5646 language codes
 /// Based on <http://tools.ietf.org/html/rfc5646>
 static LANGUAGE_CODES: LazyLock<HashSet<String>> = LazyLock::new(|| {
@@ -305,6 +310,15 @@ pub struct Translation {
     /// 例: { "common.hello": "Hello", "common.goodbye": "Goodbye" }
     #[returns(ref)]
     pub keys: HashMap<String, String>,
+
+    /// JSON ファイルの元テキスト
+    #[returns(ref)]
+    pub json_text: String,
+
+    /// キーと位置情報のマッピング
+    /// 例: { "common.hello": SourceRange { start: (2, 5), end: (2, 17) } }
+    #[returns(ref)]
+    pub key_ranges: HashMap<String, SourceRange>,
 }
 
 /// JSON をフラット化する
@@ -367,6 +381,176 @@ pub fn flatten_json(
     result
 }
 
+/// JSON ファイルからキーと位置情報のマッピングを抽出
+///
+/// tree-sitter-json を使って JSON をパースし、各キーの位置情報を取得します。
+///
+/// # Arguments
+/// * `json_text` - JSON ファイルの元テキスト
+/// * `separator` - キー区切り文字（通常は "." または "_"）
+///
+/// # Returns
+/// キーと位置情報のマッピング
+///
+/// # Examples
+/// ```json
+/// {
+///   "common": {
+///     "hello": "Hello"
+///   }
+/// }
+/// ```
+/// 上記の JSON の場合、`"common.hello"` キーと、その位置情報（`"hello"` の位置）がマッピングされます。
+#[must_use]
+#[allow(dead_code)]
+pub fn extract_key_ranges(json_text: &str, separator: &str) -> HashMap<String, SourceRange> {
+    let mut result = HashMap::new();
+
+    // tree-sitter でパース
+    let mut parser = tree_sitter::Parser::new();
+    let Ok(()) = parser.set_language(&tree_sitter_json::LANGUAGE.into()) else {
+        tracing::warn!("Failed to set tree-sitter-json language");
+        return result;
+    };
+
+    let Some(tree) = parser.parse(json_text, None) else {
+        tracing::warn!("Failed to parse JSON with tree-sitter");
+        return result;
+    };
+
+    let root_node = tree.root_node();
+
+    // 再帰的にキーと位置情報を抽出
+    extract_keys_from_node(root_node, json_text.as_bytes(), separator, None, &mut result);
+
+    result
+}
+
+/// ノードから再帰的にキーと位置情報を抽出するヘルパー関数
+///
+/// # Arguments
+/// * `node` - 現在のノード
+/// * `source` - JSON ソーステキストのバイト列
+/// * `separator` - キー区切り文字
+/// * `prefix` - 現在のキープレフィックス（親のキーパス）
+/// * `result` - 結果を格納する `HashMap`
+fn extract_keys_from_node(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+    separator: &str,
+    prefix: Option<&str>,
+    result: &mut HashMap<String, SourceRange>,
+) {
+    match node.kind() {
+        "document" | "object" => {
+            // object の場合、子ノードを探索
+            for i in 0..node.child_count() {
+                if let Some(child) = node.child(i) {
+                    extract_keys_from_node(child, source, separator, prefix, result);
+                }
+            }
+        }
+        "pair" => {
+            // pair ノードの場合、キーと値を抽出
+            // pair の構造: { key: value }
+            // 子ノード[0]: キー（string）
+            // 子ノード[1]: コロン ":"
+            // 子ノード[2]: 値（string, object, array など）
+
+            let Some(key_node) = node.child_by_field_name("key") else {
+                return;
+            };
+
+            let Some(value_node) = node.child_by_field_name("value") else {
+                return;
+            };
+
+            // キー文字列を取得（ダブルクォートを削除）
+            let Ok(key_text) = key_node.utf8_text(source) else {
+                tracing::warn!("Failed to get key text from node");
+                return;
+            };
+            let key = key_text.trim_matches('"');
+
+            // 完全なキーパスを構築
+            let full_key =
+                prefix.map_or_else(|| key.to_string(), |p| format!("{p}{separator}{key}"));
+
+            // キーノードの位置情報を SourceRange に変換
+            let start_pos = key_node.start_position();
+            let end_pos = key_node.end_position();
+            #[allow(clippy::cast_possible_truncation)]
+            let range = SourceRange {
+                start: SourcePosition {
+                    line: start_pos.row as u32,
+                    character: start_pos.column as u32,
+                },
+                end: SourcePosition { line: end_pos.row as u32, character: end_pos.column as u32 },
+            };
+
+            // 結果に追加
+            result.insert(full_key.clone(), range);
+
+            // 値が object の場合は再帰的に探索
+            if value_node.kind() == "object" {
+                extract_keys_from_node(value_node, source, separator, Some(&full_key), result);
+            }
+        }
+        _ => {
+            // その他のノードタイプは無視
+        }
+    }
+}
+
+impl Translation {
+    /// カーソル位置から翻訳キーを取得
+    ///
+    /// # Arguments
+    /// * `db` - Salsa データベース
+    /// * `position` - カーソル位置
+    ///
+    /// # Returns
+    /// カーソル位置にあるキー、見つからない場合は None
+    pub fn key_at_position(
+        self,
+        db: &dyn crate::db::I18nDatabase,
+        position: SourcePosition,
+    ) -> Option<crate::interned::TransKey<'_>> {
+        let key_ranges = self.key_ranges(db);
+
+        // key_ranges を走査して、位置が含まれるキーを検索
+        for (key, range) in key_ranges {
+            if position_in_range(position, *range) {
+                // TransKey を作成して返す
+                return Some(crate::interned::TransKey::new(db, key.clone()));
+            }
+        }
+
+        None
+    }
+}
+
+/// 位置が範囲内にあるかをチェック
+const fn position_in_range(position: SourcePosition, range: SourceRange) -> bool {
+    // 開始位置より前の場合
+    if position.line < range.start.line {
+        return false;
+    }
+    if position.line == range.start.line && position.character < range.start.character {
+        return false;
+    }
+
+    // 終了位置より後の場合
+    if position.line > range.end.line {
+        return false;
+    }
+    if position.line == range.end.line && position.character > range.end.character {
+        return false;
+    }
+
+    true
+}
+
 /// 翻訳ファイルを読み込む
 ///
 /// JSONファイルをパースして、Translation Input を作成します。
@@ -399,10 +583,20 @@ pub fn load_translation_file(
     // フラット化
     let keys = flatten_json(&json, separator, None);
 
+    // キーと位置情報のマッピングを抽出
+    let key_ranges = extract_key_ranges(&content, separator);
+
     // ファイルパスから言語コードを検出
     let language = detect_language_from_path(file_path);
 
-    Ok(Translation::new(db, language, file_path.to_string_lossy().to_string(), keys))
+    Ok(Translation::new(
+        db,
+        language,
+        file_path.to_string_lossy().to_string(),
+        keys,
+        content,
+        key_ranges,
+    ))
 }
 
 #[cfg(test)]
@@ -511,5 +705,118 @@ mod tests {
     fn test_detect_language_from_path(#[case] path: &str, #[case] expected: &str) {
         let result = detect_language_from_path(Path::new(path));
         assert_eq!(result, expected);
+    }
+
+    #[googletest::test]
+    fn test_extract_key_ranges_simple() {
+        let json_text = r#"{
+  "hello": "Hello",
+  "goodbye": "Goodbye"
+}"#;
+
+        let result = extract_key_ranges(json_text, ".");
+
+        expect_that!(result.len(), eq(2));
+        expect_that!(result.contains_key("hello"), eq(true));
+        expect_that!(result.contains_key("goodbye"), eq(true));
+
+        // "hello" キーの位置情報を確認（2行目、2文字目から）
+        let hello_range = result.get("hello");
+        expect_that!(hello_range, some(anything()));
+        if let Some(range) = hello_range {
+            expect_that!(range.start.line, eq(1)); // 0-indexed
+            expect_that!(range.start.character, eq(2));
+        }
+    }
+
+    #[googletest::test]
+    fn test_extract_key_ranges_nested() {
+        let json_text = r#"{
+  "common": {
+    "hello": "Hello",
+    "goodbye": "Goodbye"
+  }
+}"#;
+
+        let result = extract_key_ranges(json_text, ".");
+
+        expect_that!(result.len(), eq(3)); // "common", "common.hello", "common.goodbye"
+        expect_that!(result.contains_key("common"), eq(true));
+        expect_that!(result.contains_key("common.hello"), eq(true));
+        expect_that!(result.contains_key("common.goodbye"), eq(true));
+    }
+
+    #[googletest::test]
+    fn test_extract_key_ranges_with_dots_in_keys() {
+        // ユーザーが指摘したケース: キー自体に `.` が含まれている場合
+        let json_text = r#"{
+  "hoge.fuga": {
+    "piyo": "Hello"
+  },
+  "hoge": {
+    "foo.bar": "World"
+  }
+}"#;
+
+        let result = extract_key_ranges(json_text, ".");
+
+        // "hoge.fuga" と "piyo" を分割せず、"hoge.fuga" というキーとして認識
+        expect_that!(result.contains_key("hoge.fuga"), eq(true));
+        expect_that!(result.contains_key("hoge.fuga.piyo"), eq(true));
+
+        // "hoge" の下の "foo.bar" も同様
+        expect_that!(result.contains_key("hoge"), eq(true));
+        expect_that!(result.contains_key("hoge.foo.bar"), eq(true));
+
+        // 間違った分割結果がないことを確認
+        expect_that!(result.contains_key("hoge.foo"), eq(false));
+        expect_that!(result.contains_key("foo.bar"), eq(false));
+    }
+
+    #[googletest::test]
+    fn test_translation_key_at_position() {
+        use crate::db::I18nDatabaseImpl;
+
+        let db = I18nDatabaseImpl::default();
+
+        let json_text = r#"{
+  "hello": "Hello",
+  "nested": {
+    "key": "Value"
+  }
+}"#;
+
+        let default_json = json!({});
+        let parsed: Option<Value> = serde_json::from_str(json_text).ok();
+        let json_ref = parsed.as_ref().unwrap_or(&default_json);
+        let keys = flatten_json(json_ref, ".", None);
+        let key_ranges = extract_key_ranges(json_text, ".");
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test.json".to_string(),
+            keys,
+            json_text.to_string(),
+            key_ranges,
+        );
+
+        // "hello" の位置（1行目、2文字目）にカーソルがある場合
+        let position = SourcePosition { line: 1, character: 3 };
+        let key = translation.key_at_position(&db, position);
+
+        assert!(key.is_some(), "Expected key to be Some, but got None");
+        if let Some(k) = key {
+            assert_eq!(k.text(&db), &"hello".to_string());
+        }
+
+        // "nested.key" の "key" の位置（3行目）にカーソルがある場合
+        let position = SourcePosition { line: 3, character: 5 };
+        let key = translation.key_at_position(&db, position);
+
+        assert!(key.is_some(), "Expected key to be Some, but got None");
+        if let Some(k) = key {
+            assert_eq!(k.text(&db), &"nested.key".to_string());
+        }
     }
 }

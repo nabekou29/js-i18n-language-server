@@ -101,6 +101,13 @@ impl Backend {
             return;
         };
 
+        // 言語を判定
+        let Some(language) = ProgrammingLanguage::from_uri(uri.as_str()) else {
+            // サポート対象外のファイル（JSON など）は SourceFile として扱わない
+            tracing::debug!("Skipping SourceFile creation for unsupported file type: {}", uri);
+            return;
+        };
+
         // ファイル内容を更新して解析
         let diagnostics = {
             let mut db = self.db.lock().await;
@@ -109,7 +116,6 @@ impl Backend {
             // SourceFile を取得または作成
             let source_file = if force_create {
                 // 強制的に新規作成
-                let language = ProgrammingLanguage::from_uri(uri.as_str());
                 let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
                 source_files.insert(file_path.clone(), source_file);
                 source_file
@@ -119,7 +125,6 @@ impl Backend {
                 existing
             } else {
                 // SourceFile が存在しない場合は新規作成
-                let language = ProgrammingLanguage::from_uri(uri.as_str());
                 let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
                 source_files.insert(file_path.clone(), source_file);
                 source_file
@@ -238,6 +243,7 @@ impl LanguageServer for Backend {
                     all_commit_characters: None,
                     completion_item: None,
                 }),
+                references_provider: Some(OneOf::Left(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec!["dummy.do_something".to_string()],
                     work_done_progress_options: WorkDoneProgressOptions::default(),
@@ -419,5 +425,72 @@ impl LanguageServer for Backend {
             }),
             range: None,
         }))
+    }
+
+    async fn references(
+        &self,
+        params: tower_lsp::lsp_types::ReferenceParams,
+    ) -> Result<Option<Vec<tower_lsp::lsp_types::Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        tracing::debug!(uri = %uri, line = position.line, character = position.character, "References request");
+
+        // ファイルパスを取得
+        let Ok(file_path) = uri.to_file_path() else {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            return Ok(None);
+        };
+
+        let source_position = crate::types::SourcePosition::from(position);
+
+        // まず SourceFile から試す
+        let source_file = {
+            let source_files = self.source_files.lock().await;
+            source_files.get(&file_path).copied()
+        };
+
+        let db = self.db.lock().await;
+
+        let key = if let Some(source_file) = source_file {
+            // SourceFile からカーソル位置の翻訳キーを取得
+            crate::syntax::key_at_position(&*db, source_file, source_position)
+        } else {
+            // SourceFile が見つからない場合、Translation から試す
+            tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
+
+            let translations = self.translations.lock().await;
+            let file_path_str = file_path.to_string_lossy();
+
+            // ファイルパスが一致する Translation を検索
+            let translation =
+                translations.iter().find(|t| t.file_path(&*db) == file_path_str.as_ref());
+
+            if let Some(translation) = translation {
+                translation.key_at_position(&*db, source_position)
+            } else {
+                tracing::debug!("Translation not found for file: {}", file_path.display());
+                drop(translations);
+                drop(db);
+                return Ok(None);
+            }
+        };
+
+        let Some(key) = key else {
+            tracing::debug!("No translation key found at position");
+            drop(db);
+            return Ok(None);
+        };
+
+        // 全ソースファイルから参照を検索
+        let key_text = key.text(&*db).clone();
+        let source_files = self.source_files.lock().await;
+        let locations = crate::ide::references::find_references(&*db, key, &source_files);
+        drop(db);
+        drop(source_files);
+
+        tracing::debug!("Found {} references for key: {}", locations.len(), key_text);
+
+        if locations.is_empty() { Ok(None) } else { Ok(Some(locations)) }
     }
 }

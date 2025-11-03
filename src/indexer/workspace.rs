@@ -206,7 +206,7 @@ impl WorkspaceIndexer {
         use crate::input::source::ProgrammingLanguage;
 
         // ファイルの言語を推論
-        let language = ProgrammingLanguage::from_uri(uri.as_str());
+        let language = ProgrammingLanguage::from_uri(uri.as_str())?;
 
         // 新しい SourceFile を作成
         let source_file = SourceFile::new(db, uri.to_string(), content.to_string(), language);

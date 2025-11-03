@@ -107,7 +107,14 @@ mod tests {
         keys.insert("common.hello".to_string(), "Hello".to_string());
         keys.insert("common.goodbye".to_string(), "Goodbye".to_string());
 
-        let translation = Translation::new(&db, "en".to_string(), "en.json".to_string(), keys);
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "en.json".to_string(),
+            keys,
+            String::new(),
+            HashMap::new(),
+        );
 
         // 診断メッセージを生成
         let diagnostics = generate_diagnostics(&db, source_file, &[translation]);
@@ -145,7 +152,14 @@ mod tests {
         keys.insert("common.hello".to_string(), "Hello".to_string());
         keys.insert("common.goodbye".to_string(), "Goodbye".to_string());
 
-        let translation = Translation::new(&db, "en".to_string(), "en.json".to_string(), keys);
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "en.json".to_string(),
+            keys,
+            String::new(),
+            HashMap::new(),
+        );
 
         // 診断メッセージを生成
         let diagnostics = generate_diagnostics(&db, source_file, &[translation]);
@@ -177,10 +191,22 @@ mod tests {
         let mut keys_ja = HashMap::new();
         keys_ja.insert("errors.notFound".to_string(), "見つかりません".to_string());
 
-        let translation_en =
-            Translation::new(&db, "en".to_string(), "en.json".to_string(), keys_en);
-        let translation_ja =
-            Translation::new(&db, "ja".to_string(), "ja.json".to_string(), keys_ja);
+        let translation_en = Translation::new(
+            &db,
+            "en".to_string(),
+            "en.json".to_string(),
+            keys_en,
+            String::new(),
+            HashMap::new(),
+        );
+        let translation_ja = Translation::new(
+            &db,
+            "ja".to_string(),
+            "ja.json".to_string(),
+            keys_ja,
+            String::new(),
+            HashMap::new(),
+        );
 
         // 診断メッセージを生成
         let diagnostics = generate_diagnostics(&db, source_file, &[translation_en, translation_ja]);
