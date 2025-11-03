@@ -76,6 +76,75 @@ impl std::fmt::Debug for Backend {
 }
 
 impl Backend {
+    /// ソースファイルを更新または作成し、診断メッセージを生成・送信
+    ///
+    /// # Arguments
+    /// * `uri` - ファイルのURI
+    /// * `text` - ファイルの内容
+    /// * `force_create` - 既存の `SourceFile` を無視して新規作成するかどうか
+    async fn update_and_diagnose(
+        &self,
+        uri: tower_lsp::lsp_types::Url,
+        text: String,
+        force_create: bool,
+    ) {
+        use salsa::Setter;
+
+        use crate::input::source::{
+            ProgrammingLanguage,
+            SourceFile,
+        };
+
+        // ファイルパスを取得
+        let Ok(file_path) = uri.to_file_path() else {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            return;
+        };
+
+        // ファイル内容を更新して解析
+        let diagnostics = {
+            let mut db = self.db.lock().await;
+            let mut source_files = self.source_files.lock().await;
+
+            // SourceFile を取得または作成
+            let source_file = if force_create {
+                // 強制的に新規作成
+                let language = ProgrammingLanguage::from_uri(uri.as_str());
+                let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
+                source_files.insert(file_path.clone(), source_file);
+                source_file
+            } else if let Some(&existing) = source_files.get(&file_path) {
+                // 既存の SourceFile を更新
+                existing.set_text(&mut *db).to(text);
+                existing
+            } else {
+                // SourceFile が存在しない場合は新規作成
+                let language = ProgrammingLanguage::from_uri(uri.as_str());
+                let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
+                source_files.insert(file_path.clone(), source_file);
+                source_file
+            };
+            drop(source_files);
+
+            // 診断メッセージを生成
+            let translations = self.translations.lock().await;
+            let diagnostics =
+                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations);
+            drop(db);
+            drop(translations);
+
+            diagnostics
+        };
+
+        // 診断メッセージを送信
+        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
+
+        tracing::debug!(
+            uri = %uri,
+            "Diagnostics generated and sent"
+        );
+    }
+
     /// ワークスペースフォルダを取得
     ///
     /// クライアントからワークスペースフォルダのリストを取得します。
@@ -273,63 +342,16 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        use crate::input::source::{
-            ProgrammingLanguage,
-            SourceFile,
-        };
-
         self.client.log_message(MessageType::INFO, "file opened!").await;
 
         let uri = params.text_document.uri;
         let text = params.text_document.text;
 
-        // ファイルパスを取得
-        let Ok(file_path) = uri.to_file_path() else {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
-            return;
-        };
-
-        // ファイル内容を作成して解析
-        let diagnostics = {
-            let db = self.db.lock().await;
-            let mut source_files = self.source_files.lock().await;
-
-            // 新しい SourceFile を作成（did_open なので常に新規作成）
-            let language = ProgrammingLanguage::from_uri(uri.as_str());
-            let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
-            source_files.insert(file_path.clone(), source_file);
-
-            drop(source_files);
-
-            // 診断メッセージを生成
-            let translations = self.translations.lock().await;
-            let diagnostics =
-                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations);
-            drop(db);
-            drop(translations);
-
-            diagnostics
-        };
-
-        // 診断メッセージを送信
-        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
-
-        tracing::debug!(
-            uri = %uri,
-            "File opened and diagnostics sent"
-        );
+        self.update_and_diagnose(uri, text, true).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        use salsa::Setter;
-
         let uri = params.text_document.uri;
-
-        // ファイルパスを取得
-        let Ok(file_path) = uri.to_file_path() else {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
-            return;
-        };
 
         // 変更内容を取得（FULL sync なので全体のテキストが送られてくる）
         let Some(change) = params.content_changes.into_iter().last() else {
@@ -337,48 +359,7 @@ impl LanguageServer for Backend {
         };
         let new_content = change.text;
 
-        // ファイル内容を更新して解析
-        let (_source_file, diagnostics) = {
-            // データベースのロックを取得（可変参照が必要）
-            let mut db = self.db.lock().await;
-            let mut source_files = self.source_files.lock().await;
-
-            // 既存の SourceFile を探すか新規作成
-            let source_file = if let Some(existing) = source_files.get(&file_path) {
-                // 既存の SourceFile がある場合、内容を更新（Salsa が自動的に依存クエリを無効化）
-                existing.set_text(&mut *db).to(new_content);
-                *existing
-            } else {
-                // 新しい SourceFile を作成
-                use crate::input::source::{
-                    ProgrammingLanguage,
-                    SourceFile,
-                };
-                let language = ProgrammingLanguage::from_uri(uri.as_str());
-                let source_file = SourceFile::new(&*db, uri.to_string(), new_content, language);
-                source_files.insert(file_path.clone(), source_file);
-                source_file
-            };
-            drop(source_files);
-
-            // 診断メッセージを生成
-            let translations = self.translations.lock().await;
-            let diagnostics =
-                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations);
-            drop(db);
-            drop(translations);
-
-            (source_file, diagnostics)
-            // ここでロックが自動的に解放される
-        };
-
-        // 診断メッセージを送信
-        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
-
-        tracing::debug!(
-            uri = %uri,
-            "File changed and diagnostics sent"
-        );
+        self.update_and_diagnose(uri, new_content, false).await;
     }
 
     async fn did_save(&self, _: DidSaveTextDocumentParams) {
