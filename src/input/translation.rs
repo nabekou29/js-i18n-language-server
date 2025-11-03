@@ -407,7 +407,10 @@ pub fn load_translation_file(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use googletest::prelude::*;
+    use rstest::rstest;
     use serde_json::json;
 
     use super::*;
@@ -488,5 +491,25 @@ mod tests {
         expect_that!(result.get("number"), some(eq(&"42".to_string())));
         expect_that!(result.get("boolean"), some(eq(&"true".to_string())));
         expect_that!(result.get("null"), some(eq(&"null".to_string())));
+    }
+
+    #[rstest]
+    // Basic language detection
+    #[case("/path/to/locales/en/trans.json", "en")]
+    #[case("/path/to/locales/ja/trans.json", "ja")]
+    #[case("/path/to/locales/hoge/trans.json", "unknown")]
+    // Language name can be included anywhere in the path
+    #[case("/path/to/locales/sub/en.json", "en")]
+    #[case("/path/to/en/locales/trans.json", "en")]
+    #[case("/path/to/locales/en-trans.json", "unknown")] // Hyphenated, not separated
+    // Language names with various cases and separators
+    #[case("/path/to/locales/en-us/trans.json", "en-us")]
+    #[case("/path/to/locales/en_us/trans.json", "en_us")]
+    #[case("/path/to/locales/en-US/trans.json", "en-US")]
+    // When multiple locale names are included, the last match is returned
+    #[case("/path/to/locales/en/ja.json", "ja")]
+    fn test_detect_language_from_path(#[case] path: &str, #[case] expected: &str) {
+        let result = detect_language_from_path(Path::new(path));
+        assert_eq!(result, expected);
     }
 }
