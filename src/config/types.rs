@@ -69,6 +69,20 @@ pub struct I18nSettings {
     pub key_separator: String,
     /// ネームスペースの区切り文字
     pub namespace_separator: Option<String>,
+
+    /// インデックス設定
+    pub indexing: IndexingConfig,
+}
+
+/// インデックス処理の設定
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct IndexingConfig {
+    /// インデックス処理の並列スレッド数
+    ///
+    /// - `None`: デフォルト（CPUコア数の80%、最低1スレッド）
+    /// - `Some(n)`: 指定されたスレッド数を使用
+    pub num_threads: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -164,6 +178,7 @@ impl Default for I18nSettings {
             exclude_patterns: vec!["node_modules/**".to_string()],
             key_separator: ".".to_string(),
             namespace_separator: None,
+            indexing: IndexingConfig::default(),
         }
     }
 }
