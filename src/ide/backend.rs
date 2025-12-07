@@ -326,6 +326,7 @@ impl LanguageServer for Backend {
                     all_commit_characters: None,
                     completion_item: None,
                 }),
+                definition_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: vec!["dummy.do_something".to_string()],
@@ -606,6 +607,65 @@ impl LanguageServer for Backend {
             }),
             range: None,
         }))
+    }
+
+    async fn goto_definition(
+        &self,
+        params: tower_lsp::lsp_types::GotoDefinitionParams,
+    ) -> Result<Option<tower_lsp::lsp_types::GotoDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        tracing::debug!(uri = %uri, line = position.line, character = position.character, "Goto Definition request");
+
+        // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
+        if !self
+            .workspace_indexer
+            .wait_for_translations_indexed(std::time::Duration::from_millis(500))
+            .await
+        {
+            tracing::debug!("Goto Definition request - translations not indexed yet");
+            return Ok(None);
+        }
+
+        // ファイルパスを取得
+        let Ok(file_path) = uri.to_file_path() else {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            return Ok(None);
+        };
+
+        // SourceFile を取得
+        let source_file = {
+            let source_files = self.source_files.lock().await;
+            source_files.get(&file_path).copied()
+        };
+
+        let Some(source_file) = source_file else {
+            tracing::debug!("Source file not found: {}", file_path.display());
+            return Ok(None);
+        };
+
+        // カーソル位置の翻訳キーを取得
+        let db = self.db.lock().await;
+        let source_position = crate::types::SourcePosition::from(position);
+        let Some(key) = crate::syntax::key_at_position(&*db, source_file, source_position) else {
+            tracing::debug!("No translation key found at position");
+            return Ok(None);
+        };
+
+        // 翻訳ファイル内の定義を検索
+        let translations = self.translations.lock().await;
+        let locations = crate::ide::goto_definition::find_definitions(&*db, key, &translations);
+        drop(db);
+        drop(translations);
+
+        tracing::debug!("Found {} definitions for key", locations.len());
+
+        if locations.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(tower_lsp::lsp_types::GotoDefinitionResponse::Array(locations)))
+        }
     }
 
     async fn references(
