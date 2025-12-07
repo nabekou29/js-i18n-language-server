@@ -146,9 +146,6 @@ impl WorkspaceIndexer {
     where
         F: Fn(u32, u32) + Send + Sync + 'static,
     {
-        tracing::debug!(workspace_path = %workspace_path.display(), "Indexing workspace");
-        let start_time = std::time::Instant::now();
-
         let settings = config_manager.get_settings();
 
         // CPU飢餓を防ぐため、同時に処理するソースファイルの最大数
@@ -159,28 +156,22 @@ impl WorkspaceIndexer {
         let max_concurrent_files =
             settings.indexing.num_threads.unwrap_or_else(Self::default_num_threads);
 
+        tracing::info!(
+            workspace_path = %workspace_path.display(),
+            max_concurrent = max_concurrent_files,
+            "Indexing workspace"
+        );
+
         let include_patterns = &settings.include_patterns;
         let exclude_patterns = &settings.exclude_patterns;
 
         // ソースファイルをインデックス
-        let file_search_start = std::time::Instant::now();
         let files = Self::find_source_files(workspace_path, include_patterns, exclude_patterns)?;
-        tracing::info!(
-            file_count = files.len(),
-            elapsed_ms = file_search_start.elapsed().as_millis(),
-            "Found source files"
-        );
 
         // 翻訳ファイルを検索（総ファイル数計算のため先に実行）
-        let translation_search_start = std::time::Instant::now();
         let translation_pattern = vec![settings.translation_files.file_pattern.clone()];
         let translation_files =
             Self::find_source_files(workspace_path, &translation_pattern, exclude_patterns)?;
-        tracing::info!(
-            translation_file_count = translation_files.len(),
-            elapsed_ms = translation_search_start.elapsed().as_millis(),
-            "Found translation files"
-        );
 
         // 総ファイル数と進捗カウンター
         #[allow(clippy::cast_possible_truncation)]
@@ -209,12 +200,6 @@ impl WorkspaceIndexer {
         // 【ステップ1】翻訳ファイルを優先的にインデックス
         // LSP機能（Hover、Diagnostics）を早期に利用可能にするため、
         // 翻訳ファイルを先にインデックスして通知する
-        let translation_index_start = std::time::Instant::now();
-        tracing::info!(
-            translation_file_count = translation_files.len(),
-            "Starting translation files indexing"
-        );
-
         let mut loaded_translations = Vec::new();
         for file_path in &translation_files {
             match load_translation_file(&db, file_path, &settings.key_separator) {
@@ -245,20 +230,8 @@ impl WorkspaceIndexer {
         self.translations_indexed.store(true, Ordering::Release);
         self.translations_notify.notify_waiters();
 
-        tracing::info!(
-            elapsed_ms = translation_index_start.elapsed().as_millis(),
-            "Translation files indexing complete"
-        );
-
         // 【ステップ2】並列度を制限してソースファイルをインデックス
         // CPU飢餓を防ぐため、buffer_unordered で並列度を制限する
-        let source_index_start = std::time::Instant::now();
-        tracing::info!(
-            file_count = files.len(),
-            max_concurrent = max_concurrent_files,
-            cpu_cores = num_cpus::get(),
-            "Starting source file indexing with concurrency limit"
-        );
 
         let futures: Vec<_> = files
             .iter()
@@ -278,27 +251,18 @@ impl WorkspaceIndexer {
         let results: Vec<_> =
             stream::iter(futures).buffer_unordered(max_concurrent_files).collect().await;
 
-        tracing::info!(
-            elapsed_ms = source_index_start.elapsed().as_millis(),
-            "Source file indexing complete"
-        );
-
-        let insert_start = std::time::Instant::now();
         let mut source_files_guard = source_files.lock().await;
         for result in results.into_iter().flatten() {
             source_files_guard.insert(result.0, result.1);
         }
         drop(source_files_guard);
-        tracing::info!(
-            elapsed_ms = insert_start.elapsed().as_millis(),
-            "Source files insertion complete"
-        );
 
         self.indexing_completed.store(true, Ordering::Release);
 
         tracing::info!(
-            total_elapsed_ms = start_time.elapsed().as_millis(),
-            "Workspace indexing complete"
+            translation_files = translation_files.len(),
+            source_files = files.len(),
+            "Indexing complete"
         );
 
         Ok(())
