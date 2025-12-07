@@ -35,6 +35,7 @@ async fn main() {
     let db = Arc::new(Mutex::new(I18nDatabaseImpl::default()));
     let source_files = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let translations = Arc::new(Mutex::new(Vec::new()));
+    let opened_files = Arc::new(Mutex::new(std::collections::HashSet::new()));
 
     let (stdin, stdout) = (tokio::io::stdin(), tokio::io::stdout());
     let (service, socket) = LspService::new(|client| Backend {
@@ -44,6 +45,7 @@ async fn main() {
         db,
         source_files,
         translations,
+        opened_files,
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }

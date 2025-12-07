@@ -1,15 +1,28 @@
-//! TODO
+//! Workspace indexer implementation
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicBool,
+    AtomicU32,
+    Ordering,
+};
+use std::time::Duration;
 
+use futures::stream::{
+    self,
+    StreamExt,
+};
 use globset::{
     Glob,
     GlobSetBuilder,
 };
 use ignore::WalkBuilder;
-use tokio::sync::Mutex;
+use tokio::sync::{
+    Mutex,
+    Notify,
+};
 use tower_lsp::lsp_types::Url;
 
 use crate::config::ConfigManager;
@@ -20,27 +33,110 @@ use crate::input::translation::{
     load_translation_file,
 };
 
-/// TODO
-#[derive(Clone, Copy, Debug, Default)]
-pub struct WorkspaceIndexer {}
+/// Workspace indexer
+#[derive(Clone, Debug)]
+pub struct WorkspaceIndexer {
+    /// グローバルインデックスが完了したかどうか
+    indexing_completed: Arc<AtomicBool>,
+    /// 翻訳ファイルのインデックスが完了したかどうか
+    translations_indexed: Arc<AtomicBool>,
+    /// 翻訳インデックス完了通知
+    translations_notify: Arc<Notify>,
+}
+
+impl Default for WorkspaceIndexer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl WorkspaceIndexer {
     /// 新しいインデクサーを作成
     #[must_use]
-    pub const fn new() -> Self {
-        Self {}
+    pub fn new() -> Self {
+        Self {
+            indexing_completed: Arc::new(AtomicBool::new(false)),
+            translations_indexed: Arc::new(AtomicBool::new(false)),
+            translations_notify: Arc::new(Notify::new()),
+        }
+    }
+
+    /// インデックスが完了しているかチェック
+    #[must_use]
+    pub fn is_indexing_completed(&self) -> bool {
+        self.indexing_completed.load(Ordering::Acquire)
+    }
+
+    /// 翻訳ファイルのインデックスが完了しているかチェック
+    #[must_use]
+    pub fn is_translations_indexed(&self) -> bool {
+        self.translations_indexed.load(Ordering::Acquire)
+    }
+
+    /// インデックス状態をリセット
+    ///
+    /// ワークスペースの再インデックス時に呼び出され、
+    /// 全ての状態フラグを初期化する。
+    pub fn reset_indexing_state(&self) {
+        tracing::info!("Resetting indexing state");
+        self.indexing_completed.store(false, Ordering::Release);
+        self.translations_indexed.store(false, Ordering::Release);
+    }
+
+    /// 翻訳ファイルのインデックス完了を待つ（タイムアウト付き）
+    ///
+    /// タイムアウト内にインデックスが完了すれば `true`、
+    /// タイムアウトした場合は `false` を返す。
+    ///
+    /// # Arguments
+    /// * `timeout` - 待機時間の上限
+    pub async fn wait_for_translations_indexed(&self, timeout: Duration) -> bool {
+        // すでに完了している場合は即座に返す
+        if self.translations_indexed.load(Ordering::Acquire) {
+            tracing::debug!("Translations already indexed");
+            return true;
+        }
+
+        // タイムアウト付きで通知を待機
+        tokio::select! {
+            () = self.translations_notify.notified() => {
+                // 通知を受け取ったので状態を確認
+                let indexed = self.translations_indexed.load(Ordering::Acquire);
+                tracing::debug!(indexed, "Translation index notification received");
+                indexed
+            }
+            () = tokio::time::sleep(timeout) => {
+                tracing::debug!("Timeout waiting for translations indexed");
+                false
+            }
+        }
     }
 
     /// ワークスペースをインデックス
     ///
+    /// 翻訳ファイルを優先的にインデックスした後、ソースファイルを並列度制限付きで処理する。
+    /// これにより、LSP機能（Hover、Diagnostics）が早期に利用可能になる。
+    ///
     /// # Errors
-    pub async fn index_workspace(
+    /// ファイル検索やパターンのビルドに失敗した場合、`IndexerError` を返す。
+    pub async fn index_workspace<F>(
         &self,
         db: crate::db::I18nDatabaseImpl,
         workspace_path: &Path,
         config_manager: &ConfigManager,
         source_files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
-    ) -> Result<Vec<Translation>, IndexerError> {
+        translations: Arc<Mutex<Vec<Translation>>>,
+        progress_callback: Option<F>,
+    ) -> Result<(), IndexerError>
+    where
+        F: Fn(u32, u32) + Send + Sync + 'static,
+    {
+        /// CPU飢餓を防ぐため、同時に処理するソースファイルの最大数
+        ///
+        /// この値が大きすぎると、Tree-sitterによる構文解析が多数のタスクでCPUを独占し、
+        /// 他の非同期タスク（LSPリクエスト処理など）がスケジュールされなくなる。
+        const MAX_CONCURRENT_FILES: usize = 10;
+
         tracing::debug!(workspace_path = %workspace_path.display(), "Indexing workspace");
         let settings = config_manager.get_settings();
         let include_patterns = &settings.include_patterns;
@@ -51,27 +147,46 @@ impl WorkspaceIndexer {
 
         tracing::info!(file_count = files.len(), "Found source files");
 
-        // 並列処理でファイルをインデックス
-        // 各ファイルに対して database のクローンを作成（Salsa のクローンは安価）
-        let futures: Vec<_> = files.iter().map(|file| self.index_file(db.clone(), file)).collect();
-
-        let results = futures::future::join_all(futures).await;
-
-        // 結果を source_files に登録
-        let mut source_files_guard = source_files.lock().await;
-        for (file_path, source_file) in results.into_iter().flatten() {
-            source_files_guard.insert(file_path, source_file);
-        }
-        drop(source_files_guard);
-
-        // 翻訳ファイルをインデックス
+        // 翻訳ファイルを検索（総ファイル数計算のため先に実行）
         let translation_pattern = vec![settings.translation_files.file_pattern.clone()];
         let translation_files =
             Self::find_source_files(workspace_path, &translation_pattern, exclude_patterns)?;
 
         tracing::info!(translation_file_count = translation_files.len(), "Found translation files");
 
-        let mut translations = Vec::new();
+        // 総ファイル数と進捗カウンター
+        #[allow(clippy::cast_possible_truncation)]
+        let total_files = (files.len() + translation_files.len()) as u32;
+        let processed_files = Arc::new(AtomicU32::new(0));
+        let last_reported_percent = Arc::new(AtomicU32::new(0));
+
+        // 進捗報告ヘルパー（5%刻みまたは10ファイルごと）
+        let report_progress = Arc::new(move |current: u32| {
+            if let Some(ref callback) = progress_callback {
+                let current_percent =
+                    if total_files > 0 { (current * 100) / total_files } else { 0 };
+                let last_percent = last_reported_percent.load(Ordering::Relaxed);
+
+                // 5%以上変化したか、10ファイルごと、または最後のファイル
+                if current_percent >= last_percent + 5
+                    || current.is_multiple_of(10)
+                    || current == total_files
+                {
+                    callback(current, total_files);
+                    last_reported_percent.store(current_percent, Ordering::Relaxed);
+                }
+            }
+        });
+
+        // 【ステップ1】翻訳ファイルを優先的にインデックス
+        // LSP機能（Hover、Diagnostics）を早期に利用可能にするため、
+        // 翻訳ファイルを先にインデックスして通知する
+        tracing::info!(
+            translation_file_count = translation_files.len(),
+            "Starting translation files indexing"
+        );
+
+        let mut loaded_translations = Vec::new();
         for file_path in &translation_files {
             match load_translation_file(&db, file_path, &settings.key_separator) {
                 Ok(translation) => {
@@ -81,7 +196,7 @@ impl WorkspaceIndexer {
                         key_count = translation.keys(&db).len(),
                         "Loaded translation file"
                     );
-                    translations.push(translation);
+                    loaded_translations.push(translation);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -91,11 +206,55 @@ impl WorkspaceIndexer {
                     );
                 }
             }
+
+            let current = processed_files.fetch_add(1, Ordering::Relaxed) + 1;
+            report_progress(current);
         }
+
+        // 翻訳データを保存してから通知（順序が重要）
+        translations.lock().await.extend(loaded_translations);
+        self.translations_indexed.store(true, Ordering::Release);
+        self.translations_notify.notify_waiters();
+
+        tracing::info!("Translation files indexing complete");
+
+        // 【ステップ2】並列度を制限してソースファイルをインデックス
+        // CPU飢餓を防ぐため、buffer_unordered で並列度を制限する
+        tracing::info!(
+            file_count = files.len(),
+            max_concurrent = MAX_CONCURRENT_FILES,
+            "Starting source file indexing with concurrency limit"
+        );
+
+        let futures: Vec<_> = files
+            .iter()
+            .map(|file| {
+                let db_clone = db.clone();
+                let processed = Arc::clone(&processed_files);
+                let report = Arc::clone(&report_progress);
+                async move {
+                    let result = self.index_file(db_clone, file).await;
+                    let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
+                    report(current);
+                    result
+                }
+            })
+            .collect();
+
+        let results: Vec<_> =
+            stream::iter(futures).buffer_unordered(MAX_CONCURRENT_FILES).collect().await;
+
+        let mut source_files_guard = source_files.lock().await;
+        for result in results.into_iter().flatten() {
+            source_files_guard.insert(result.0, result.1);
+        }
+        drop(source_files_guard);
+
+        self.indexing_completed.store(true, Ordering::Release);
 
         tracing::info!("Workspace indexing complete");
 
-        Ok(translations)
+        Ok(())
     }
 
     /// 単一ファイルをインデックス

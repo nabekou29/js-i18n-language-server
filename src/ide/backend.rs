@@ -1,6 +1,9 @@
 //! LSP Backend 実装
 
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -26,14 +29,22 @@ use tower_lsp::lsp_types::{
     MarkupContent,
     MarkupKind,
     MessageType,
+    NumberOrString,
     OneOf,
+    ProgressParams,
+    ProgressParamsValue,
     ServerCapabilities,
     TextDocumentSyncCapability,
     TextDocumentSyncKind,
+    WorkDoneProgress,
+    WorkDoneProgressBegin,
+    WorkDoneProgressEnd,
     WorkDoneProgressOptions,
+    WorkDoneProgressReport,
     WorkspaceFolder,
     WorkspaceFoldersServerCapabilities,
     WorkspaceServerCapabilities,
+    notification::Progress,
 };
 use tower_lsp::{
     Client,
@@ -61,6 +72,8 @@ pub struct Backend {
     pub source_files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
     /// 翻訳データ
     pub translations: Arc<Mutex<Vec<Translation>>>,
+    /// 現在開いているファイルの URI
+    pub opened_files: Arc<Mutex<HashSet<tower_lsp::lsp_types::Url>>>,
 }
 
 impl std::fmt::Debug for Backend {
@@ -71,11 +84,58 @@ impl std::fmt::Debug for Backend {
             .field("db", &"<I18nDatabaseImpl>")
             .field("source_files", &"<HashMap<PathBuf, SourceFile>>")
             .field("translations", &"<Vec<Translation>>")
+            .field("opened_files", &"<HashSet<Url>>")
             .finish_non_exhaustive()
     }
 }
 
 impl Backend {
+    /// 開いているすべてのファイルに diagnostics を送信
+    async fn send_diagnostics_to_opened_files(&self) {
+        use crate::input::source::ProgrammingLanguage;
+
+        let opened_files = self.opened_files.lock().await;
+        let file_count = opened_files.len();
+
+        tracing::info!(file_count, "Sending diagnostics to opened files");
+
+        for uri in opened_files.iter() {
+            // ファイルパスを取得
+            let Ok(file_path) = uri.to_file_path() else {
+                tracing::warn!("Failed to convert URI to file path: {}", uri);
+                continue;
+            };
+
+            // 言語を判定（サポート対象外ならスキップ）
+            if ProgrammingLanguage::from_uri(uri.as_str()).is_none() {
+                tracing::debug!("Skipping diagnostics for unsupported file type: {}", uri);
+                continue;
+            }
+
+            // SourceFile を取得
+            let source_file = {
+                let source_files = self.source_files.lock().await;
+                source_files.get(&file_path).copied()
+            };
+
+            let Some(source_file) = source_file else {
+                tracing::debug!("Source file not found: {}", file_path.display());
+                continue;
+            };
+
+            // Diagnostics を生成
+            let diagnostics = {
+                let db = self.db.lock().await;
+                let translations = self.translations.lock().await;
+                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations)
+            };
+
+            // Diagnostics を送信
+            self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
+            tracing::debug!(uri = %uri, "Diagnostics sent");
+        }
+    }
+
     /// ソースファイルを更新または作成し、診断メッセージを生成・送信
     ///
     /// # Arguments
@@ -95,6 +155,8 @@ impl Backend {
             SourceFile,
         };
 
+        tracing::info!(uri = %uri, force_create, "Updating source file and diagnosing");
+
         // ファイルパスを取得
         let Ok(file_path) = uri.to_file_path() else {
             tracing::warn!("Failed to convert URI to file path: {}", uri);
@@ -108,46 +170,59 @@ impl Backend {
             return;
         };
 
-        // ファイル内容を更新して解析
-        let diagnostics = {
+        // SourceFile を更新
+        let source_file = {
             let mut db = self.db.lock().await;
             let mut source_files = self.source_files.lock().await;
 
             // SourceFile を取得または作成
-            let source_file = if force_create {
+            if force_create {
                 // 強制的に新規作成
                 let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
                 source_files.insert(file_path.clone(), source_file);
+                drop(db);
+                drop(source_files);
                 source_file
             } else if let Some(&existing) = source_files.get(&file_path) {
                 // 既存の SourceFile を更新
                 existing.set_text(&mut *db).to(text);
+                drop(db);
+                drop(source_files);
                 existing
             } else {
                 // SourceFile が存在しない場合は新規作成
                 let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
                 source_files.insert(file_path.clone(), source_file);
+                drop(db);
+                drop(source_files);
                 source_file
-            };
-            drop(source_files);
-
-            // 診断メッセージを生成
-            let translations = self.translations.lock().await;
-            let diagnostics =
-                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations);
-            drop(db);
-            drop(translations);
-
-            diagnostics
+            }
         };
 
-        // 診断メッセージを送信
-        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
+        tracing::info!(uri = %uri, "Source file updated");
 
-        tracing::debug!(
-            uri = %uri,
-            "Diagnostics generated and sent"
-        );
+        // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
+        // タイムアウトした場合は diagnostics をスキップ
+        if !self
+            .workspace_indexer
+            .wait_for_translations_indexed(std::time::Duration::from_millis(500))
+            .await
+        {
+            tracing::debug!(uri = %uri, "Skipping diagnostics - translations not indexed yet");
+            return;
+        }
+
+        tracing::debug!(uri = %uri, "Generating diagnostics");
+
+        // 翻訳インデックス完了後に診断メッセージを生成して送信
+        let diagnostics = {
+            let db = self.db.lock().await;
+            let translations = self.translations.lock().await;
+            crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations)
+        };
+
+        self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
+        tracing::debug!(uri = %uri, "Diagnostics generated and sent");
     }
 
     /// ワークスペースフォルダを取得
@@ -176,6 +251,9 @@ impl Backend {
         self.source_files.lock().await.clear();
         self.translations.lock().await.clear();
 
+        // インデックス状態をリセット
+        self.workspace_indexer.reset_indexing_state();
+
         // ワークスペースを再インデックス
         if let Ok(workspace_folders) = self.get_workspace_folders().await {
             for folder in workspace_folders {
@@ -186,12 +264,17 @@ impl Backend {
 
                     match self
                         .workspace_indexer
-                        .index_workspace(db, &workspace_path, &config_manager, source_files)
+                        .index_workspace(
+                            db,
+                            &workspace_path,
+                            &config_manager,
+                            source_files,
+                            self.translations.clone(),
+                            None::<fn(u32, u32)>,
+                        )
                         .await
                     {
-                        Ok(translations) => {
-                            // 翻訳データを保存
-                            *self.translations.lock().await = translations;
+                        Ok(()) => {
                             self.client.log_message(MessageType::INFO, "Reindexing complete").await;
                         }
                         Err(error) => {
@@ -270,6 +353,24 @@ impl LanguageServer for Backend {
 
             for folder in workspace_folders {
                 if let Ok(workspace_path) = folder.uri.to_file_path() {
+                    // 進捗トークン
+                    let token = NumberOrString::String("workspace-indexing".to_string());
+
+                    // 進捗開始通知
+                    self.client
+                        .send_notification::<Progress>(ProgressParams {
+                            token: token.clone(),
+                            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(
+                                WorkDoneProgressBegin {
+                                    title: "Indexing Workspace".to_string(),
+                                    cancellable: Some(false),
+                                    message: Some("Starting...".to_string()),
+                                    percentage: Some(0),
+                                },
+                            )),
+                        })
+                        .await;
+
                     // ConfigManager をロックして参照を取得
                     let config_manager = self.config_manager.lock().await;
 
@@ -279,19 +380,71 @@ impl LanguageServer for Backend {
                     // source_files をクローン（Arc のクローンは安価）
                     let source_files = self.source_files.clone();
 
+                    // 進捗報告コールバック
+                    let client = self.client.clone();
+                    let progress_callback = move |current: u32, total: u32| {
+                        let token = token.clone();
+                        let client = client.clone();
+                        tokio::spawn(async move {
+                            let percentage = if total > 0 { (current * 100) / total } else { 0 };
+                            client
+                                .send_notification::<Progress>(ProgressParams {
+                                    token,
+                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::Report(
+                                        WorkDoneProgressReport {
+                                            cancellable: Some(false),
+                                            message: Some(format!(
+                                                "Processing files: {current}/{total}"
+                                            )),
+                                            percentage: Some(percentage),
+                                        },
+                                    )),
+                                })
+                                .await;
+                        });
+                    };
+
+                    // インデックス実行
                     match self
                         .workspace_indexer
-                        .index_workspace(db, &workspace_path, &config_manager, source_files)
+                        .index_workspace(
+                            db,
+                            &workspace_path,
+                            &config_manager,
+                            source_files,
+                            self.translations.clone(),
+                            Some(progress_callback),
+                        )
                         .await
                     {
-                        Ok(translations) => {
-                            // 翻訳データを保存
-                            *self.translations.lock().await = translations;
+                        Ok(()) => {
+                            // 進捗完了通知
                             self.client
-                                .log_message(MessageType::INFO, "Workspace indexing complete")
+                                .send_notification::<Progress>(ProgressParams {
+                                    token: NumberOrString::String("workspace-indexing".to_string()),
+                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
+                                        WorkDoneProgressEnd {
+                                            message: Some(
+                                                "Workspace indexing complete".to_string(),
+                                            ),
+                                        },
+                                    )),
+                                })
                                 .await;
                         }
                         Err(error) => {
+                            // エラー時も進捗を終了
+                            self.client
+                                .send_notification::<Progress>(ProgressParams {
+                                    token: NumberOrString::String("workspace-indexing".to_string()),
+                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
+                                        WorkDoneProgressEnd {
+                                            message: Some(format!("Indexing failed: {error}")),
+                                        },
+                                    )),
+                                })
+                                .await;
+
                             self.client
                                 .log_message(
                                     MessageType::ERROR,
@@ -302,6 +455,9 @@ impl LanguageServer for Backend {
                     }
                 }
             }
+
+            // すべてのワークスペースフォルダーのインデックス完了後、診断を送信
+            self.send_diagnostics_to_opened_files().await;
         }
     }
 
@@ -350,8 +506,14 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         self.client.log_message(MessageType::INFO, "file opened!").await;
 
-        let uri = params.text_document.uri;
+        let uri = params.text_document.uri.clone();
         let text = params.text_document.text;
+
+        // 開いているファイルリストに追加
+        {
+            let mut opened_files = self.opened_files.lock().await;
+            opened_files.insert(uri.clone());
+        }
 
         self.update_and_diagnose(uri, text, true).await;
     }
@@ -372,8 +534,16 @@ impl LanguageServer for Backend {
         self.client.log_message(MessageType::INFO, "file saved!").await;
     }
 
-    async fn did_close(&self, _: DidCloseTextDocumentParams) {
+    async fn did_close(&self, params: DidCloseTextDocumentParams) {
         self.client.log_message(MessageType::INFO, "file closed!").await;
+
+        let uri = params.text_document.uri;
+
+        // 開いているファイルリストから削除
+        {
+            let mut opened_files = self.opened_files.lock().await;
+            opened_files.remove(&uri);
+        }
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -407,6 +577,17 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
+        // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
+        // タイムアウトした場合は hover情報なしを返す
+        if !self
+            .workspace_indexer
+            .wait_for_translations_indexed(std::time::Duration::from_millis(500))
+            .await
+        {
+            tracing::debug!("Hover request timeout - translations not indexed yet");
+            return Ok(None);
+        }
+
         // 翻訳内容を取得
         let translations = self.translations.lock().await;
         let Some(hover_text) = crate::ide::hover::generate_hover_content(&*db, key, &translations)
@@ -435,6 +616,12 @@ impl LanguageServer for Backend {
         let position = params.text_document_position.position;
 
         tracing::debug!(uri = %uri, line = position.line, character = position.character, "References request");
+
+        // 全インデックス完了をチェック（待機しない）
+        if !self.workspace_indexer.is_indexing_completed() {
+            tracing::debug!("References request - indexing not completed, returning empty results");
+            return Ok(Some(vec![]));
+        }
 
         // ファイルパスを取得
         let Ok(file_path) = uri.to_file_path() else {
