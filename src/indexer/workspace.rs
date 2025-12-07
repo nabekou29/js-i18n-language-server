@@ -83,6 +83,20 @@ impl WorkspaceIndexer {
         self.translations_indexed.store(false, Ordering::Release);
     }
 
+    /// デフォルトのスレッド数を計算
+    ///
+    /// CPUコア数の80%を返す（最低1スレッド）。
+    /// これはcclsなど他のLSP実装の例に従い、複数のLSPサーバーが
+    /// 同時に起動する環境を考慮した設定。
+    #[must_use]
+    fn default_num_threads() -> usize {
+        // CPUコア数の80% = (コア数 * 4) / 5
+        // 浮動小数点演算を避けるため整数演算を使用
+        let cpu_count = num_cpus::get();
+        let num_threads = (cpu_count * 4) / 5;
+        num_threads.max(1)
+    }
+
     /// 翻訳ファイルのインデックス完了を待つ（タイムアウト付き）
     ///
     /// タイムアウト内にインデックスが完了すれば `true`、
@@ -119,6 +133,7 @@ impl WorkspaceIndexer {
     ///
     /// # Errors
     /// ファイル検索やパターンのビルドに失敗した場合、`IndexerError` を返す。
+    #[allow(clippy::too_many_lines)]
     pub async fn index_workspace<F>(
         &self,
         db: crate::db::I18nDatabaseImpl,
@@ -131,28 +146,41 @@ impl WorkspaceIndexer {
     where
         F: Fn(u32, u32) + Send + Sync + 'static,
     {
-        /// CPU飢餓を防ぐため、同時に処理するソースファイルの最大数
-        ///
-        /// この値が大きすぎると、Tree-sitterによる構文解析が多数のタスクでCPUを独占し、
-        /// 他の非同期タスク（LSPリクエスト処理など）がスケジュールされなくなる。
-        const MAX_CONCURRENT_FILES: usize = 10;
-
         tracing::debug!(workspace_path = %workspace_path.display(), "Indexing workspace");
+        let start_time = std::time::Instant::now();
+
         let settings = config_manager.get_settings();
+
+        // CPU飢餓を防ぐため、同時に処理するソースファイルの最大数
+        //
+        // ユーザー設定がある場合はそれを使用し、ない場合はCPUコア数の80%をデフォルトとする。
+        // これはcclsなど他のLSP実装の例に従い、複数のLSPサーバーが同時に起動する
+        // 現代的な開発環境を考慮した設定。
+        let max_concurrent_files =
+            settings.indexing.num_threads.unwrap_or_else(Self::default_num_threads);
+
         let include_patterns = &settings.include_patterns;
         let exclude_patterns = &settings.exclude_patterns;
 
         // ソースファイルをインデックス
+        let file_search_start = std::time::Instant::now();
         let files = Self::find_source_files(workspace_path, include_patterns, exclude_patterns)?;
-
-        tracing::info!(file_count = files.len(), "Found source files");
+        tracing::info!(
+            file_count = files.len(),
+            elapsed_ms = file_search_start.elapsed().as_millis(),
+            "Found source files"
+        );
 
         // 翻訳ファイルを検索（総ファイル数計算のため先に実行）
+        let translation_search_start = std::time::Instant::now();
         let translation_pattern = vec![settings.translation_files.file_pattern.clone()];
         let translation_files =
             Self::find_source_files(workspace_path, &translation_pattern, exclude_patterns)?;
-
-        tracing::info!(translation_file_count = translation_files.len(), "Found translation files");
+        tracing::info!(
+            translation_file_count = translation_files.len(),
+            elapsed_ms = translation_search_start.elapsed().as_millis(),
+            "Found translation files"
+        );
 
         // 総ファイル数と進捗カウンター
         #[allow(clippy::cast_possible_truncation)]
@@ -181,6 +209,7 @@ impl WorkspaceIndexer {
         // 【ステップ1】翻訳ファイルを優先的にインデックス
         // LSP機能（Hover、Diagnostics）を早期に利用可能にするため、
         // 翻訳ファイルを先にインデックスして通知する
+        let translation_index_start = std::time::Instant::now();
         tracing::info!(
             translation_file_count = translation_files.len(),
             "Starting translation files indexing"
@@ -216,13 +245,18 @@ impl WorkspaceIndexer {
         self.translations_indexed.store(true, Ordering::Release);
         self.translations_notify.notify_waiters();
 
-        tracing::info!("Translation files indexing complete");
+        tracing::info!(
+            elapsed_ms = translation_index_start.elapsed().as_millis(),
+            "Translation files indexing complete"
+        );
 
         // 【ステップ2】並列度を制限してソースファイルをインデックス
         // CPU飢餓を防ぐため、buffer_unordered で並列度を制限する
+        let source_index_start = std::time::Instant::now();
         tracing::info!(
             file_count = files.len(),
-            max_concurrent = MAX_CONCURRENT_FILES,
+            max_concurrent = max_concurrent_files,
+            cpu_cores = num_cpus::get(),
             "Starting source file indexing with concurrency limit"
         );
 
@@ -242,17 +276,30 @@ impl WorkspaceIndexer {
             .collect();
 
         let results: Vec<_> =
-            stream::iter(futures).buffer_unordered(MAX_CONCURRENT_FILES).collect().await;
+            stream::iter(futures).buffer_unordered(max_concurrent_files).collect().await;
 
+        tracing::info!(
+            elapsed_ms = source_index_start.elapsed().as_millis(),
+            "Source file indexing complete"
+        );
+
+        let insert_start = std::time::Instant::now();
         let mut source_files_guard = source_files.lock().await;
         for result in results.into_iter().flatten() {
             source_files_guard.insert(result.0, result.1);
         }
         drop(source_files_guard);
+        tracing::info!(
+            elapsed_ms = insert_start.elapsed().as_millis(),
+            "Source files insertion complete"
+        );
 
         self.indexing_completed.store(true, Ordering::Release);
 
-        tracing::info!("Workspace indexing complete");
+        tracing::info!(
+            total_elapsed_ms = start_time.elapsed().as_millis(),
+            "Workspace indexing complete"
+        );
 
         Ok(())
     }
@@ -278,8 +325,32 @@ impl WorkspaceIndexer {
             return None;
         };
 
-        // ファイル内容を解析してインデックスに追加
-        self.update_file(&db, &uri, &content).map(|source_file| (file_path.clone(), source_file))
+        let path_clone = file_path.clone();
+
+        // CPU集約的な解析処理を専用スレッドプールで実行
+        tokio::task::spawn_blocking(move || {
+            use crate::input::source::ProgrammingLanguage;
+
+            // ファイルの言語を推論
+            let language = ProgrammingLanguage::from_uri(uri.as_str())?;
+
+            // 新しい SourceFile を作成
+            let source_file = SourceFile::new(&db, uri.to_string(), content, language);
+
+            // analyze_source クエリを実行（Salsa が自動的にキャッシュ）
+            let key_usages = crate::syntax::analyze_source(&db, source_file);
+
+            tracing::debug!(
+                uri = %uri,
+                usages_count = key_usages.len(),
+                "Analyzed file"
+            );
+
+            Some((path_clone, source_file))
+        })
+        .await
+        .ok()
+        .flatten()
     }
 
     /// ソースファイルを検索
