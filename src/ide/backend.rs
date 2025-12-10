@@ -634,22 +634,43 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // SourceFile を取得
+        let source_position = crate::types::SourcePosition::from(position);
+
+        // まず SourceFile から試す
         let source_file = {
             let source_files = self.source_files.lock().await;
             source_files.get(&file_path).copied()
         };
 
-        let Some(source_file) = source_file else {
-            tracing::debug!("Source file not found: {}", file_path.display());
-            return Ok(None);
+        let db = self.db.lock().await;
+
+        let key = if let Some(source_file) = source_file {
+            // SourceFile からカーソル位置の翻訳キーを取得
+            crate::syntax::key_at_position(&*db, source_file, source_position)
+        } else {
+            // SourceFile が見つからない場合、Translation から試す
+            tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
+
+            let translations = self.translations.lock().await;
+            let file_path_str = file_path.to_string_lossy();
+
+            // ファイルパスが一致する Translation を検索
+            let translation =
+                translations.iter().find(|t| t.file_path(&*db) == file_path_str.as_ref());
+
+            if let Some(translation) = translation {
+                translation.key_at_position(&*db, source_position)
+            } else {
+                tracing::debug!("Translation not found for file: {}", file_path.display());
+                drop(translations);
+                drop(db);
+                return Ok(None);
+            }
         };
 
-        // カーソル位置の翻訳キーを取得
-        let db = self.db.lock().await;
-        let source_position = crate::types::SourcePosition::from(position);
-        let Some(key) = crate::syntax::key_at_position(&*db, source_file, source_position) else {
+        let Some(key) = key else {
             tracing::debug!("No translation key found at position");
+            drop(db);
             return Ok(None);
         };
 
