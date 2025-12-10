@@ -547,6 +547,69 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn completion(
+        &self,
+        params: tower_lsp::lsp_types::CompletionParams,
+    ) -> Result<Option<tower_lsp::lsp_types::CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        tracing::debug!(uri = %uri, line = position.line, character = position.character, "Completion request");
+
+        // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
+        if !self
+            .workspace_indexer
+            .wait_for_translations_indexed(std::time::Duration::from_millis(500))
+            .await
+        {
+            tracing::debug!("Completion request - translations not indexed yet");
+            return Ok(None);
+        }
+
+        // ファイルパスを取得
+        let Ok(file_path) = uri.to_file_path() else {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            return Ok(None);
+        };
+
+        // SourceFile を取得
+        let source_file = {
+            let source_files = self.source_files.lock().await;
+            source_files.get(&file_path).copied()
+        };
+
+        let Some(source_file) = source_file else {
+            tracing::debug!("Source file not found: {}", file_path.display());
+            return Ok(None);
+        };
+
+        // ファイルの内容を取得して部分キーを抽出
+        let db = self.db.lock().await;
+        let text = source_file.text(&*db);
+        let partial_key =
+            crate::ide::completion::extract_partial_key(text, position.line, position.character);
+
+        tracing::debug!(partial_key = ?partial_key, "Extracted partial key");
+
+        // 補完候補を生成
+        let translations = self.translations.lock().await;
+        let items = crate::ide::completion::generate_completions(
+            &*db,
+            &translations,
+            partial_key.as_deref(),
+        );
+        drop(db);
+        drop(translations);
+
+        tracing::debug!("Generated {} completion items", items.len());
+
+        if items.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(tower_lsp::lsp_types::CompletionResponse::Array(items)))
+        }
+    }
+
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
