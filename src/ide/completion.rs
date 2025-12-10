@@ -26,19 +26,15 @@ pub fn generate_completions(
     partial_key: Option<&str>,
 ) -> Vec<CompletionItem> {
     let mut completion_items = Vec::new();
-    let mut seen_keys = std::collections::HashSet::new();
+    let mut key_translations: std::collections::HashMap<String, Vec<(String, String)>> =
+        std::collections::HashMap::new();
 
-    // Collect all unique keys from all translations
+    // Collect all translations for each key
     for translation in translations {
         let keys = translation.keys(db);
         let language = translation.language(db);
 
         for (key, value) in keys {
-            // Skip if we've already seen this key
-            if seen_keys.contains(key.as_str()) {
-                continue;
-            }
-
             // Filter by partial key if provided
             if let Some(partial) = partial_key
                 && !key.starts_with(partial)
@@ -46,30 +42,47 @@ pub fn generate_completions(
                 continue;
             }
 
-            seen_keys.insert(key.clone());
-
-            // Create completion item
-            let mut item = CompletionItem {
-                label: key.clone(),
-                kind: Some(CompletionItemKind::CONSTANT),
-                detail: Some(format!("{value} ({language})")),
-                documentation: Some(Documentation::MarkupContent(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!("**{language}**: {value}"),
-                })),
-                ..Default::default()
-            };
-
-            // If we have a partial key, set insert text to only the remaining part
-            if let Some(partial) = partial_key
-                && !partial.is_empty()
-                && key.starts_with(partial)
-            {
-                item.insert_text = Some(key[partial.len()..].to_string());
-            }
-
-            completion_items.push(item);
+            key_translations
+                .entry(key.clone())
+                .or_default()
+                .push((language.clone(), value.clone()));
         }
+    }
+
+    // Create completion items for each unique key
+    for (key, lang_values) in key_translations {
+        // Skip if no translations found (should not happen)
+        let Some((first_lang, first_value)) = lang_values.first() else {
+            continue;
+        };
+
+        // Build documentation with all languages
+        let mut doc_lines = Vec::new();
+        for (lang, value) in &lang_values {
+            doc_lines.push(format!("- **{lang}**: {value}"));
+        }
+        let documentation_text = doc_lines.join("\n");
+
+        let mut item = CompletionItem {
+            label: key.clone(),
+            kind: Some(CompletionItemKind::CONSTANT),
+            detail: Some(format!("{first_value} ({first_lang})")),
+            documentation: Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: documentation_text,
+            })),
+            ..Default::default()
+        };
+
+        // If we have a partial key, set insert text to only the remaining part
+        if let Some(partial) = partial_key
+            && !partial.is_empty()
+            && key.starts_with(partial)
+        {
+            item.insert_text = Some(key[partial.len()..].to_string());
+        }
+
+        completion_items.push(item);
     }
 
     // Sort by label for consistent ordering
@@ -185,7 +198,7 @@ mod tests {
     }
 
     #[rstest]
-    fn generate_completions_deduplicates_keys() {
+    fn generate_completions_multiple_languages() {
         let db = I18nDatabaseImpl::default();
 
         // Same key in multiple languages
@@ -202,7 +215,7 @@ mod tests {
             &db,
             "ja".to_string(),
             "/test/ja.json".to_string(),
-            HashMap::from([("common.hello".to_string(), "Hello in Japanese".to_string())]),
+            HashMap::from([("common.hello".to_string(), "Konnichiwa".to_string())]),
             "{}".to_string(),
             HashMap::new(),
         );
@@ -210,9 +223,17 @@ mod tests {
         let translations = vec![en_translation, ja_translation];
         let items = generate_completions(&db, &translations, None);
 
-        // Should only have one item (deduplicated)
+        // Should have one item with both languages
         assert_that!(items.len(), eq(1));
         assert_that!(items[0].label, eq("common.hello"));
+
+        // Documentation should contain both languages
+        if let Some(Documentation::MarkupContent(content)) = &items[0].documentation {
+            assert_that!(content.value, contains_substring("en"));
+            assert_that!(content.value, contains_substring("ja"));
+            assert_that!(content.value, contains_substring("Hello"));
+            assert_that!(content.value, contains_substring("Konnichiwa"));
+        }
     }
 
     #[rstest]
