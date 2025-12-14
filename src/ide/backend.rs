@@ -321,7 +321,7 @@ impl LanguageServer for Backend {
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 completion_provider: Some(CompletionOptions {
                     resolve_provider: Some(false),
-                    trigger_characters: Some(vec![".".to_string()]),
+                    trigger_characters: Some(vec![".".to_string(), "\"".to_string()]),
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                     all_commit_characters: None,
                     completion_item: None,
@@ -583,20 +583,40 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        // ファイルの内容を取得して部分キーを抽出
+        // ファイルの内容を取得してコンテキストを抽出
         let db = self.db.lock().await;
         let text = source_file.text(&*db);
-        let partial_key =
-            crate::ide::completion::extract_partial_key(text, position.line, position.character);
+        let language = source_file.language(&*db);
 
-        tracing::debug!(partial_key = ?partial_key, "Extracted partial key");
+        // Use tree-sitter based extraction (supports renamed functions, ignores comments)
+        let completion_context = crate::ide::completion::extract_completion_context_tree_sitter(
+            text,
+            language,
+            position.line,
+            position.character,
+        );
+
+        let Some(context) = completion_context else {
+            tracing::debug!("Not in translation function context");
+            return Ok(None);
+        };
+
+        tracing::debug!(
+            partial_key = ?context.partial_key,
+            quote_context = ?context.quote_context,
+            "Extracted completion context"
+        );
 
         // 補完候補を生成
         let translations = self.translations.lock().await;
+        let partial_key_opt =
+            if context.partial_key.is_empty() { None } else { Some(context.partial_key.as_str()) };
         let items = crate::ide::completion::generate_completions(
             &*db,
             &translations,
-            partial_key.as_deref(),
+            partial_key_opt,
+            &context.quote_context,
+            context.key_prefix.as_deref(),
         );
         drop(db);
         drop(translations);
