@@ -17,7 +17,11 @@ pub mod capture_names {
     /// TODO: doc
     pub const TRANS_KEY_ARG: &str = "i18n.trans_key_arg";
     /// TODO: doc
-    pub const TRANS_FN_NAME: &str = "i18n.trans_fn_name";
+    pub const GET_TRANS_FN_NAME: &str = "i18n.get_trans_fn_name";
+    /// TODO: doc
+    pub const CALL_TRANS_FN_NAME: &str = "i18n.call_trans_fn_name";
+    /// TODO: doc
+    pub const TRANS_ARGS: &str = "i18n.trans_args";
 
     /// TODO: doc
     pub const GET_TRANS_FN: &str = "i18n.get_trans_fn";
@@ -30,12 +34,14 @@ pub mod capture_names {
 /// Information about translation function calls
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransFnCall {
-    /// Translation key
+    /// Translation key (`key_prefix` が適用済み)
     pub key: String,
-    /// Translation arguments
+    /// Translation arguments (`コード上の引数、key_prefix` なし)
     pub arg_key: String,
     /// Translation key node
     pub arg_key_node: Range,
+    /// Key prefix from useTranslation options
+    pub key_prefix: Option<String>,
 }
 
 /// Details about a `trans_fn` call

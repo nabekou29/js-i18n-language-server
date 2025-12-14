@@ -154,6 +154,7 @@ pub fn analyze_trans_fn_calls(
                             ),
                             arg_key: call_trans_fn.key.clone(),
                             arg_key_node: get_node_range(arg_key_node),
+                            key_prefix: scope_info.trans_fn.key_prefix.clone(),
                         });
                     }
 
@@ -205,7 +206,7 @@ fn parse_get_trans_fn_captures(
             };
 
             match *cap_name {
-                capture_names::TRANS_FN_NAME => {
+                capture_names::GET_TRANS_FN_NAME => {
                     trans_fn_name = extract_node_text(capture.node, source_bytes);
                 }
                 capture_names::NAMESPACE => {
@@ -251,6 +252,7 @@ fn parse_call_trans_fn_captures<'a>(
     let mut key: Option<String> = None;
     let mut key_node: Option<Node<'a>> = None;
     let mut key_arg_node: Option<Node<'a>> = None;
+    let mut trans_args_node: Option<Node<'a>> = None;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, capture_node, source_bytes);
@@ -269,19 +271,40 @@ fn parse_call_trans_fn_captures<'a>(
                 capture_names::TRANS_KEY_ARG => {
                     key_arg_node = Some(capture.node);
                 }
-                capture_names::TRANS_FN_NAME => {
+                capture_names::CALL_TRANS_FN_NAME => {
                     trans_fn_name = extract_node_text(capture.node, source_bytes);
+                }
+                capture_names::TRANS_ARGS => {
+                    trans_args_node = Some(capture.node);
                 }
                 _ => {} // 予期しないキャプチャ名
             }
         }
     }
 
+    // 引数ノードの決定: 文字列引数があればそれを使用、なければ空の引数かチェック
+    let arg_key_node = if let Some(node) = key_arg_node {
+        node
+    } else if let Some(args_node) = trans_args_node {
+        let args_text =
+            args_node.utf8_text(source_bytes).map_err(|_| AnalyzerError::ParseFailed)?;
+        let inner = args_text.trim_start_matches('(').trim_end_matches(')').trim();
+
+        if inner.is_empty() {
+            args_node
+        } else {
+            // t(someVar) など文字列以外の引数は無効
+            return Err(AnalyzerError::ParseFailed);
+        }
+    } else {
+        return Err(AnalyzerError::ParseFailed);
+    };
+
     Ok(CallTransFnDetail {
         trans_fn_name: trans_fn_name.ok_or(AnalyzerError::ParseFailed)?,
-        key: key.ok_or(AnalyzerError::ParseFailed)?,
-        key_node: key_node.ok_or(AnalyzerError::ParseFailed)?,
-        arg_key_node: key_arg_node.ok_or(AnalyzerError::ParseFailed)?,
+        key: key.unwrap_or_default(),
+        key_node: key_node.unwrap_or(arg_key_node),
+        arg_key_node,
     })
 }
 

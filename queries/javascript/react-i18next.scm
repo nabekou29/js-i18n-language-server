@@ -4,9 +4,9 @@
     [
       (pair_pattern
         key: (property_identifier) @use_translation_t (#eq? @use_translation_t "t")
-        value: (identifier) @i18n.trans_fn_name
+        value: (identifier) @i18n.get_trans_fn_name
       )
-      (shorthand_property_identifier_pattern) @i18n.trans_fn_name
+      (shorthand_property_identifier_pattern) @i18n.get_trans_fn_name
     ]
     )
   value:
@@ -31,12 +31,12 @@
 ;; Call t(translation) function
 (call_expression
   function: [
-    (identifier)
-    (member_expression)
-  ] @i18n.trans_fn_name
+    (identifier) @i18n.call_trans_fn_name
+    (member_expression) @i18n.call_trans_fn_name
+  ]
     arguments: (arguments
       (string
-        (string_fragment) @i18n.trans_key
-      ) @i18n.trans_key_arg
-    )
+        (string_fragment)? @i18n.trans_key
+      )? @i18n.trans_key_arg
+    ) @i18n.trans_args
 ) @i18n.call_trans_fn
