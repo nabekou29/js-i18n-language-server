@@ -113,11 +113,15 @@ pub fn generate_completions(
         };
 
         // key_prefix を除いた挿入用キーを計算
-        let insert_key = if let Some(prefix) = key_prefix {
-            key.strip_prefix(prefix).and_then(|s| s.strip_prefix('.')).unwrap_or(&key).to_string()
-        } else {
-            key.clone()
-        };
+        let insert_key = key_prefix.map_or_else(
+            || key.clone(),
+            |prefix| {
+                key.strip_prefix(prefix)
+                    .and_then(|s| s.strip_prefix('.'))
+                    .unwrap_or(&key)
+                    .to_string()
+            },
+        );
 
         // Build documentation with all languages
         let mut doc_lines = Vec::new();

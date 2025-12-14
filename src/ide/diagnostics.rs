@@ -48,6 +48,11 @@ pub fn generate_diagnostics(
     for usage in key_usages {
         let key = usage.key(db).text(db);
 
+        // 空のキーはスキップ（補完中の状態）
+        if key.is_empty() {
+            continue;
+        }
+
         // キーが存在しない場合、診断メッセージを追加
         if !all_keys.contains(key) {
             let range = usage.range(db);
