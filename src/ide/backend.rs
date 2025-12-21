@@ -523,7 +523,7 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri;
 
         // 変更内容を取得（FULL sync なので全体のテキストが送られてくる）
-        let Some(change) = params.content_changes.into_iter().last() else {
+        let Some(change) = params.content_changes.into_iter().next_back() else {
             return;
         };
         let new_content = change.text;

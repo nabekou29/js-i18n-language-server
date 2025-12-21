@@ -85,17 +85,17 @@ pub fn generate_completions(
 
         for (key, value) in keys {
             // key_prefix がある場合、そのプレフィックスで始まるキーのみを候補に
-            if let Some(prefix) = key_prefix
-                && !key.starts_with(prefix)
-            {
-                continue;
+            if let Some(prefix) = key_prefix {
+                if !key.starts_with(prefix) {
+                    continue;
+                }
             }
 
             // Filter by partial key if provided (部分一致)
-            if let Some(ref full) = full_partial
-                && !key.contains(full.as_str())
-            {
-                continue;
+            if let Some(ref full) = full_partial {
+                if !key.contains(full.as_str()) {
+                    continue;
+                }
             }
 
             key_translations
@@ -605,10 +605,10 @@ const msg = t("");
     #[rstest]
     fn extract_completion_context_tree_sitter_no_quotes() {
         // Test t(|) case - no quotes, cursor inside empty arguments
-        let text = r#"
+        let text = r"
 const { t } = useTranslation();
 const msg = t();
-"#;
+";
         let language = ProgrammingLanguage::JavaScript;
 
         // Line 2: const msg = t();
@@ -626,10 +626,10 @@ const msg = t();
     #[rstest]
     fn extract_completion_context_tree_sitter_no_quotes_renamed() {
         // Test t2(|) case - renamed function with no quotes
-        let text = r#"
+        let text = r"
 const { t: t2 } = useTranslation();
 const msg = t2();
-"#;
+";
         let language = ProgrammingLanguage::JavaScript;
 
         // Line 2: const msg = t2();
@@ -645,9 +645,9 @@ const msg = t2();
     #[rstest]
     fn extract_completion_context_tree_sitter_no_quotes_not_trans_fn() {
         // Test foo(|) case - not a translation function, should not trigger
-        let text = r#"
+        let text = r"
 const msg = foo();
-"#;
+";
         let language = ProgrammingLanguage::JavaScript;
 
         // Cursor inside the empty parentheses of foo()
