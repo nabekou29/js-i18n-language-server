@@ -14,11 +14,15 @@ use tower_lsp::lsp_types::{
     DidChangeConfigurationParams,
     DidChangeTextDocumentParams,
     DidChangeWatchedFilesParams,
+    DidChangeWatchedFilesRegistrationOptions,
     DidChangeWorkspaceFoldersParams,
     DidCloseTextDocumentParams,
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
     ExecuteCommandOptions,
+    FileChangeType,
+    FileSystemWatcher,
+    GlobPattern,
     Hover,
     HoverContents,
     HoverParams,
@@ -33,9 +37,11 @@ use tower_lsp::lsp_types::{
     OneOf,
     ProgressParams,
     ProgressParamsValue,
+    Registration,
     ServerCapabilities,
     TextDocumentSyncCapability,
     TextDocumentSyncKind,
+    WatchKind,
     WorkDoneProgress,
     WorkDoneProgressBegin,
     WorkDoneProgressEnd,
@@ -290,6 +296,51 @@ impl Backend {
             }
         }
     }
+
+    /// 翻訳ファイルを再読み込み
+    ///
+    /// 指定されたJSONファイルを再読み込みし、translations を更新します。
+    async fn reload_translation_file(&self, file_path: &std::path::Path) {
+        let config_manager = self.config_manager.lock().await;
+        let key_separator = config_manager.get_settings().key_separator.clone();
+        drop(config_manager);
+
+        let db = self.db.lock().await;
+
+        match crate::input::translation::load_translation_file(&*db, file_path, &key_separator) {
+            Ok(new_translation) => {
+                let mut translations = self.translations.lock().await;
+
+                // 既存のエントリを削除
+                let file_path_str = file_path.to_string_lossy().to_string();
+                translations.retain(|t| t.file_path(&*db) != &file_path_str);
+
+                // 新しいエントリを追加
+                translations.push(new_translation);
+
+                tracing::info!("Reloaded translation file: {:?}", file_path);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to reload translation file {:?}: {}", file_path, e);
+            }
+        }
+    }
+
+    /// 翻訳ファイルを削除
+    ///
+    /// 指定されたファイルに対応する翻訳エントリを translations から削除します。
+    async fn remove_translation_file(&self, file_path: &std::path::Path) {
+        let db = self.db.lock().await;
+        let mut translations = self.translations.lock().await;
+
+        let file_path_str = file_path.to_string_lossy().to_string();
+        let before_len = translations.len();
+        translations.retain(|t| t.file_path(&*db) != &file_path_str);
+
+        if translations.len() < before_len {
+            tracing::info!("Removed translation file: {:?}", file_path);
+        }
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -460,6 +511,25 @@ impl LanguageServer for Backend {
             // すべてのワークスペースフォルダーのインデックス完了後、診断を送信
             self.send_diagnostics_to_opened_files().await;
         }
+
+        // 翻訳ファイル（JSON）の変更を監視するためのファイルウォッチを登録
+        let registration = Registration {
+            id: "watch-translation-files".to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: Some(
+                serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+                    watchers: vec![FileSystemWatcher {
+                        glob_pattern: GlobPattern::String("**/*.json".to_string()),
+                        kind: Some(WatchKind::all()),
+                    }],
+                })
+                .expect("Failed to serialize file watcher options"),
+            ),
+        };
+
+        if let Err(e) = self.client.register_capability(vec![registration]).await {
+            tracing::warn!("Failed to register file watcher: {}", e);
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -500,8 +570,38 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn did_change_watched_files(&self, _: DidChangeWatchedFilesParams) {
-        self.client.log_message(MessageType::INFO, "watched files have changed!").await;
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let mut translations_changed = false;
+
+        for change in params.changes {
+            let Some(file_path) = change.uri.to_file_path().ok() else {
+                continue;
+            };
+
+            // JSON ファイルのみ処理
+            if file_path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+
+            tracing::debug!("Translation file changed: {:?}, type: {:?}", file_path, change.typ);
+
+            match change.typ {
+                FileChangeType::CREATED | FileChangeType::CHANGED => {
+                    self.reload_translation_file(&file_path).await;
+                    translations_changed = true;
+                }
+                FileChangeType::DELETED => {
+                    self.remove_translation_file(&file_path).await;
+                    translations_changed = true;
+                }
+                _ => {}
+            }
+        }
+
+        // 翻訳ファイルが変更された場合、診断を更新
+        if translations_changed {
+            self.send_diagnostics_to_opened_files().await;
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
