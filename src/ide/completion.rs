@@ -85,17 +85,17 @@ pub fn generate_completions(
 
         for (key, value) in keys {
             // key_prefix がある場合、そのプレフィックスで始まるキーのみを候補に
-            if let Some(prefix) = key_prefix {
-                if !key.starts_with(prefix) {
-                    continue;
-                }
+            if let Some(prefix) = key_prefix
+                && !key.starts_with(prefix)
+            {
+                continue;
             }
 
             // Filter by partial key if provided (部分一致)
-            if let Some(ref full) = full_partial {
-                if !key.contains(full.as_str()) {
-                    continue;
-                }
+            if let Some(ref full) = full_partial
+                && !key.contains(full.as_str())
+            {
+                continue;
             }
 
             key_translations

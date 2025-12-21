@@ -43,12 +43,10 @@ impl ConfigManager {
 
         // ワークスペースの設定を読み込み
         let settings = if let Some(root) = &workspace_root {
-            if let Some(workspace_settings) = loader::load_from_workspace(root)? {
-                tracing::debug!("Loaded workspace settings: {:?}", workspace_settings);
-                workspace_settings
-            } else {
-                I18nSettings::default()
-            }
+            loader::load_from_workspace(root)?.map_or_else(I18nSettings::default, |ws| {
+                tracing::debug!("Loaded workspace settings: {:?}", ws);
+                ws
+            })
         } else {
             I18nSettings::default()
         };

@@ -110,13 +110,13 @@ impl I18nSettings {
         }
 
         // namespace_separator のチェック
-        if let Some(sep) = &self.namespace_separator {
-            if sep.is_empty() {
-                errors.push(ValidationError::new(
+        if let Some(sep) = &self.namespace_separator
+            && sep.is_empty()
+        {
+            errors.push(ValidationError::new(
                     "namespaceSeparator",
                     "The separator cannot be empty. Please specify a separator (e.g., \":\"), or remove this field",
                 ));
-            }
         }
 
         // include_patterns のチェック

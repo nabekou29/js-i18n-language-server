@@ -317,6 +317,7 @@ impl Backend {
 
                 // 新しいエントリを追加
                 translations.push(new_translation);
+                drop(translations);
 
                 tracing::info!("Reloaded translation file: {:?}", file_path);
             }
@@ -340,6 +341,85 @@ impl Backend {
         if translations.len() < before_len {
             tracing::info!("Removed translation file: {:?}", file_path);
         }
+    }
+
+    /// ファイルウォッチを登録
+    ///
+    /// 設定ファイルと翻訳ファイルの変更を監視するためのファイルウォッチを登録します。
+    async fn register_file_watchers(&self) {
+        // 設定から翻訳ファイルのパターンを取得
+        let translation_pattern = {
+            let config_manager = self.config_manager.lock().await;
+            config_manager.get_settings().translation_files.file_pattern.clone()
+        };
+
+        let Ok(register_options) = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
+            watchers: vec![
+                // 設定ファイル (.js-i18n.json)
+                FileSystemWatcher {
+                    glob_pattern: GlobPattern::String("**/.js-i18n.json".to_string()),
+                    kind: Some(WatchKind::all()),
+                },
+                // 翻訳ファイル
+                FileSystemWatcher {
+                    glob_pattern: GlobPattern::String(translation_pattern.clone()),
+                    kind: Some(WatchKind::all()),
+                },
+            ],
+        }) else {
+            tracing::warn!("Failed to serialize file watcher options");
+            return;
+        };
+
+        let registration = Registration {
+            id: "watch-files".to_string(),
+            method: "workspace/didChangeWatchedFiles".to_string(),
+            register_options: Some(register_options),
+        };
+
+        tracing::info!(
+            "Registering file watchers for config and translation files (pattern: {})",
+            translation_pattern
+        );
+        if let Err(e) = self.client.register_capability(vec![registration]).await {
+            tracing::warn!("Failed to register file watcher: {}", e);
+        }
+    }
+
+    /// 設定ファイルかどうかを判定
+    fn is_config_file(file_path: &std::path::Path) -> bool {
+        file_path.file_name().is_some_and(|name| name == ".js-i18n.json")
+    }
+
+    /// 翻訳ファイルかどうかを判定
+    async fn is_translation_file(&self, file_path: &std::path::Path) -> bool {
+        let file_pattern = {
+            let config_manager = self.config_manager.lock().await;
+            config_manager.get_settings().translation_files.file_pattern.clone()
+        };
+
+        globset::Glob::new(&file_pattern)
+            .is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
+    }
+
+    /// 設定ファイルの変更を処理
+    ///
+    /// TODO: 設定ファイルが変更された場合の処理を実装
+    /// - 設定の再読み込み
+    /// - ファイルウォッチャーの再登録（パターンが変わった場合）
+    /// - ワークスペースの再インデックス
+    #[allow(clippy::unused_async)] // TODO: 実装時に async 処理が必要になる予定
+    async fn handle_config_file_change(
+        &self,
+        file_path: &std::path::Path,
+        change_type: FileChangeType,
+    ) {
+        tracing::info!(
+            "Config file changed: {:?}, type: {:?} (handling not yet implemented)",
+            file_path,
+            change_type
+        );
+        // TODO: 実装
     }
 }
 
@@ -512,24 +592,8 @@ impl LanguageServer for Backend {
             self.send_diagnostics_to_opened_files().await;
         }
 
-        // 翻訳ファイル（JSON）の変更を監視するためのファイルウォッチを登録
-        let registration = Registration {
-            id: "watch-translation-files".to_string(),
-            method: "workspace/didChangeWatchedFiles".to_string(),
-            register_options: Some(
-                serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
-                    watchers: vec![FileSystemWatcher {
-                        glob_pattern: GlobPattern::String("**/*.json".to_string()),
-                        kind: Some(WatchKind::all()),
-                    }],
-                })
-                .expect("Failed to serialize file watcher options"),
-            ),
-        };
-
-        if let Err(e) = self.client.register_capability(vec![registration]).await {
-            tracing::warn!("Failed to register file watcher: {}", e);
-        }
+        // ファイルウォッチを登録
+        self.register_file_watchers().await;
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -578,23 +642,31 @@ impl LanguageServer for Backend {
                 continue;
             };
 
-            // JSON ファイルのみ処理
-            if file_path.extension().is_none_or(|ext| ext != "json") {
+            // 設定ファイルの変更
+            if Self::is_config_file(&file_path) {
+                self.handle_config_file_change(&file_path, change.typ).await;
                 continue;
             }
 
-            tracing::debug!("Translation file changed: {:?}, type: {:?}", file_path, change.typ);
+            // 翻訳ファイルの変更
+            if self.is_translation_file(&file_path).await {
+                tracing::debug!(
+                    "Translation file changed: {:?}, type: {:?}",
+                    file_path,
+                    change.typ
+                );
 
-            match change.typ {
-                FileChangeType::CREATED | FileChangeType::CHANGED => {
-                    self.reload_translation_file(&file_path).await;
-                    translations_changed = true;
+                match change.typ {
+                    FileChangeType::CREATED | FileChangeType::CHANGED => {
+                        self.reload_translation_file(&file_path).await;
+                        translations_changed = true;
+                    }
+                    FileChangeType::DELETED => {
+                        self.remove_translation_file(&file_path).await;
+                        translations_changed = true;
+                    }
+                    _ => {}
                 }
-                FileChangeType::DELETED => {
-                    self.remove_translation_file(&file_path).await;
-                    translations_changed = true;
-                }
-                _ => {}
             }
         }
 
