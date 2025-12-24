@@ -151,7 +151,7 @@ impl I18nSettings {
         if self.translation_files.file_pattern.is_empty() {
             errors.push(ValidationError::new(
                 "translationFiles.filePattern",
-                "The pattern cannot be empty. Example: \"**/{locales,messages}/*.json\"",
+                "The pattern cannot be empty. Example: \"**/{locales,messages}/**/*.json\"",
             ));
         } else if let Err(e) = globset::Glob::new(&self.translation_files.file_pattern) {
             errors.push(ValidationError::new(
@@ -166,7 +166,7 @@ impl I18nSettings {
 
 impl Default for TranslationFilesConfig {
     fn default() -> Self {
-        Self { file_pattern: "**/{locales,messages}/*.json".to_string() }
+        Self { file_pattern: "**/{locales,messages}/**/*.json".to_string() }
     }
 }
 
@@ -222,7 +222,10 @@ mod tests {
         assert_that!(settings.key_separator, eq("."));
         assert_that!(settings.include_patterns, elements_are![eq("**/*.{js,jsx,ts,tsx}")]);
         assert_that!(settings.exclude_patterns, elements_are![eq("node_modules/**")]);
-        assert_that!(settings.translation_files.file_pattern, eq("**/{locales,messages}/*.json"));
+        assert_that!(
+            settings.translation_files.file_pattern,
+            eq("**/{locales,messages}/**/*.json")
+        );
     }
 
     #[rstest]
