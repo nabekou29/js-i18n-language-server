@@ -808,31 +808,6 @@ impl LanguageServer for Backend {
 
         tracing::debug!(uri = %uri, line = position.line, character = position.character, "Hover request");
 
-        // ファイルパスを取得
-        let Ok(file_path) = uri.to_file_path() else {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
-            return Ok(None);
-        };
-
-        // SourceFile を取得
-        let source_file = {
-            let source_files = self.source_files.lock().await;
-            source_files.get(&file_path).copied()
-        };
-
-        let Some(source_file) = source_file else {
-            tracing::debug!("Source file not found in cache: {}", file_path.display());
-            return Ok(None);
-        };
-
-        // カーソル位置の翻訳キーを取得
-        let db = self.db.lock().await;
-        let source_position = crate::types::SourcePosition::from(position);
-        let Some(key) = crate::syntax::key_at_position(&*db, source_file, source_position) else {
-            tracing::debug!("No translation key found at position");
-            return Ok(None);
-        };
-
         // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
         // タイムアウトした場合は hover情報なしを返す
         if !self
@@ -844,11 +819,58 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
 
+        // ファイルパスを取得
+        let Ok(file_path) = uri.to_file_path() else {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            return Ok(None);
+        };
+
+        let source_position = crate::types::SourcePosition::from(position);
+
+        // まず SourceFile から試す
+        let source_file = {
+            let source_files = self.source_files.lock().await;
+            source_files.get(&file_path).copied()
+        };
+
+        let db = self.db.lock().await;
+
+        let key = if let Some(source_file) = source_file {
+            // SourceFile からカーソル位置の翻訳キーを取得
+            crate::syntax::key_at_position(&*db, source_file, source_position)
+        } else {
+            // SourceFile が見つからない場合、Translation から試す
+            tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
+
+            let translations = self.translations.lock().await;
+            let file_path_str = file_path.to_string_lossy();
+
+            // ファイルパスが一致する Translation を検索
+            let translation =
+                translations.iter().find(|t| t.file_path(&*db) == file_path_str.as_ref());
+
+            if let Some(translation) = translation {
+                translation.key_at_position(&*db, source_position)
+            } else {
+                tracing::debug!("Translation not found for file: {}", file_path.display());
+                drop(translations);
+                drop(db);
+                return Ok(None);
+            }
+        };
+
+        let Some(key) = key else {
+            tracing::debug!("No translation key found at position");
+            drop(db);
+            return Ok(None);
+        };
+
         // 翻訳内容を取得
         let translations = self.translations.lock().await;
         let Some(hover_text) = crate::ide::hover::generate_hover_content(&*db, key, &translations)
         else {
             tracing::debug!("No translations found for key: {}", key.text(&*db));
+            drop(db);
             return Ok(None);
         };
 
