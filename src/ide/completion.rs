@@ -334,6 +334,7 @@ mod tests {
             ]),
             "{}".to_string(),
             HashMap::new(),
+            HashMap::new(),
         );
 
         let translations = vec![en_translation];
@@ -365,6 +366,7 @@ mod tests {
             ]),
             "{}".to_string(),
             HashMap::new(),
+            HashMap::new(),
         );
 
         let translations = vec![en_translation];
@@ -392,6 +394,7 @@ mod tests {
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             "{}".to_string(),
             HashMap::new(),
+            HashMap::new(),
         );
 
         let ja_translation = Translation::new(
@@ -400,6 +403,7 @@ mod tests {
             "/test/ja.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Konnichiwa".to_string())]),
             "{}".to_string(),
+            HashMap::new(),
             HashMap::new(),
         );
 
@@ -434,6 +438,7 @@ mod tests {
             "/test/en.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             "{}".to_string(),
+            HashMap::new(),
             HashMap::new(),
         );
 

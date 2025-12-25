@@ -319,6 +319,11 @@ pub struct Translation {
     /// 例: { "common.hello": SourceRange { start: (2, 5), end: (2, 17) } }
     #[returns(ref)]
     pub key_ranges: HashMap<String, SourceRange>,
+
+    /// 値と位置情報のマッピング
+    /// 例: { "common.hello": SourceRange { start: (2, 14), end: (2, 21) } }
+    #[returns(ref)]
+    pub value_ranges: HashMap<String, SourceRange>,
 }
 
 /// JSON をフラット化する
@@ -381,16 +386,16 @@ pub fn flatten_json(
     result
 }
 
-/// JSON ファイルからキーと位置情報のマッピングを抽出
+/// JSON ファイルからキーと値の位置情報のマッピングを抽出
 ///
-/// tree-sitter-json を使って JSON をパースし、各キーの位置情報を取得します。
+/// tree-sitter-json を使って JSON をパースし、各キーと値の位置情報を取得します。
 ///
 /// # Arguments
 /// * `json_text` - JSON ファイルの元テキスト
 /// * `separator` - キー区切り文字（通常は "." または "_"）
 ///
 /// # Returns
-/// キーと位置情報のマッピング
+/// (キーと位置情報のマッピング, 値と位置情報のマッピング) のタプル
 ///
 /// # Examples
 /// ```json
@@ -400,53 +405,74 @@ pub fn flatten_json(
 ///   }
 /// }
 /// ```
-/// 上記の JSON の場合、`"common.hello"` キーと、その位置情報（`"hello"` の位置）がマッピングされます。
+/// 上記の JSON の場合、キーの位置情報（`"hello"` の位置）と値の位置情報（`"Hello"` の位置）が
+/// それぞれマッピングされます。
 #[must_use]
 #[allow(dead_code)]
-pub fn extract_key_ranges(json_text: &str, separator: &str) -> HashMap<String, SourceRange> {
-    let mut result = HashMap::new();
+pub fn extract_key_value_ranges(
+    json_text: &str,
+    separator: &str,
+) -> (HashMap<String, SourceRange>, HashMap<String, SourceRange>) {
+    let mut key_ranges = HashMap::new();
+    let mut value_ranges = HashMap::new();
 
     // tree-sitter でパース
     let mut parser = tree_sitter::Parser::new();
     let Ok(()) = parser.set_language(&tree_sitter_json::LANGUAGE.into()) else {
         tracing::warn!("Failed to set tree-sitter-json language");
-        return result;
+        return (key_ranges, value_ranges);
     };
 
     let Some(tree) = parser.parse(json_text, None) else {
         tracing::warn!("Failed to parse JSON with tree-sitter");
-        return result;
+        return (key_ranges, value_ranges);
     };
 
     let root_node = tree.root_node();
 
-    // 再帰的にキーと位置情報を抽出
-    extract_keys_from_node(root_node, json_text.as_bytes(), separator, None, &mut result);
+    // 再帰的にキーと値の位置情報を抽出
+    extract_keys_from_node(
+        root_node,
+        json_text.as_bytes(),
+        separator,
+        None,
+        &mut key_ranges,
+        &mut value_ranges,
+    );
 
-    result
+    (key_ranges, value_ranges)
 }
 
-/// ノードから再帰的にキーと位置情報を抽出するヘルパー関数
+/// ノードから再帰的にキーと値の位置情報を抽出するヘルパー関数
 ///
 /// # Arguments
 /// * `node` - 現在のノード
 /// * `source` - JSON ソーステキストのバイト列
 /// * `separator` - キー区切り文字
 /// * `prefix` - 現在のキープレフィックス（親のキーパス）
-/// * `result` - 結果を格納する `HashMap`
+/// * `key_ranges` - キーの位置情報を格納する `HashMap`
+/// * `value_ranges` - 値の位置情報を格納する `HashMap`
 fn extract_keys_from_node(
     node: tree_sitter::Node<'_>,
     source: &[u8],
     separator: &str,
     prefix: Option<&str>,
-    result: &mut HashMap<String, SourceRange>,
+    key_ranges: &mut HashMap<String, SourceRange>,
+    value_ranges: &mut HashMap<String, SourceRange>,
 ) {
     match node.kind() {
         "document" | "object" => {
             // object の場合、子ノードを探索
             for i in 0..node.child_count() {
                 if let Some(child) = node.child(i) {
-                    extract_keys_from_node(child, source, separator, prefix, result);
+                    extract_keys_from_node(
+                        child,
+                        source,
+                        separator,
+                        prefix,
+                        key_ranges,
+                        value_ranges,
+                    );
                 }
             }
         }
@@ -477,23 +503,51 @@ fn extract_keys_from_node(
                 prefix.map_or_else(|| key.to_string(), |p| format!("{p}{separator}{key}"));
 
             // キーノードの位置情報を SourceRange に変換
-            let start_pos = key_node.start_position();
-            let end_pos = key_node.end_position();
+            let key_start_pos = key_node.start_position();
+            let key_end_pos = key_node.end_position();
             #[allow(clippy::cast_possible_truncation)]
-            let range = SourceRange {
+            let key_range = SourceRange {
                 start: SourcePosition {
-                    line: start_pos.row as u32,
-                    character: start_pos.column as u32,
+                    line: key_start_pos.row as u32,
+                    character: key_start_pos.column as u32,
                 },
-                end: SourcePosition { line: end_pos.row as u32, character: end_pos.column as u32 },
+                end: SourcePosition {
+                    line: key_end_pos.row as u32,
+                    character: key_end_pos.column as u32,
+                },
             };
 
-            // 結果に追加
-            result.insert(full_key.clone(), range);
+            // キーの位置情報を追加
+            key_ranges.insert(full_key.clone(), key_range);
+
+            // 値が文字列の場合、値の位置情報も記録
+            if value_node.kind() == "string" {
+                let value_start_pos = value_node.start_position();
+                let value_end_pos = value_node.end_position();
+                #[allow(clippy::cast_possible_truncation)]
+                let value_range = SourceRange {
+                    start: SourcePosition {
+                        line: value_start_pos.row as u32,
+                        character: value_start_pos.column as u32,
+                    },
+                    end: SourcePosition {
+                        line: value_end_pos.row as u32,
+                        character: value_end_pos.column as u32,
+                    },
+                };
+                value_ranges.insert(full_key.clone(), value_range);
+            }
 
             // 値が object の場合は再帰的に探索
             if value_node.kind() == "object" {
-                extract_keys_from_node(value_node, source, separator, Some(&full_key), result);
+                extract_keys_from_node(
+                    value_node,
+                    source,
+                    separator,
+                    Some(&full_key),
+                    key_ranges,
+                    value_ranges,
+                );
             }
         }
         _ => {
@@ -504,6 +558,8 @@ fn extract_keys_from_node(
 
 impl Translation {
     /// カーソル位置から翻訳キーを取得
+    ///
+    /// キーまたは値の位置にカーソルがある場合、対応するキーを返します。
     ///
     /// # Arguments
     /// * `db` - Salsa データベース
@@ -516,12 +572,18 @@ impl Translation {
         db: &dyn crate::db::I18nDatabase,
         position: SourcePosition,
     ) -> Option<crate::interned::TransKey<'_>> {
+        // まずキーの範囲をチェック
         let key_ranges = self.key_ranges(db);
-
-        // key_ranges を走査して、位置が含まれるキーを検索
         for (key, range) in key_ranges {
             if position_in_range(position, *range) {
-                // TransKey を作成して返す
+                return Some(crate::interned::TransKey::new(db, key.clone()));
+            }
+        }
+
+        // 次に値の範囲をチェック
+        let value_ranges = self.value_ranges(db);
+        for (key, range) in value_ranges {
+            if position_in_range(position, *range) {
                 return Some(crate::interned::TransKey::new(db, key.clone()));
             }
         }
@@ -583,8 +645,8 @@ pub fn load_translation_file(
     // フラット化
     let keys = flatten_json(&json, separator, None);
 
-    // キーと位置情報のマッピングを抽出
-    let key_ranges = extract_key_ranges(&content, separator);
+    // キーと値の位置情報のマッピングを抽出
+    let (key_ranges, value_ranges) = extract_key_value_ranges(&content, separator);
 
     // ファイルパスから言語コードを検出
     let language = detect_language_from_path(file_path);
@@ -596,6 +658,7 @@ pub fn load_translation_file(
         keys,
         content,
         key_ranges,
+        value_ranges,
     ))
 }
 
@@ -708,29 +771,43 @@ mod tests {
     }
 
     #[googletest::test]
-    fn test_extract_key_ranges_simple() {
+    fn test_extract_key_value_ranges_simple() {
         let json_text = r#"{
   "hello": "Hello",
   "goodbye": "Goodbye"
 }"#;
 
-        let result = extract_key_ranges(json_text, ".");
+        let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        expect_that!(result.len(), eq(2));
-        expect_that!(result.contains_key("hello"), eq(true));
-        expect_that!(result.contains_key("goodbye"), eq(true));
+        // キーの位置情報を確認
+        expect_that!(key_ranges.len(), eq(2));
+        expect_that!(key_ranges.contains_key("hello"), eq(true));
+        expect_that!(key_ranges.contains_key("goodbye"), eq(true));
 
         // "hello" キーの位置情報を確認（2行目、2文字目から）
-        let hello_range = result.get("hello");
+        let hello_range = key_ranges.get("hello");
         expect_that!(hello_range, some(anything()));
         if let Some(range) = hello_range {
             expect_that!(range.start.line, eq(1)); // 0-indexed
             expect_that!(range.start.character, eq(2));
         }
+
+        // 値の位置情報を確認
+        expect_that!(value_ranges.len(), eq(2));
+        expect_that!(value_ranges.contains_key("hello"), eq(true));
+        expect_that!(value_ranges.contains_key("goodbye"), eq(true));
+
+        // "hello" の値 "Hello" の位置情報を確認
+        let hello_value_range = value_ranges.get("hello");
+        expect_that!(hello_value_range, some(anything()));
+        if let Some(range) = hello_value_range {
+            expect_that!(range.start.line, eq(1)); // 0-indexed
+            expect_that!(range.start.character, eq(11)); // "hello": の後
+        }
     }
 
     #[googletest::test]
-    fn test_extract_key_ranges_nested() {
+    fn test_extract_key_value_ranges_nested() {
         let json_text = r#"{
   "common": {
     "hello": "Hello",
@@ -738,16 +815,23 @@ mod tests {
   }
 }"#;
 
-        let result = extract_key_ranges(json_text, ".");
+        let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        expect_that!(result.len(), eq(3)); // "common", "common.hello", "common.goodbye"
-        expect_that!(result.contains_key("common"), eq(true));
-        expect_that!(result.contains_key("common.hello"), eq(true));
-        expect_that!(result.contains_key("common.goodbye"), eq(true));
+        // キーの位置情報を確認
+        expect_that!(key_ranges.len(), eq(3)); // "common", "common.hello", "common.goodbye"
+        expect_that!(key_ranges.contains_key("common"), eq(true));
+        expect_that!(key_ranges.contains_key("common.hello"), eq(true));
+        expect_that!(key_ranges.contains_key("common.goodbye"), eq(true));
+
+        // 値の位置情報を確認（オブジェクト値の "common" は含まれない）
+        expect_that!(value_ranges.len(), eq(2)); // "common.hello", "common.goodbye" のみ
+        expect_that!(value_ranges.contains_key("common"), eq(false)); // オブジェクト値は含まれない
+        expect_that!(value_ranges.contains_key("common.hello"), eq(true));
+        expect_that!(value_ranges.contains_key("common.goodbye"), eq(true));
     }
 
     #[googletest::test]
-    fn test_extract_key_ranges_with_dots_in_keys() {
+    fn test_extract_key_value_ranges_with_dots_in_keys() {
         // ユーザーが指摘したケース: キー自体に `.` が含まれている場合
         let json_text = r#"{
   "hoge.fuga": {
@@ -758,19 +842,19 @@ mod tests {
   }
 }"#;
 
-        let result = extract_key_ranges(json_text, ".");
+        let (key_ranges, _value_ranges) = extract_key_value_ranges(json_text, ".");
 
         // "hoge.fuga" と "piyo" を分割せず、"hoge.fuga" というキーとして認識
-        expect_that!(result.contains_key("hoge.fuga"), eq(true));
-        expect_that!(result.contains_key("hoge.fuga.piyo"), eq(true));
+        expect_that!(key_ranges.contains_key("hoge.fuga"), eq(true));
+        expect_that!(key_ranges.contains_key("hoge.fuga.piyo"), eq(true));
 
         // "hoge" の下の "foo.bar" も同様
-        expect_that!(result.contains_key("hoge"), eq(true));
-        expect_that!(result.contains_key("hoge.foo.bar"), eq(true));
+        expect_that!(key_ranges.contains_key("hoge"), eq(true));
+        expect_that!(key_ranges.contains_key("hoge.foo.bar"), eq(true));
 
         // 間違った分割結果がないことを確認
-        expect_that!(result.contains_key("hoge.foo"), eq(false));
-        expect_that!(result.contains_key("foo.bar"), eq(false));
+        expect_that!(key_ranges.contains_key("hoge.foo"), eq(false));
+        expect_that!(key_ranges.contains_key("foo.bar"), eq(false));
     }
 
     #[googletest::test]
@@ -790,7 +874,7 @@ mod tests {
         let parsed: Option<Value> = serde_json::from_str(json_text).ok();
         let json_ref = parsed.as_ref().unwrap_or(&default_json);
         let keys = flatten_json(json_ref, ".", None);
-        let key_ranges = extract_key_ranges(json_text, ".");
+        let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
         let translation = Translation::new(
             &db,
@@ -799,9 +883,10 @@ mod tests {
             keys,
             json_text.to_string(),
             key_ranges,
+            value_ranges,
         );
 
-        // "hello" の位置（1行目、2文字目）にカーソルがある場合
+        // "hello" キーの位置（1行目、2文字目）にカーソルがある場合
         let position = SourcePosition { line: 1, character: 3 };
         let key = translation.key_at_position(&db, position);
 
@@ -815,6 +900,24 @@ mod tests {
         let key = translation.key_at_position(&db, position);
 
         assert!(key.is_some(), "Expected key to be Some, but got None");
+        if let Some(k) = key {
+            assert_eq!(k.text(&db), &"nested.key".to_string());
+        }
+
+        // "hello" の値 "Hello" の位置にカーソルがある場合もキーを取得できる
+        let position = SourcePosition { line: 1, character: 12 }; // "Hello" の位置
+        let key = translation.key_at_position(&db, position);
+
+        assert!(key.is_some(), "Expected key from value position to be Some, but got None");
+        if let Some(k) = key {
+            assert_eq!(k.text(&db), &"hello".to_string());
+        }
+
+        // "nested.key" の値 "Value" の位置にカーソルがある場合もキーを取得できる
+        let position = SourcePosition { line: 3, character: 12 }; // "Value" の位置
+        let key = translation.key_at_position(&db, position);
+
+        assert!(key.is_some(), "Expected key from value position to be Some, but got None");
         if let Some(k) = key {
             assert_eq!(k.text(&db), &"nested.key".to_string());
         }

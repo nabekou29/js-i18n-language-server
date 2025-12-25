@@ -119,6 +119,7 @@ mod tests {
             keys,
             String::new(),
             HashMap::new(),
+            HashMap::new(),
         );
 
         // 診断メッセージを生成
@@ -164,6 +165,7 @@ mod tests {
             keys,
             String::new(),
             HashMap::new(),
+            HashMap::new(),
         );
 
         // 診断メッセージを生成
@@ -203,6 +205,7 @@ mod tests {
             keys_en,
             String::new(),
             HashMap::new(),
+            HashMap::new(),
         );
         let translation_ja = Translation::new(
             &db,
@@ -210,6 +213,7 @@ mod tests {
             "ja.json".to_string(),
             keys_ja,
             String::new(),
+            HashMap::new(),
             HashMap::new(),
         );
 

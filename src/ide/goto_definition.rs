@@ -96,6 +96,7 @@ mod tests {
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             r#"{"common": {"hello": "Hello"}}"#.to_string(),
             key_ranges,
+            HashMap::new(),
         );
 
         let key = TransKey::new(&db, "common.hello".to_string());
@@ -130,6 +131,7 @@ mod tests {
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             r#"{"common": {"hello": "Hello"}}"#.to_string(),
             en_key_ranges,
+            HashMap::new(),
         );
 
         // Japanese translation file
@@ -149,6 +151,7 @@ mod tests {
             HashMap::from([("common.hello".to_string(), "Hello in Japanese".to_string())]),
             r#"{"common": {"hello": "Hello in Japanese"}}"#.to_string(),
             ja_key_ranges,
+            HashMap::new(),
         );
 
         let key = TransKey::new(&db, "common.hello".to_string());
@@ -176,6 +179,7 @@ mod tests {
             "/test/locales/en.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             r#"{"common": {"hello": "Hello"}}"#.to_string(),
+            HashMap::new(),
             HashMap::new(),
         );
 
