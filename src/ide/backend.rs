@@ -1,9 +1,5 @@
 //! LSP Backend 実装
 
-use std::collections::{
-    HashMap,
-    HashSet,
-};
 use std::path::{
     Path,
     PathBuf,
@@ -64,11 +60,10 @@ use tower_lsp::{
     LanguageServer,
 };
 
+use super::state::ServerState;
 use crate::config::ConfigManager;
 use crate::db::I18nDatabaseImpl;
 use crate::indexer::workspace::WorkspaceIndexer;
-use crate::input::source::SourceFile;
-use crate::input::translation::Translation;
 
 /// LSP Backend
 #[derive(Clone)]
@@ -79,14 +74,8 @@ pub struct Backend {
     pub config_manager: Arc<Mutex<ConfigManager>>,
     /// ワークスペースインデクサー
     pub workspace_indexer: Arc<WorkspaceIndexer>,
-    /// Salsa データベース
-    pub db: Arc<Mutex<I18nDatabaseImpl>>,
-    /// `SourceFile` 管理（ファイルパス → `SourceFile`）
-    pub source_files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
-    /// 翻訳データ
-    pub translations: Arc<Mutex<Vec<Translation>>>,
-    /// 現在開いているファイルの URI
-    pub opened_files: Arc<Mutex<HashSet<tower_lsp::lsp_types::Url>>>,
+    /// 共有状態（`db`, `source_files`, `translations`, `opened_files`）
+    pub state: ServerState,
 }
 
 impl std::fmt::Debug for Backend {
@@ -94,10 +83,7 @@ impl std::fmt::Debug for Backend {
         f.debug_struct("Backend")
             .field("config_manager", &"<ConfigManager>")
             .field("workspace_indexer", &"<WorkspaceIndexer>")
-            .field("db", &"<I18nDatabaseImpl>")
-            .field("source_files", &"<HashMap<PathBuf, SourceFile>>")
-            .field("translations", &"<Vec<Translation>>")
-            .field("opened_files", &"<HashSet<Url>>")
+            .field("state", &self.state)
             .finish_non_exhaustive()
     }
 }
@@ -132,11 +118,11 @@ impl Backend {
     ) -> Option<String> {
         // まず SourceFile から試す
         let source_file = {
-            let source_files = self.source_files.lock().await;
+            let source_files = self.state.source_files.lock().await;
             source_files.get(file_path).copied()
         };
 
-        let db = self.db.lock().await;
+        let db = self.state.db.lock().await;
 
         if let Some(source_file) = source_file {
             // SourceFile からカーソル位置の翻訳キーを取得
@@ -146,7 +132,7 @@ impl Backend {
             // SourceFile が見つからない場合、Translation から試す
             tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
 
-            let translations = self.translations.lock().await;
+            let translations = self.state.translations.lock().await;
             let file_path_str = file_path.to_string_lossy();
 
             // ファイルパスが一致する Translation を検索
@@ -163,7 +149,7 @@ impl Backend {
     async fn send_diagnostics_to_opened_files(&self) {
         use crate::input::source::ProgrammingLanguage;
 
-        let opened_files = self.opened_files.lock().await;
+        let opened_files = self.state.opened_files.lock().await;
         let file_count = opened_files.len();
 
         tracing::info!(file_count, "Sending diagnostics to opened files");
@@ -182,7 +168,7 @@ impl Backend {
 
             // SourceFile を取得
             let source_file = {
-                let source_files = self.source_files.lock().await;
+                let source_files = self.state.source_files.lock().await;
                 source_files.get(&file_path).copied()
             };
 
@@ -193,8 +179,8 @@ impl Backend {
 
             // Diagnostics を生成
             let diagnostics = {
-                let db = self.db.lock().await;
-                let translations = self.translations.lock().await;
+                let db = self.state.db.lock().await;
+                let translations = self.state.translations.lock().await;
                 crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations)
             };
 
@@ -239,8 +225,8 @@ impl Backend {
 
         // SourceFile を更新
         let source_file = {
-            let mut db = self.db.lock().await;
-            let mut source_files = self.source_files.lock().await;
+            let mut db = self.state.db.lock().await;
+            let mut source_files = self.state.source_files.lock().await;
 
             // SourceFile を取得または作成
             if force_create {
@@ -279,8 +265,8 @@ impl Backend {
 
         // 翻訳インデックス完了後に診断メッセージを生成して送信
         let diagnostics = {
-            let db = self.db.lock().await;
-            let translations = self.translations.lock().await;
+            let db = self.state.db.lock().await;
+            let translations = self.state.translations.lock().await;
             crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations)
         };
 
@@ -308,11 +294,11 @@ impl Backend {
 
         // 新しい Salsa データベースを作成（古いキャッシュをクリア）
         let new_db = I18nDatabaseImpl::default();
-        *self.db.lock().await = new_db;
+        *self.state.db.lock().await = new_db;
 
         // source_files と translations をクリア
-        self.source_files.lock().await.clear();
-        self.translations.lock().await.clear();
+        self.state.source_files.lock().await.clear();
+        self.state.translations.lock().await.clear();
 
         // インデックス状態をリセット
         self.workspace_indexer.reset_indexing_state();
@@ -322,8 +308,8 @@ impl Backend {
             for folder in workspace_folders {
                 if let Ok(workspace_path) = folder.uri.to_file_path() {
                     let config_manager = self.config_manager.lock().await;
-                    let db = self.db.lock().await.clone();
-                    let source_files = self.source_files.clone();
+                    let db = self.state.db.lock().await.clone();
+                    let source_files = self.state.source_files.clone();
 
                     match self
                         .workspace_indexer
@@ -332,7 +318,7 @@ impl Backend {
                             &workspace_path,
                             &config_manager,
                             source_files,
-                            self.translations.clone(),
+                            self.state.translations.clone(),
                             None::<fn(u32, u32)>,
                         )
                         .await
@@ -362,11 +348,11 @@ impl Backend {
         let key_separator = config_manager.get_settings().key_separator.clone();
         drop(config_manager);
 
-        let db = self.db.lock().await;
+        let db = self.state.db.lock().await;
 
         match crate::input::translation::load_translation_file(&*db, file_path, &key_separator) {
             Ok(new_translation) => {
-                let mut translations = self.translations.lock().await;
+                let mut translations = self.state.translations.lock().await;
 
                 // 既存のエントリを削除
                 let file_path_str = file_path.to_string_lossy().to_string();
@@ -388,8 +374,8 @@ impl Backend {
     ///
     /// 指定されたファイルに対応する翻訳エントリを translations から削除します。
     async fn remove_translation_file(&self, file_path: &Path) {
-        let db = self.db.lock().await;
-        let mut translations = self.translations.lock().await;
+        let db = self.state.db.lock().await;
+        let mut translations = self.state.translations.lock().await;
 
         let file_path_str = file_path.to_string_lossy().to_string();
         let before_len = translations.len();
@@ -560,10 +546,10 @@ impl LanguageServer for Backend {
                     let config_manager = self.config_manager.lock().await;
 
                     // Database をクローン（Salsa のクローンは安価）
-                    let db = self.db.lock().await.clone();
+                    let db = self.state.db.lock().await.clone();
 
                     // source_files をクローン（Arc のクローンは安価）
-                    let source_files = self.source_files.clone();
+                    let source_files = self.state.source_files.clone();
 
                     // 進捗報告コールバック
                     let client = self.client.clone();
@@ -597,7 +583,7 @@ impl LanguageServer for Backend {
                             &workspace_path,
                             &config_manager,
                             source_files,
-                            self.translations.clone(),
+                            self.state.translations.clone(),
                             Some(progress_callback),
                         )
                         .await
@@ -691,7 +677,7 @@ impl LanguageServer for Backend {
         let mut translations_changed = false;
 
         for change in params.changes {
-            let Some(file_path) = change.uri.to_file_path().ok() else {
+            let Some(file_path) = Self::uri_to_path(&change.uri) else {
                 continue;
             };
 
@@ -737,7 +723,7 @@ impl LanguageServer for Backend {
 
         // 開いているファイルリストに追加
         {
-            let mut opened_files = self.opened_files.lock().await;
+            let mut opened_files = self.state.opened_files.lock().await;
             opened_files.insert(uri.clone());
         }
 
@@ -767,7 +753,7 @@ impl LanguageServer for Backend {
 
         // 開いているファイルリストから削除
         {
-            let mut opened_files = self.opened_files.lock().await;
+            let mut opened_files = self.state.opened_files.lock().await;
             opened_files.remove(&uri);
         }
     }
@@ -794,7 +780,7 @@ impl LanguageServer for Backend {
 
         // SourceFile を取得
         let source_file = {
-            let source_files = self.source_files.lock().await;
+            let source_files = self.state.source_files.lock().await;
             source_files.get(&file_path).copied()
         };
 
@@ -804,7 +790,7 @@ impl LanguageServer for Backend {
         };
 
         // ファイルの内容を取得してコンテキストを抽出
-        let db = self.db.lock().await;
+        let db = self.state.db.lock().await;
         let text = source_file.text(&*db);
         let language = source_file.language(&*db);
 
@@ -828,7 +814,7 @@ impl LanguageServer for Backend {
         );
 
         // 補完候補を生成
-        let translations = self.translations.lock().await;
+        let translations = self.state.translations.lock().await;
         let partial_key_opt =
             if context.partial_key.is_empty() { None } else { Some(context.partial_key.as_str()) };
         let items = crate::ide::completion::generate_completions(
@@ -878,9 +864,9 @@ impl LanguageServer for Backend {
 
         // 翻訳内容を取得
         let hover_text = {
-            let db = self.db.lock().await;
+            let db = self.state.db.lock().await;
             let key = crate::interned::TransKey::new(&*db, key_text.clone());
-            let translations = self.translations.lock().await;
+            let translations = self.state.translations.lock().await;
             crate::ide::hover::generate_hover_content(&*db, key, &translations)
         };
 
@@ -930,9 +916,9 @@ impl LanguageServer for Backend {
 
         // 翻訳ファイル内の定義を検索
         let locations = {
-            let db = self.db.lock().await;
+            let db = self.state.db.lock().await;
             let key = crate::interned::TransKey::new(&*db, key_text);
-            let translations = self.translations.lock().await;
+            let translations = self.state.translations.lock().await;
             crate::ide::goto_definition::find_definitions(&*db, key, &translations)
         };
 
@@ -975,9 +961,9 @@ impl LanguageServer for Backend {
 
         // 全ソースファイルから参照を検索
         let locations = {
-            let db = self.db.lock().await;
+            let db = self.state.db.lock().await;
             let key = crate::interned::TransKey::new(&*db, key_text.clone());
-            let source_files = self.source_files.lock().await;
+            let source_files = self.state.source_files.lock().await;
             crate::ide::references::find_references(&*db, key, &source_files)
         };
 

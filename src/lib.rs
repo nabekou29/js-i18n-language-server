@@ -12,5 +12,6 @@ pub mod ir;
 pub mod syntax;
 pub mod types;
 
-// Backend を再エクスポート
+// Backend と ServerState を再エクスポート
 pub use ide::backend::Backend;
+pub use ide::state::ServerState;
