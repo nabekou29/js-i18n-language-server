@@ -4,8 +4,15 @@ use std::collections::{
     HashMap,
     HashSet,
 };
-use std::path::PathBuf;
+use std::path::{
+    Path,
+    PathBuf,
+};
 use std::sync::Arc;
+use std::time::Duration;
+
+/// 翻訳インデックス完了を待機する際のタイムアウト
+const TRANSLATIONS_INDEX_TIMEOUT: Duration = Duration::from_millis(500);
 
 use tokio::sync::Mutex;
 use tower_lsp::jsonrpc::Result;
@@ -96,6 +103,62 @@ impl std::fmt::Debug for Backend {
 }
 
 impl Backend {
+    /// URI をファイルパスに変換
+    ///
+    /// 変換に失敗した場合はログを出力して `None` を返します。
+    fn uri_to_path(uri: &tower_lsp::lsp_types::Url) -> Option<PathBuf> {
+        uri.to_file_path().ok().or_else(|| {
+            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            None
+        })
+    }
+
+    /// 翻訳インデックスの完了を待機
+    ///
+    /// タイムアウト付きで翻訳データのインデックスが完了するまで待機します。
+    /// 完了した場合は `true`、タイムアウトした場合は `false` を返します。
+    async fn wait_for_translations(&self) -> bool {
+        self.workspace_indexer.wait_for_translations_indexed(TRANSLATIONS_INDEX_TIMEOUT).await
+    }
+
+    /// ファイルパスとカーソル位置から翻訳キーのテキストを取得
+    ///
+    /// `SourceFile` または `Translation` のどちらからも取得を試みます。
+    /// キーが見つかった場合は `Some(key_text)` を、見つからない場合は `None` を返します。
+    async fn get_key_at_position(
+        &self,
+        file_path: &Path,
+        position: crate::types::SourcePosition,
+    ) -> Option<String> {
+        // まず SourceFile から試す
+        let source_file = {
+            let source_files = self.source_files.lock().await;
+            source_files.get(file_path).copied()
+        };
+
+        let db = self.db.lock().await;
+
+        if let Some(source_file) = source_file {
+            // SourceFile からカーソル位置の翻訳キーを取得
+            crate::syntax::key_at_position(&*db, source_file, position)
+                .map(|key| key.text(&*db).clone())
+        } else {
+            // SourceFile が見つからない場合、Translation から試す
+            tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
+
+            let translations = self.translations.lock().await;
+            let file_path_str = file_path.to_string_lossy();
+
+            // ファイルパスが一致する Translation を検索
+            let result = translations
+                .iter()
+                .find(|t| t.file_path(&*db) == file_path_str.as_ref())
+                .and_then(|t| t.key_at_position(&*db, position).map(|key| key.text(&*db).clone()));
+            drop(translations);
+            result
+        }
+    }
+
     /// 開いているすべてのファイルに diagnostics を送信
     async fn send_diagnostics_to_opened_files(&self) {
         use crate::input::source::ProgrammingLanguage;
@@ -107,8 +170,7 @@ impl Backend {
 
         for uri in opened_files.iter() {
             // ファイルパスを取得
-            let Ok(file_path) = uri.to_file_path() else {
-                tracing::warn!("Failed to convert URI to file path: {}", uri);
+            let Some(file_path) = Self::uri_to_path(uri) else {
                 continue;
             };
 
@@ -164,8 +226,7 @@ impl Backend {
         tracing::info!(uri = %uri, force_create, "Updating source file and diagnosing");
 
         // ファイルパスを取得
-        let Ok(file_path) = uri.to_file_path() else {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
+        let Some(file_path) = Self::uri_to_path(&uri) else {
             return;
         };
 
@@ -207,13 +268,9 @@ impl Backend {
 
         tracing::info!(uri = %uri, "Source file updated");
 
-        // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
+        // 翻訳データが必要なため、インデックス完了を待つ
         // タイムアウトした場合は diagnostics をスキップ
-        if !self
-            .workspace_indexer
-            .wait_for_translations_indexed(std::time::Duration::from_millis(500))
-            .await
-        {
+        if !self.wait_for_translations().await {
             tracing::debug!(uri = %uri, "Skipping diagnostics - translations not indexed yet");
             return;
         }
@@ -300,7 +357,7 @@ impl Backend {
     /// 翻訳ファイルを再読み込み
     ///
     /// 指定されたJSONファイルを再読み込みし、translations を更新します。
-    async fn reload_translation_file(&self, file_path: &std::path::Path) {
+    async fn reload_translation_file(&self, file_path: &Path) {
         let config_manager = self.config_manager.lock().await;
         let key_separator = config_manager.get_settings().key_separator.clone();
         drop(config_manager);
@@ -330,7 +387,7 @@ impl Backend {
     /// 翻訳ファイルを削除
     ///
     /// 指定されたファイルに対応する翻訳エントリを translations から削除します。
-    async fn remove_translation_file(&self, file_path: &std::path::Path) {
+    async fn remove_translation_file(&self, file_path: &Path) {
         let db = self.db.lock().await;
         let mut translations = self.translations.lock().await;
 
@@ -387,12 +444,12 @@ impl Backend {
     }
 
     /// 設定ファイルかどうかを判定
-    fn is_config_file(file_path: &std::path::Path) -> bool {
+    fn is_config_file(file_path: &Path) -> bool {
         file_path.file_name().is_some_and(|name| name == ".js-i18n.json")
     }
 
     /// 翻訳ファイルかどうかを判定
-    async fn is_translation_file(&self, file_path: &std::path::Path) -> bool {
+    async fn is_translation_file(&self, file_path: &Path) -> bool {
         let file_pattern = {
             let config_manager = self.config_manager.lock().await;
             config_manager.get_settings().translation_files.file_pattern.clone()
@@ -409,11 +466,7 @@ impl Backend {
     /// - ファイルウォッチャーの再登録（パターンが変わった場合）
     /// - ワークスペースの再インデックス
     #[allow(clippy::unused_async)] // TODO: 実装時に async 処理が必要になる予定
-    async fn handle_config_file_change(
-        &self,
-        file_path: &std::path::Path,
-        change_type: FileChangeType,
-    ) {
+    async fn handle_config_file_change(&self, file_path: &Path, change_type: FileChangeType) {
         tracing::info!(
             "Config file changed: {:?}, type: {:?} (handling not yet implemented)",
             file_path,
@@ -728,19 +781,14 @@ impl LanguageServer for Backend {
 
         tracing::debug!(uri = %uri, line = position.line, character = position.character, "Completion request");
 
-        // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
-        if !self
-            .workspace_indexer
-            .wait_for_translations_indexed(std::time::Duration::from_millis(500))
-            .await
-        {
+        // 翻訳データが必要なため、インデックス完了を待つ
+        if !self.wait_for_translations().await {
             tracing::debug!("Completion request - translations not indexed yet");
             return Ok(None);
         }
 
         // ファイルパスを取得
-        let Ok(file_path) = uri.to_file_path() else {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
+        let Some(file_path) = Self::uri_to_path(&uri) else {
             return Ok(None);
         };
 
@@ -808,74 +856,40 @@ impl LanguageServer for Backend {
 
         tracing::debug!(uri = %uri, line = position.line, character = position.character, "Hover request");
 
-        // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
+        // 翻訳データが必要なため、インデックス完了を待つ
         // タイムアウトした場合は hover情報なしを返す
-        if !self
-            .workspace_indexer
-            .wait_for_translations_indexed(std::time::Duration::from_millis(500))
-            .await
-        {
+        if !self.wait_for_translations().await {
             tracing::debug!("Hover request timeout - translations not indexed yet");
             return Ok(None);
         }
 
         // ファイルパスを取得
-        let Ok(file_path) = uri.to_file_path() else {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
+        let Some(file_path) = Self::uri_to_path(&uri) else {
             return Ok(None);
         };
 
         let source_position = crate::types::SourcePosition::from(position);
 
-        // まず SourceFile から試す
-        let source_file = {
-            let source_files = self.source_files.lock().await;
-            source_files.get(&file_path).copied()
-        };
-
-        let db = self.db.lock().await;
-
-        let key = if let Some(source_file) = source_file {
-            // SourceFile からカーソル位置の翻訳キーを取得
-            crate::syntax::key_at_position(&*db, source_file, source_position)
-        } else {
-            // SourceFile が見つからない場合、Translation から試す
-            tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
-
-            let translations = self.translations.lock().await;
-            let file_path_str = file_path.to_string_lossy();
-
-            // ファイルパスが一致する Translation を検索
-            let translation =
-                translations.iter().find(|t| t.file_path(&*db) == file_path_str.as_ref());
-
-            if let Some(translation) = translation {
-                translation.key_at_position(&*db, source_position)
-            } else {
-                tracing::debug!("Translation not found for file: {}", file_path.display());
-                drop(translations);
-                drop(db);
-                return Ok(None);
-            }
-        };
-
-        let Some(key) = key else {
+        // 翻訳キーを取得
+        let Some(key_text) = self.get_key_at_position(&file_path, source_position).await else {
             tracing::debug!("No translation key found at position");
-            drop(db);
             return Ok(None);
         };
 
         // 翻訳内容を取得
-        let translations = self.translations.lock().await;
-        let Some(hover_text) = crate::ide::hover::generate_hover_content(&*db, key, &translations)
-        else {
-            tracing::debug!("No translations found for key: {}", key.text(&*db));
-            drop(db);
+        let hover_text = {
+            let db = self.db.lock().await;
+            let key = crate::interned::TransKey::new(&*db, key_text.clone());
+            let translations = self.translations.lock().await;
+            crate::ide::hover::generate_hover_content(&*db, key, &translations)
+        };
+
+        let Some(hover_text) = hover_text else {
+            tracing::debug!("No translations found for key: {}", key_text);
             return Ok(None);
         };
 
-        tracing::debug!("Generated hover content for key: {}", key.text(&*db));
-        drop(db);
+        tracing::debug!("Generated hover content for key: {}", key_text);
 
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
@@ -895,67 +909,32 @@ impl LanguageServer for Backend {
 
         tracing::debug!(uri = %uri, line = position.line, character = position.character, "Goto Definition request");
 
-        // 翻訳データが必要なため、インデックス完了を待つ（500msタイムアウト）
-        if !self
-            .workspace_indexer
-            .wait_for_translations_indexed(std::time::Duration::from_millis(500))
-            .await
-        {
+        // 翻訳データが必要なため、インデックス完了を待つ
+        if !self.wait_for_translations().await {
             tracing::debug!("Goto Definition request - translations not indexed yet");
             return Ok(None);
         }
 
         // ファイルパスを取得
-        let Ok(file_path) = uri.to_file_path() else {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
+        let Some(file_path) = Self::uri_to_path(&uri) else {
             return Ok(None);
         };
 
         let source_position = crate::types::SourcePosition::from(position);
 
-        // まず SourceFile から試す
-        let source_file = {
-            let source_files = self.source_files.lock().await;
-            source_files.get(&file_path).copied()
-        };
-
-        let db = self.db.lock().await;
-
-        let key = if let Some(source_file) = source_file {
-            // SourceFile からカーソル位置の翻訳キーを取得
-            crate::syntax::key_at_position(&*db, source_file, source_position)
-        } else {
-            // SourceFile が見つからない場合、Translation から試す
-            tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
-
-            let translations = self.translations.lock().await;
-            let file_path_str = file_path.to_string_lossy();
-
-            // ファイルパスが一致する Translation を検索
-            let translation =
-                translations.iter().find(|t| t.file_path(&*db) == file_path_str.as_ref());
-
-            if let Some(translation) = translation {
-                translation.key_at_position(&*db, source_position)
-            } else {
-                tracing::debug!("Translation not found for file: {}", file_path.display());
-                drop(translations);
-                drop(db);
-                return Ok(None);
-            }
-        };
-
-        let Some(key) = key else {
+        // 翻訳キーを取得
+        let Some(key_text) = self.get_key_at_position(&file_path, source_position).await else {
             tracing::debug!("No translation key found at position");
-            drop(db);
             return Ok(None);
         };
 
         // 翻訳ファイル内の定義を検索
-        let translations = self.translations.lock().await;
-        let locations = crate::ide::goto_definition::find_definitions(&*db, key, &translations);
-        drop(db);
-        drop(translations);
+        let locations = {
+            let db = self.db.lock().await;
+            let key = crate::interned::TransKey::new(&*db, key_text);
+            let translations = self.translations.lock().await;
+            crate::ide::goto_definition::find_definitions(&*db, key, &translations)
+        };
 
         tracing::debug!("Found {} definitions for key", locations.len());
 
@@ -982,57 +961,25 @@ impl LanguageServer for Backend {
         }
 
         // ファイルパスを取得
-        let Ok(file_path) = uri.to_file_path() else {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
+        let Some(file_path) = Self::uri_to_path(&uri) else {
             return Ok(None);
         };
 
         let source_position = crate::types::SourcePosition::from(position);
 
-        // まず SourceFile から試す
-        let source_file = {
-            let source_files = self.source_files.lock().await;
-            source_files.get(&file_path).copied()
-        };
-
-        let db = self.db.lock().await;
-
-        let key = if let Some(source_file) = source_file {
-            // SourceFile からカーソル位置の翻訳キーを取得
-            crate::syntax::key_at_position(&*db, source_file, source_position)
-        } else {
-            // SourceFile が見つからない場合、Translation から試す
-            tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
-
-            let translations = self.translations.lock().await;
-            let file_path_str = file_path.to_string_lossy();
-
-            // ファイルパスが一致する Translation を検索
-            let translation =
-                translations.iter().find(|t| t.file_path(&*db) == file_path_str.as_ref());
-
-            if let Some(translation) = translation {
-                translation.key_at_position(&*db, source_position)
-            } else {
-                tracing::debug!("Translation not found for file: {}", file_path.display());
-                drop(translations);
-                drop(db);
-                return Ok(None);
-            }
-        };
-
-        let Some(key) = key else {
+        // 翻訳キーを取得
+        let Some(key_text) = self.get_key_at_position(&file_path, source_position).await else {
             tracing::debug!("No translation key found at position");
-            drop(db);
             return Ok(None);
         };
 
         // 全ソースファイルから参照を検索
-        let key_text = key.text(&*db).clone();
-        let source_files = self.source_files.lock().await;
-        let locations = crate::ide::references::find_references(&*db, key, &source_files);
-        drop(db);
-        drop(source_files);
+        let locations = {
+            let db = self.db.lock().await;
+            let key = crate::interned::TransKey::new(&*db, key_text.clone());
+            let source_files = self.source_files.lock().await;
+            crate::ide::references::find_references(&*db, key, &source_files)
+        };
 
         tracing::debug!("Found {} references for key: {}", locations.len(), key_text);
 
