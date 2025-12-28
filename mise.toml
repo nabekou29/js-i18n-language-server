@@ -48,4 +48,14 @@ run = [
   "rustup component add rust-analyzer",
   "rustup component add rustfmt",
   "rustup component add clippy",
+  "rustup component add llvm-tools-preview",
+  "cargo install cargo-llvm-cov",
 ]
+
+[tasks.coverage]
+description = "Run tests with coverage"
+run = "cargo llvm-cov --all-features"
+
+[tasks.coverage-html]
+description = "Run tests with coverage and generate HTML report"
+run = "cargo llvm-cov --all-features --html --open"
