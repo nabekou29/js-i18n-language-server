@@ -72,6 +72,21 @@ pub struct I18nSettings {
 
     /// インデックス設定
     pub indexing: IndexingConfig,
+
+    /// 翻訳が必須の言語
+    ///
+    /// - `None`: 翻訳ファイルから検出されたすべての言語が必須（デフォルト）
+    /// - `Some([...])`: 指定された言語のみが必須
+    ///
+    /// 必須言語で翻訳が欠けている場合は警告が表示されます。
+    /// `optional_languages` と同時に指定することはできません。
+    pub required_languages: Option<Vec<String>>,
+
+    /// 翻訳が任意の言語
+    ///
+    /// この言語で翻訳が欠けていても診断は表示されません。
+    /// `required_languages` と同時に指定することはできません。
+    pub optional_languages: Option<Vec<String>>,
 }
 
 /// インデックス処理の設定
@@ -160,6 +175,14 @@ impl I18nSettings {
             ));
         }
 
+        // required_languages と optional_languages の排他チェック
+        if self.required_languages.is_some() && self.optional_languages.is_some() {
+            errors.push(ValidationError::new(
+                "requiredLanguages/optionalLanguages",
+                "Cannot specify both 'requiredLanguages' and 'optionalLanguages'. Please use only one",
+            ));
+        }
+
         if errors.is_empty() { Ok(()) } else { Err(errors) }
     }
 }
@@ -179,6 +202,8 @@ impl Default for I18nSettings {
             key_separator: ".".to_string(),
             namespace_separator: None,
             indexing: IndexingConfig::default(),
+            required_languages: None,
+            optional_languages: None,
         }
     }
 }
