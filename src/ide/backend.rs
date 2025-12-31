@@ -75,6 +75,25 @@ impl Backend {
         self.workspace_indexer.wait_for_translations_indexed(TRANSLATIONS_INDEX_TIMEOUT).await
     }
 
+    /// 設定から診断オプションを作成
+    #[allow(clippy::unused_self)]
+    pub(crate) fn create_diagnostic_options(
+        &self,
+        config: &ConfigManager,
+    ) -> super::diagnostics::DiagnosticOptions {
+        let settings = config.get_settings();
+        super::diagnostics::DiagnosticOptions {
+            required_languages: settings
+                .required_languages
+                .as_ref()
+                .map(|v| v.iter().cloned().collect()),
+            optional_languages: settings
+                .optional_languages
+                .as_ref()
+                .map(|v| v.iter().cloned().collect()),
+        }
+    }
+
     /// ファイルパスとカーソル位置から翻訳キーのテキストを取得
     ///
     /// `SourceFile` または `Translation` のどちらからも取得を試みます。
@@ -149,7 +168,10 @@ impl Backend {
             let diagnostics = {
                 let db = self.state.db.lock().await;
                 let translations = self.state.translations.lock().await;
-                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations)
+                let config = self.config_manager.lock().await;
+                let options = self.create_diagnostic_options(&config);
+                drop(config);
+                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations, &options)
             };
 
             // Diagnostics を送信
@@ -235,7 +257,10 @@ impl Backend {
         let diagnostics = {
             let db = self.state.db.lock().await;
             let translations = self.state.translations.lock().await;
-            crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations)
+            let config = self.config_manager.lock().await;
+            let options = self.create_diagnostic_options(&config);
+            drop(config);
+            crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations, &options)
         };
 
         self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
@@ -535,5 +560,19 @@ impl LanguageServer for Backend {
         params: tower_lsp::lsp_types::ReferenceParams,
     ) -> Result<Option<Vec<tower_lsp::lsp_types::Location>>> {
         handlers::features::handle_references(self, params).await
+    }
+
+    async fn code_action(
+        &self,
+        params: tower_lsp::lsp_types::CodeActionParams,
+    ) -> Result<Option<tower_lsp::lsp_types::CodeActionResponse>> {
+        handlers::code_action::handle_code_action(self, params).await
+    }
+
+    async fn execute_command(
+        &self,
+        params: tower_lsp::lsp_types::ExecuteCommandParams,
+    ) -> Result<Option<serde_json::Value>> {
+        handlers::execute_command::handle_execute_command(self, params).await
     }
 }
