@@ -4,6 +4,7 @@
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
+    CodeActionProviderCapability,
     CompletionOptions,
     ExecuteCommandOptions,
     HoverProviderCapability,
@@ -67,8 +68,9 @@ pub async fn handle_initialize(
             }),
             definition_provider: Some(OneOf::Left(true)),
             references_provider: Some(OneOf::Left(true)),
+            code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
             execute_command_provider: Some(ExecuteCommandOptions {
-                commands: vec!["dummy.do_something".to_string()],
+                commands: vec!["i18n.editTranslation".to_string()],
                 work_done_progress_options: WorkDoneProgressOptions::default(),
             }),
             workspace: Some(WorkspaceServerCapabilities {
