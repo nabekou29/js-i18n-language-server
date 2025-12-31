@@ -233,7 +233,7 @@ pub fn extract_completion_context_tree_sitter(
         // Case: t(|) - no quotes yet, arg_text is "()" or similar
         if first_char == '(' {
             // Cursor is inside empty arguments - return NoQuotes context
-            #[allow(clippy::cast_possible_truncation)]
+            #[allow(clippy::cast_possible_truncation)] // ソースファイルの列が42億を超えることはない
             let insert_position = Position::new(line, (arg_start_char + 1) as u32);
 
             return Some(CompletionContext {
@@ -267,9 +267,9 @@ pub fn extract_completion_context_tree_sitter(
             ""
         };
 
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_possible_truncation)] // ソースファイルの列が42億を超えることはない
         let key_start = Position::new(line, key_start_char as u32);
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_possible_truncation)] // ソースファイルの列が42億を超えることはない
         let key_end = Position::new(line, key_end_char as u32);
 
         return Some(CompletionContext {

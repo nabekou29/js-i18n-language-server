@@ -47,7 +47,7 @@ fn get_closest_node<'a>(node: Node<'a>, target_types: &[&str]) -> Option<Node<'a
 }
 
 /// Gets the range of a tree-sitter node
-#[allow(clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_truncation)] // ソースファイルの行・列が42億を超えることはない
 fn get_node_range(node: Node<'_>) -> Range {
     let start_pos = node.start_position();
     let end_pos = node.end_position();

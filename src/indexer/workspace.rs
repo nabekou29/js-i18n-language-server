@@ -174,7 +174,7 @@ impl WorkspaceIndexer {
             Self::find_source_files(workspace_path, &translation_pattern, exclude_patterns)?;
 
         // 総ファイル数と進捗カウンター
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(clippy::cast_possible_truncation)] // ワークスペース内のファイル数が42億を超えることはない
         let total_files = (files.len() + translation_files.len()) as u32;
         let processed_files = Arc::new(AtomicU32::new(0));
         let last_reported_percent = Arc::new(AtomicU32::new(0));
