@@ -53,6 +53,7 @@ vim.lsp.enable({ "js_i18n_ls" })
 
 vim.keymap.set("n", "gd", "<cmd>lua vim.lsp.buf.definition()<cr>")
 vim.keymap.set("n", "gr", "<cmd>lua vim.lsp.buf.references()<cr>")
+vim.keymap.set("n", "ga", "<cmd>lua vim.lsp.buf.code_action()<cr>")
 vim.keymap.set("n", "K", "<cmd>lua vim.lsp.buf.hover()<cr>")
 
 -- Register command
