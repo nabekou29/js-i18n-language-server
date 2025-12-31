@@ -606,6 +606,7 @@ dependencies = [
  "globset",
  "googletest",
  "ignore",
+ "jsonc-parser",
  "num_cpus",
  "rstest",
  "salsa",
@@ -623,6 +624,12 @@ dependencies = [
  "tree-sitter-json",
  "tree-sitter-typescript",
 ]
+
+[[package]]
+name = "jsonc-parser"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b187b7e06feb2c205d8ec71f12cd8f553e33477ec155ebfc34f8daa7f3ae4eab"
 
 [[package]]
 name = "lazy_static"
