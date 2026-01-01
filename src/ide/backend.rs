@@ -166,17 +166,21 @@ impl Backend {
 
             // Diagnostics を生成
             let diagnostics = {
+                let (options, key_separator) = {
+                    let config = self.config_manager.lock().await;
+                    (
+                        self.create_diagnostic_options(&config),
+                        config.get_settings().key_separator.clone(),
+                    )
+                };
                 let db = self.state.db.lock().await;
                 let translations = self.state.translations.lock().await;
-                let config = self.config_manager.lock().await;
-                let options = self.create_diagnostic_options(&config);
-                let key_separator = config.get_settings().key_separator.as_str();
                 crate::ide::diagnostics::generate_diagnostics(
                     &*db,
                     source_file,
                     &translations,
                     &options,
-                    key_separator,
+                    &key_separator,
                 )
             };
 
@@ -191,10 +195,7 @@ impl Backend {
     /// すべてのソースファイルで使用されていないキーに対して、
     /// 翻訳ファイル上で診断メッセージを表示します。
     pub(crate) async fn send_unused_key_diagnostics(&self) {
-        let settings = {
-            let config = self.config_manager.lock().await;
-            config.get_settings().clone()
-        };
+        let settings = self.config_manager.lock().await.get_settings().clone();
 
         // 機能が無効の場合はスキップ
         if !settings.diagnostics.unused_keys {
@@ -202,31 +203,40 @@ impl Backend {
             return;
         }
 
-        let key_separator = settings.key_separator.clone();
+        let key_separator = &settings.key_separator;
 
-        let db = self.state.db.lock().await;
-        let source_files = self.state.source_files.lock().await;
-        let translations = self.state.translations.lock().await;
-
+        // ロックを短時間で解放するため、必要なデータを先に収集
         let source_file_vec: Vec<crate::input::source::SourceFile> =
-            source_files.values().copied().collect();
+            self.state.source_files.lock().await.values().copied().collect();
 
-        tracing::info!(
-            translation_count = translations.len(),
-            source_file_count = source_file_vec.len(),
-            "Sending unused key diagnostics"
-        );
+        let diagnostics_to_send: Vec<(String, Vec<tower_lsp::lsp_types::Diagnostic>)> = {
+            let translations = self.state.translations.lock().await;
+            let db = self.state.db.lock().await;
 
-        for translation in translations.iter() {
-            let diagnostics = crate::ide::diagnostics::generate_unused_key_diagnostics(
-                &*db,
-                *translation,
-                &source_file_vec,
-                &key_separator,
+            tracing::info!(
+                translation_count = translations.len(),
+                source_file_count = source_file_vec.len(),
+                "Sending unused key diagnostics"
             );
 
-            let file_path = translation.file_path(&*db);
-            if let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) {
+            translations
+                .iter()
+                .map(|translation| {
+                    let diagnostics = crate::ide::diagnostics::generate_unused_key_diagnostics(
+                        &*db,
+                        *translation,
+                        &source_file_vec,
+                        key_separator,
+                    );
+                    let file_path = translation.file_path(&*db).clone();
+                    (file_path, diagnostics)
+                })
+                .collect()
+        };
+
+        // ロック解放後に診断を送信
+        for (file_path, diagnostics) in diagnostics_to_send {
+            if let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(&file_path) {
                 self.client.publish_diagnostics(uri, diagnostics, None).await;
                 tracing::debug!(file_path = %file_path, "Unused key diagnostics sent");
             } else {
@@ -310,17 +320,21 @@ impl Backend {
 
         // 翻訳インデックス完了後に診断メッセージを生成して送信
         let diagnostics = {
+            let (options, key_separator) = {
+                let config = self.config_manager.lock().await;
+                (
+                    self.create_diagnostic_options(&config),
+                    config.get_settings().key_separator.clone(),
+                )
+            };
             let db = self.state.db.lock().await;
             let translations = self.state.translations.lock().await;
-            let config = self.config_manager.lock().await;
-            let options = self.create_diagnostic_options(&config);
-            let key_separator = config.get_settings().key_separator.as_str();
             crate::ide::diagnostics::generate_diagnostics(
                 &*db,
                 source_file,
                 &translations,
                 &options,
-                key_separator,
+                &key_separator,
             )
         };
 

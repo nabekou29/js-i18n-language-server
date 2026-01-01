@@ -225,10 +225,9 @@ async fn handle_get_decorations(
     };
 
     // 設定からデフォルト値を取得
-    let max_length = {
-        let config = backend.config_manager.lock().await;
-        let settings = config.get_settings();
-        parsed_args.max_length.unwrap_or(settings.virtual_text.max_length)
+    let max_length = match parsed_args.max_length {
+        Some(len) => len,
+        None => backend.config_manager.lock().await.get_settings().virtual_text.max_length,
     };
 
     // SourceFile を取得

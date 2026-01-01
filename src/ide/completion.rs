@@ -101,7 +101,7 @@ pub fn generate_completions(
             key_translations
                 .entry(key.clone())
                 .or_default()
-                .push((language.clone(), value.clone()));
+                .push((language.clone(), value.to_owned()));
         }
     }
 

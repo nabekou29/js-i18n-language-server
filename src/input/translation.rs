@@ -361,29 +361,45 @@ pub fn flatten_json(
     prefix: Option<&str>,
 ) -> HashMap<String, String> {
     let mut result = HashMap::new();
+    flatten_json_value(json, separator, prefix, &mut result);
+    result
+}
 
-    if let Value::Object(map) = json {
-        for (key, value) in map {
-            let full_key = prefix.map_or_else(|| key.clone(), |p| format!("{p}{separator}{key}"));
-
-            match value {
-                Value::String(s) => {
-                    result.insert(full_key, s.clone());
-                }
-                Value::Object(_) => {
-                    // 再帰的にフラット化
-                    let nested = flatten_json(value, separator, Some(&full_key));
-                    result.extend(nested);
-                }
-                _ => {
-                    // その他の型は文字列に変換
-                    result.insert(full_key, value.to_string());
-                }
+/// JSON 値を再帰的にフラット化するヘルパー関数
+fn flatten_json_value(
+    json: &Value,
+    separator: &str,
+    prefix: Option<&str>,
+    result: &mut HashMap<String, String>,
+) {
+    match json {
+        Value::Object(map) => {
+            for (key, value) in map {
+                let full_key =
+                    prefix.map_or_else(|| key.clone(), |p| format!("{p}{separator}{key}"));
+                flatten_json_value(value, separator, Some(&full_key), result);
+            }
+        }
+        Value::Array(arr) => {
+            for (index, value) in arr.iter().enumerate() {
+                // 配列のインデックスは [index] 形式を使用
+                let full_key =
+                    prefix.map_or_else(|| format!("[{index}]"), |p| format!("{p}[{index}]"));
+                flatten_json_value(value, separator, Some(&full_key), result);
+            }
+        }
+        Value::String(s) => {
+            if let Some(key) = prefix {
+                result.insert(key.to_string(), s.clone());
+            }
+        }
+        _ => {
+            // その他の型は文字列に変換
+            if let Some(key) = prefix {
+                result.insert(key.to_string(), json.to_string());
             }
         }
     }
-
-    result
 }
 
 /// JSON ファイルからキーと値の位置情報のマッピングを抽出
@@ -452,6 +468,7 @@ pub fn extract_key_value_ranges(
 /// * `prefix` - 現在のキープレフィックス（親のキーパス）
 /// * `key_ranges` - キーの位置情報を格納する `HashMap`
 /// * `value_ranges` - 値の位置情報を格納する `HashMap`
+#[allow(clippy::too_many_lines)]
 fn extract_keys_from_node(
     node: tree_sitter::Node<'_>,
     source: &[u8],
@@ -473,6 +490,72 @@ fn extract_keys_from_node(
                         key_ranges,
                         value_ranges,
                     );
+                }
+            }
+        }
+        "array" => {
+            // 配列の場合、各要素を [index] 形式で探索
+            let mut index = 0;
+            for i in 0..node.child_count() {
+                if let Some(child) = node.child(i) {
+                    // 配列の区切り文字（カンマ、ブラケット）をスキップ
+                    if child.kind() == "[" || child.kind() == "]" || child.kind() == "," {
+                        continue;
+                    }
+
+                    let full_key =
+                        prefix.map_or_else(|| format!("[{index}]"), |p| format!("{p}[{index}]"));
+
+                    // 要素の位置情報を記録（キーの位置として）
+                    let elem_start_pos = child.start_position();
+                    let elem_end_pos = child.end_position();
+                    #[allow(clippy::cast_possible_truncation)]
+                    let elem_range = SourceRange {
+                        start: SourcePosition {
+                            line: elem_start_pos.row as u32,
+                            character: elem_start_pos.column as u32,
+                        },
+                        end: SourcePosition {
+                            line: elem_end_pos.row as u32,
+                            character: elem_end_pos.column as u32,
+                        },
+                    };
+                    key_ranges.insert(full_key.clone(), elem_range);
+
+                    match child.kind() {
+                        "string" => {
+                            // 文字列要素の場合、値の位置情報も記録
+                            value_ranges.insert(full_key, elem_range);
+                        }
+                        "object" => {
+                            // オブジェクト要素の場合、再帰的に探索
+                            extract_keys_from_node(
+                                child,
+                                source,
+                                separator,
+                                Some(&full_key),
+                                key_ranges,
+                                value_ranges,
+                            );
+                        }
+                        "array" => {
+                            // ネストした配列の場合、再帰的に探索
+                            extract_keys_from_node(
+                                child,
+                                source,
+                                separator,
+                                Some(&full_key),
+                                key_ranges,
+                                value_ranges,
+                            );
+                        }
+                        _ => {
+                            // その他の型（数値、ブール、null）は値の位置情報を記録
+                            value_ranges.insert(full_key, elem_range);
+                        }
+                    }
+
+                    index += 1;
                 }
             }
         }
@@ -521,35 +604,64 @@ fn extract_keys_from_node(
             // キーの位置情報を追加
             key_ranges.insert(full_key.clone(), key_range);
 
-            // 値が文字列の場合、値の位置情報も記録
-            if value_node.kind() == "string" {
-                let value_start_pos = value_node.start_position();
-                let value_end_pos = value_node.end_position();
-                #[allow(clippy::cast_possible_truncation)]
-                // ソースファイルの行・列が42億を超えることはない
-                let value_range = SourceRange {
-                    start: SourcePosition {
-                        line: value_start_pos.row as u32,
-                        character: value_start_pos.column as u32,
-                    },
-                    end: SourcePosition {
-                        line: value_end_pos.row as u32,
-                        character: value_end_pos.column as u32,
-                    },
-                };
-                value_ranges.insert(full_key.clone(), value_range);
-            }
-
-            // 値が object の場合は再帰的に探索
-            if value_node.kind() == "object" {
-                extract_keys_from_node(
-                    value_node,
-                    source,
-                    separator,
-                    Some(&full_key),
-                    key_ranges,
-                    value_ranges,
-                );
+            match value_node.kind() {
+                "string" => {
+                    // 値が文字列の場合、値の位置情報も記録
+                    let value_start_pos = value_node.start_position();
+                    let value_end_pos = value_node.end_position();
+                    #[allow(clippy::cast_possible_truncation)]
+                    // ソースファイルの行・列が42億を超えることはない
+                    let value_range = SourceRange {
+                        start: SourcePosition {
+                            line: value_start_pos.row as u32,
+                            character: value_start_pos.column as u32,
+                        },
+                        end: SourcePosition {
+                            line: value_end_pos.row as u32,
+                            character: value_end_pos.column as u32,
+                        },
+                    };
+                    value_ranges.insert(full_key, value_range);
+                }
+                "object" => {
+                    // 値が object の場合は再帰的に探索
+                    extract_keys_from_node(
+                        value_node,
+                        source,
+                        separator,
+                        Some(&full_key),
+                        key_ranges,
+                        value_ranges,
+                    );
+                }
+                "array" => {
+                    // 値が array の場合は再帰的に探索
+                    extract_keys_from_node(
+                        value_node,
+                        source,
+                        separator,
+                        Some(&full_key),
+                        key_ranges,
+                        value_ranges,
+                    );
+                }
+                _ => {
+                    // その他の型（数値、ブール、null）は値の位置情報を記録
+                    let value_start_pos = value_node.start_position();
+                    let value_end_pos = value_node.end_position();
+                    #[allow(clippy::cast_possible_truncation)]
+                    let value_range = SourceRange {
+                        start: SourcePosition {
+                            line: value_start_pos.row as u32,
+                            character: value_start_pos.column as u32,
+                        },
+                        end: SourcePosition {
+                            line: value_end_pos.row as u32,
+                            character: value_end_pos.column as u32,
+                        },
+                    };
+                    value_ranges.insert(full_key, value_range);
+                }
             }
         }
         _ => {
@@ -923,5 +1035,107 @@ mod tests {
         if let Some(k) = key {
             assert_eq!(k.text(&db), &"nested.key".to_string());
         }
+    }
+
+    #[googletest::test]
+    fn test_flatten_json_with_array() {
+        let json = json!({
+            "items": ["apple", "banana", "cherry"]
+        });
+
+        let result = flatten_json(&json, ".", None);
+
+        // 配列は [index] 形式でフラット化される
+        expect_that!(result.get("items[0]"), some(eq(&"apple".to_string())));
+        expect_that!(result.get("items[1]"), some(eq(&"banana".to_string())));
+        expect_that!(result.get("items[2]"), some(eq(&"cherry".to_string())));
+        expect_that!(result.len(), eq(3));
+    }
+
+    #[googletest::test]
+    fn test_flatten_json_with_nested_array() {
+        let json = json!({
+            "menu": {
+                "items": ["item1", "item2"]
+            }
+        });
+
+        let result = flatten_json(&json, ".", None);
+
+        expect_that!(result.get("menu.items[0]"), some(eq(&"item1".to_string())));
+        expect_that!(result.get("menu.items[1]"), some(eq(&"item2".to_string())));
+    }
+
+    #[googletest::test]
+    fn test_flatten_json_with_array_of_objects() {
+        let json = json!({
+            "users": [
+                { "name": "Alice" },
+                { "name": "Bob" }
+            ]
+        });
+
+        let result = flatten_json(&json, ".", None);
+
+        expect_that!(result.get("users[0].name"), some(eq(&"Alice".to_string())));
+        expect_that!(result.get("users[1].name"), some(eq(&"Bob".to_string())));
+    }
+
+    #[googletest::test]
+    fn test_flatten_json_with_nested_arrays() {
+        let json = json!({
+            "matrix": [
+                ["a", "b"],
+                ["c", "d"]
+            ]
+        });
+
+        let result = flatten_json(&json, ".", None);
+
+        expect_that!(result.get("matrix[0][0]"), some(eq(&"a".to_string())));
+        expect_that!(result.get("matrix[0][1]"), some(eq(&"b".to_string())));
+        expect_that!(result.get("matrix[1][0]"), some(eq(&"c".to_string())));
+        expect_that!(result.get("matrix[1][1]"), some(eq(&"d".to_string())));
+    }
+
+    #[googletest::test]
+    fn test_extract_key_value_ranges_with_array() {
+        let json_text = r#"{
+  "items": ["apple", "banana"]
+}"#;
+
+        let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
+
+        // キーの位置情報を確認
+        expect_that!(key_ranges.contains_key("items"), eq(true));
+        expect_that!(key_ranges.contains_key("items[0]"), eq(true));
+        expect_that!(key_ranges.contains_key("items[1]"), eq(true));
+
+        // 値の位置情報を確認（配列要素も値として記録される）
+        expect_that!(value_ranges.contains_key("items[0]"), eq(true));
+        expect_that!(value_ranges.contains_key("items[1]"), eq(true));
+    }
+
+    #[googletest::test]
+    fn test_extract_key_value_ranges_with_array_of_objects() {
+        let json_text = r#"{
+  "users": [
+    { "name": "Alice" },
+    { "name": "Bob" }
+  ]
+}"#;
+
+        let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
+
+        // キーの位置情報を確認
+        expect_that!(key_ranges.contains_key("users"), eq(true));
+        expect_that!(key_ranges.contains_key("users[0]"), eq(true));
+        expect_that!(key_ranges.contains_key("users[0].name"), eq(true));
+        expect_that!(key_ranges.contains_key("users[1]"), eq(true));
+        expect_that!(key_ranges.contains_key("users[1].name"), eq(true));
+
+        // 値の位置情報を確認
+        expect_that!(value_ranges.contains_key("users[0].name"), eq(true));
+        expect_that!(value_ranges.contains_key("users[1].name"), eq(true));
     }
 }

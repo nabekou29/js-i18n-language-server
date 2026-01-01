@@ -34,7 +34,7 @@ pub fn generate_hover_content(
 
         // 完全一致
         if let Some(value) = keys.get(key_text) {
-            translations_found.push((language.clone(), value.clone()));
+            translations_found.push((language, value.clone()));
             continue;
         }
 
@@ -45,7 +45,7 @@ pub fn generate_hover_content(
         if !nested_keys.is_empty() {
             // 子キーをフォーマットして表示
             let nested_display = format_nested_keys(&nested_keys, &prefix);
-            translations_found.push((language.clone(), nested_display));
+            translations_found.push((language, nested_display));
         }
     }
 

@@ -123,12 +123,12 @@ pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Opti
 
     // 翻訳内容を取得
     let hover_text = {
+        let key_separator =
+            backend.config_manager.lock().await.get_settings().key_separator.clone();
         let db = backend.state.db.lock().await;
-        let config_manager = backend.config_manager.lock().await;
-        let key_separator = config_manager.get_settings().key_separator.as_str();
         let key = crate::interned::TransKey::new(&*db, key_text.clone());
         let translations = backend.state.translations.lock().await;
-        crate::ide::hover::generate_hover_content(&*db, key, &translations, key_separator)
+        crate::ide::hover::generate_hover_content(&*db, key, &translations, &key_separator)
     };
 
     let Some(hover_text) = hover_text else {
@@ -178,12 +178,12 @@ pub async fn handle_goto_definition(
 
     // 翻訳ファイル内の定義を検索
     let locations = {
+        let key_separator =
+            backend.config_manager.lock().await.get_settings().key_separator.clone();
         let db = backend.state.db.lock().await;
-        let config_manager = backend.config_manager.lock().await;
-        let key_separator = config_manager.get_settings().key_separator.as_str();
         let key = crate::interned::TransKey::new(&*db, key_text);
         let translations = backend.state.translations.lock().await;
-        crate::ide::goto_definition::find_definitions(&*db, key, &translations, key_separator)
+        crate::ide::goto_definition::find_definitions(&*db, key, &translations, &key_separator)
     };
 
     tracing::debug!("Found {} definitions for key", locations.len());
