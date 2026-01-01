@@ -208,6 +208,9 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
 
         // すべてのワークスペースフォルダーのインデックス完了後、診断を送信
         backend.send_diagnostics_to_opened_files().await;
+
+        // 翻訳ファイルへの未使用キー診断を送信
+        backend.send_unused_key_diagnostics().await;
     }
 
     // ファイルウォッチを登録

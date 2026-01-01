@@ -95,5 +95,7 @@ pub async fn handle_did_change_watched_files(
     // 翻訳ファイルが変更された場合、診断を更新
     if translations_changed {
         backend.send_diagnostics_to_opened_files().await;
+        // 翻訳ファイルへの未使用キー診断も更新
+        backend.send_unused_key_diagnostics().await;
     }
 }
