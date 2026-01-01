@@ -230,7 +230,7 @@ async fn handle_get_decorations(
     // 設定からデフォルト値を取得
     let config = backend.config_manager.lock().await;
     let max_length =
-        parsed_args.max_length.unwrap_or(config.get_settings().virtual_text.max_length);
+        parsed_args.max_length.unwrap_or_else(|| config.get_settings().virtual_text.max_length);
     let primary_languages = config.get_settings().primary_languages.clone();
     drop(config);
 
@@ -330,7 +330,7 @@ async fn handle_set_current_language(
 
     // current_language を更新
     let mut current_language = backend.state.current_language.lock().await;
-    *current_language = parsed_args.language.clone();
+    current_language.clone_from(&parsed_args.language);
     drop(current_language);
 
     backend

@@ -134,6 +134,7 @@ impl WorkspaceIndexer {
     /// # Errors
     /// ファイル検索やパターンのビルドに失敗した場合、`IndexerError` を返す。
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::significant_drop_tightening)] // フラグ設定をロック保持中に行うため意図的
     pub async fn index_workspace<F>(
         &self,
         db: crate::db::I18nDatabaseImpl,
@@ -227,8 +228,13 @@ impl WorkspaceIndexer {
         }
 
         // 翻訳データを保存してから通知（順序が重要）
-        translations.lock().await.extend(loaded_translations);
-        self.translations_indexed.store(true, Ordering::Release);
+        // フラグ設定をロック内で行うことで、フラグが true の時に
+        // データが必ず存在することを保証する
+        {
+            let mut guard = translations.lock().await;
+            guard.extend(loaded_translations);
+            self.translations_indexed.store(true, Ordering::Release);
+        }
         self.translations_notify.notify_waiters();
 
         // 【ステップ2】並列度を制限してソースファイルをインデックス
