@@ -505,7 +505,8 @@ fn extract_keys_from_node(
             // キーノードの位置情報を SourceRange に変換
             let key_start_pos = key_node.start_position();
             let key_end_pos = key_node.end_position();
-            #[allow(clippy::cast_possible_truncation)] // ソースファイルの行・列が42億を超えることはない
+            #[allow(clippy::cast_possible_truncation)]
+            // ソースファイルの行・列が42億を超えることはない
             let key_range = SourceRange {
                 start: SourcePosition {
                     line: key_start_pos.row as u32,
@@ -524,7 +525,8 @@ fn extract_keys_from_node(
             if value_node.kind() == "string" {
                 let value_start_pos = value_node.start_position();
                 let value_end_pos = value_node.end_position();
-                #[allow(clippy::cast_possible_truncation)] // ソースファイルの行・列が42億を超えることはない
+                #[allow(clippy::cast_possible_truncation)]
+                // ソースファイルの行・列が42億を超えることはない
                 let value_range = SourceRange {
                     start: SourcePosition {
                         line: value_start_pos.row as u32,

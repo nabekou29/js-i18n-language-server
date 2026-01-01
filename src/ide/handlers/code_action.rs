@@ -52,12 +52,7 @@ pub async fn handle_code_action(
     let all_languages: Vec<String> = {
         let db = backend.state.db.lock().await;
         let translations = backend.state.translations.lock().await;
-        translations
-            .iter()
-            .map(|t| t.language(&*db))
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .collect()
+        translations.iter().map(|t| t.language(&*db)).collect::<HashSet<_>>().into_iter().collect()
     };
 
     if all_languages.is_empty() {

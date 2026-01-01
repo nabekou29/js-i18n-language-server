@@ -96,12 +96,8 @@ async fn handle_edit_translation(
     } else {
         // キーが存在しない → CST でキーを挿入
         let original = translation.json_text(&*db).clone();
-        let result = crate::ide::code_actions::insert_key_to_json(
-            &*db,
-            translation,
-            key,
-            &key_separator,
-        );
+        let result =
+            crate::ide::code_actions::insert_key_to_json(&*db, translation, key, &key_separator);
         let cursor = result.as_ref().map(|r| r.cursor_range);
         (result, Some(original), cursor)
     };

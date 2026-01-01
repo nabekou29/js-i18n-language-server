@@ -40,18 +40,10 @@ pub fn determine_target_languages<'a>(
 ) -> HashSet<&'a str> {
     if let Some(ref required) = options.required_languages {
         // required_languages が指定されている場合、それらのみチェック
-        all_languages
-            .iter()
-            .filter(|lang| required.contains(*lang))
-            .map(String::as_str)
-            .collect()
+        all_languages.iter().filter(|lang| required.contains(*lang)).map(String::as_str).collect()
     } else if let Some(ref optional) = options.optional_languages {
         // optional_languages が指定されている場合、それら以外をチェック
-        all_languages
-            .iter()
-            .filter(|lang| !optional.contains(*lang))
-            .map(String::as_str)
-            .collect()
+        all_languages.iter().filter(|lang| !optional.contains(*lang)).map(String::as_str).collect()
     } else {
         // どちらも指定されていない場合、すべての言語をチェック
         all_languages.iter().map(String::as_str).collect()
@@ -96,8 +88,7 @@ pub fn generate_diagnostics(
         .collect();
 
     // チェック対象の言語を決定
-    let all_languages: HashSet<String> =
-        translations.iter().map(|t| t.language(db)).collect();
+    let all_languages: HashSet<String> = translations.iter().map(|t| t.language(db)).collect();
     let target_languages = determine_target_languages(&all_languages, options);
 
     // 各キー使用箇所をチェック
@@ -121,11 +112,8 @@ pub fn generate_diagnostics(
         if !missing_languages.is_empty() {
             let range = usage.range(db);
 
-            let message = format!(
-                "Translation key '{}' missing for: {}",
-                key,
-                missing_languages.join(", ")
-            );
+            let message =
+                format!("Translation key '{}' missing for: {}", key, missing_languages.join(", "));
 
             diagnostics.push(Diagnostic {
                 range: Range {

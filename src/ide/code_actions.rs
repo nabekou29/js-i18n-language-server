@@ -245,7 +245,8 @@ mod tests {
         let all_languages = vec!["en".to_string(), "ja".to_string()];
         let missing_languages: HashSet<String> = HashSet::new();
 
-        let actions = generate_code_actions("common.hello", &all_languages, &missing_languages, None);
+        let actions =
+            generate_code_actions("common.hello", &all_languages, &missing_languages, None);
 
         expect_that!(actions, len(eq(2)));
     }
@@ -271,7 +272,8 @@ mod tests {
         let all_languages = vec!["en".to_string(), "ja".to_string(), "zh".to_string()];
         let missing_languages: HashSet<String> = ["zh"].iter().map(|s| s.to_string()).collect();
 
-        let actions = generate_code_actions("common.hello", &all_languages, &missing_languages, None);
+        let actions =
+            generate_code_actions("common.hello", &all_languages, &missing_languages, None);
 
         expect_that!(actions, len(eq(3)));
 
@@ -309,7 +311,8 @@ mod tests {
   "hello": "world"
 }"#;
 
-        let result = insert_key_to_json_text(json, "goodbye", ".").expect("insertion should succeed");
+        let result =
+            insert_key_to_json_text(json, "goodbye", ".").expect("insertion should succeed");
 
         // 新しいキーが追加されていることを確認
         expect_that!(result.new_text, contains_substring("\"goodbye\""));
@@ -325,8 +328,8 @@ mod tests {
   "hello": "world"
 }"#;
 
-        let result =
-            insert_key_to_json_text(json, "common.greeting", ".").expect("insertion should succeed");
+        let result = insert_key_to_json_text(json, "common.greeting", ".")
+            .expect("insertion should succeed");
 
         // ネスト構造が作成されていることを確認
         expect_that!(result.new_text, contains_substring("\"common\""));

@@ -87,6 +87,9 @@ pub struct I18nSettings {
     /// この言語で翻訳が欠けていても診断は表示されません。
     /// `required_languages` と同時に指定することはできません。
     pub optional_languages: Option<Vec<String>>,
+
+    /// Virtual Text（翻訳置換表示）の設定
+    pub virtual_text: VirtualTextConfig,
 }
 
 /// インデックス処理の設定
@@ -98,6 +101,20 @@ pub struct IndexingConfig {
     /// - `None`: デフォルト（CPUコア数の80%、最低1スレッド）
     /// - `Some(n)`: 指定されたスレッド数を使用
     pub num_threads: Option<usize>,
+}
+
+/// Virtual Text（翻訳置換表示）の設定
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct VirtualTextConfig {
+    /// 最大表示文字数（超過時は省略記号を追加）
+    pub max_length: usize,
+}
+
+impl Default for VirtualTextConfig {
+    fn default() -> Self {
+        Self { max_length: 30 }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -204,6 +221,7 @@ impl Default for I18nSettings {
             indexing: IndexingConfig::default(),
             required_languages: None,
             optional_languages: None,
+            virtual_text: VirtualTextConfig::default(),
         }
     }
 }

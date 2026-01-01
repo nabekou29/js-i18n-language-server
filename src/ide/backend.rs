@@ -171,7 +171,12 @@ impl Backend {
                 let config = self.config_manager.lock().await;
                 let options = self.create_diagnostic_options(&config);
                 drop(config);
-                crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations, &options)
+                crate::ide::diagnostics::generate_diagnostics(
+                    &*db,
+                    source_file,
+                    &translations,
+                    &options,
+                )
             };
 
             // Diagnostics を送信
@@ -260,7 +265,12 @@ impl Backend {
             let config = self.config_manager.lock().await;
             let options = self.create_diagnostic_options(&config);
             drop(config);
-            crate::ide::diagnostics::generate_diagnostics(&*db, source_file, &translations, &options)
+            crate::ide::diagnostics::generate_diagnostics(
+                &*db,
+                source_file,
+                &translations,
+                &options,
+            )
         };
 
         self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
