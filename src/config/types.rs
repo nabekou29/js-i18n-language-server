@@ -93,6 +93,12 @@ pub struct I18nSettings {
 
     /// 診断（Diagnostics）の設定
     pub diagnostics: DiagnosticsConfig,
+
+    /// 優先表示する言語のリスト
+    ///
+    /// ワークスペースに存在する言語の中から、このリストの順序で優先的に使用される。
+    /// `currentLanguage` が設定されていない場合のフォールバック。
+    pub primary_languages: Option<Vec<String>>,
 }
 
 /// インデックス処理の設定
@@ -240,6 +246,7 @@ impl Default for I18nSettings {
             optional_languages: None,
             virtual_text: VirtualTextConfig::default(),
             diagnostics: DiagnosticsConfig::default(),
+            primary_languages: None,
         }
     }
 }

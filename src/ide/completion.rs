@@ -56,6 +56,7 @@ pub struct CompletionContext {
 /// * `partial_key` - Partial key text at cursor position (e.g., "common." or "")
 /// * `quote_context` - Quote context information for proper text editing
 /// * `key_prefix` - Key prefix from useTranslation options
+/// * `effective_language` - 有効な言語（detail 表示に使用、None の場合は detail なし）
 ///
 /// # Returns
 /// List of completion items
@@ -65,6 +66,7 @@ pub fn generate_completions(
     partial_key: Option<&str>,
     quote_context: &QuoteContext,
     key_prefix: Option<&str>,
+    effective_language: Option<&str>,
 ) -> Vec<CompletionItem> {
     let mut completion_items = Vec::new();
     let mut key_translations: std::collections::HashMap<String, Vec<(String, String)>> =
@@ -108,9 +110,9 @@ pub fn generate_completions(
     // Create completion items for each unique key
     for (key, lang_values) in key_translations {
         // Skip if no translations found (should not happen)
-        let Some((first_lang, first_value)) = lang_values.first() else {
+        if lang_values.is_empty() {
             continue;
-        };
+        }
 
         // key_prefix を除いた挿入用キーを計算
         let insert_key = key_prefix.map_or_else(
@@ -130,10 +132,15 @@ pub fn generate_completions(
         }
         let documentation_text = doc_lines.join("\n");
 
+        // effective_language が設定されている場合、その言語の翻訳値を detail に表示
+        let detail = effective_language.and_then(|eff_lang| {
+            lang_values.iter().find(|(lang, _)| lang == eff_lang).map(|(_, value)| value.clone())
+        });
+
         let mut item = CompletionItem {
             label: insert_key.clone(),
             kind: Some(CompletionItemKind::CONSTANT),
-            detail: Some(format!("{first_value} ({first_lang})")),
+            detail,
             documentation: Some(Documentation::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value: documentation_text,
@@ -343,7 +350,7 @@ mod tests {
             key_end: Position::new(0, 0),
             partial_key: String::new(),
         };
-        let items = generate_completions(&db, &translations, None, &quote_context, None);
+        let items = generate_completions(&db, &translations, None, &quote_context, None, None);
 
         assert_that!(items.len(), eq(3));
         assert_that!(items[0].label, eq("common.goodbye"));
@@ -375,7 +382,8 @@ mod tests {
             key_end: Position::new(0, 0),
             partial_key: "common.".to_string(),
         };
-        let items = generate_completions(&db, &translations, Some("common."), &quote_context, None);
+        let items =
+            generate_completions(&db, &translations, Some("common."), &quote_context, None, None);
 
         assert_that!(items.len(), eq(2));
         assert_that!(items[0].label, eq("common.goodbye"));
@@ -413,7 +421,7 @@ mod tests {
             key_end: Position::new(0, 0),
             partial_key: String::new(),
         };
-        let items = generate_completions(&db, &translations, None, &quote_context, None);
+        let items = generate_completions(&db, &translations, None, &quote_context, None, None);
 
         // Should have one item with both languages
         assert_that!(items.len(), eq(1));
@@ -448,8 +456,14 @@ mod tests {
             key_end: Position::new(0, 0),
             partial_key: "nonexistent.".to_string(),
         };
-        let items =
-            generate_completions(&db, &translations, Some("nonexistent."), &quote_context, None);
+        let items = generate_completions(
+            &db,
+            &translations,
+            Some("nonexistent."),
+            &quote_context,
+            None,
+            None,
+        );
 
         assert_that!(items, is_empty());
     }

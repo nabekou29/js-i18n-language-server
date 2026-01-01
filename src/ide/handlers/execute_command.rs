@@ -30,6 +30,9 @@ pub async fn handle_execute_command(
     match params.command.as_str() {
         "i18n.editTranslation" => handle_edit_translation(backend, Some(params.arguments)).await,
         "i18n.getDecorations" => handle_get_decorations(backend, Some(params.arguments)).await,
+        "i18n.setCurrentLanguage" => {
+            handle_set_current_language(backend, Some(params.arguments)).await
+        }
         _ => {
             tracing::warn!("Unknown command: {}", params.command);
             Ok(None)
@@ -225,10 +228,11 @@ async fn handle_get_decorations(
     };
 
     // 設定からデフォルト値を取得
-    let max_length = match parsed_args.max_length {
-        Some(len) => len,
-        None => backend.config_manager.lock().await.get_settings().virtual_text.max_length,
-    };
+    let config = backend.config_manager.lock().await;
+    let max_length =
+        parsed_args.max_length.unwrap_or(config.get_settings().virtual_text.max_length);
+    let primary_languages = config.get_settings().primary_languages.clone();
+    drop(config);
 
     // SourceFile を取得
     let db = backend.state.db.lock().await;
@@ -242,12 +246,28 @@ async fn handle_get_decorations(
     // 翻訳データを取得
     let translations = backend.state.translations.lock().await;
 
+    // 有効な言語を決定（リクエスト指定 → currentLanguage → primaryLanguages → 最初の言語）
+    let language = parsed_args.language.clone().or_else(|| {
+        let available_languages: Vec<String> = translations
+            .iter()
+            .map(|t| t.language(&*db))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let current_language = backend.state.current_language.blocking_lock().clone();
+        crate::ide::backend::resolve_effective_language(
+            current_language.as_deref(),
+            primary_languages.as_deref(),
+            &available_languages,
+        )
+    });
+
     // 翻訳装飾情報を生成
     let decorations = crate::ide::virtual_text::get_translation_decorations(
         &*db,
         source_file,
         &translations,
-        parsed_args.language.as_deref(),
+        language.as_deref(),
         max_length,
     );
 
@@ -264,4 +284,62 @@ async fn handle_get_decorations(
             Ok(Some(serde_json::json!([])))
         }
     }
+}
+
+/// `i18n.setCurrentLanguage` コマンドの引数
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetCurrentLanguageArgs {
+    /// 設定する言語コード（null でリセット）
+    language: Option<String>,
+}
+
+/// `i18n.setCurrentLanguage` コマンドを実行
+///
+/// 現在の表示言語を変更する。Virtual Text、補完、Code Actions で使用される。
+///
+/// # Arguments
+/// * `arguments[0]` - `SetCurrentLanguageArgs` オブジェクト
+///
+/// # Returns
+/// 成功時は `null`
+async fn handle_set_current_language(
+    backend: &Backend,
+    arguments: Option<Vec<Value>>,
+) -> Result<Option<Value>> {
+    let args = arguments.unwrap_or_default();
+
+    // 引数をパース
+    let parsed_args: SetCurrentLanguageArgs = if let Some(first_arg) = args.first().cloned() {
+        match serde_json::from_value(first_arg) {
+            Ok(args) => args,
+            Err(e) => {
+                tracing::warn!("Invalid arguments for i18n.setCurrentLanguage: {}", e);
+                return Ok(None);
+            }
+        }
+    } else {
+        // 引数なしの場合はリセット
+        SetCurrentLanguageArgs { language: None }
+    };
+
+    tracing::debug!(
+        language = ?parsed_args.language,
+        "Executing i18n.setCurrentLanguage"
+    );
+
+    // current_language を更新
+    let mut current_language = backend.state.current_language.lock().await;
+    *current_language = parsed_args.language.clone();
+    drop(current_language);
+
+    backend
+        .client
+        .log_message(
+            MessageType::INFO,
+            format!("Current language set to: {:?}", parsed_args.language),
+        )
+        .await;
+
+    Ok(None)
 }

@@ -654,3 +654,41 @@ impl LanguageServer for Backend {
         handlers::execute_command::handle_execute_command(self, params).await
     }
 }
+
+/// 有効な言語を決定する
+///
+/// 優先順位:
+/// 1. `current_language`（ランタイム状態）
+/// 2. `primary_languages` の順序でワークスペースの言語を検索
+/// 3. ワークスペースの最初の言語
+///
+/// # Arguments
+/// * `current_language` - 現在選択されている言語（コマンドで設定）
+/// * `primary_languages` - 優先言語のリスト（設定ファイル）
+/// * `available_languages` - ワークスペースで利用可能な言語
+///
+/// # Returns
+/// 有効な言語。利用可能な言語がない場合は `None`
+#[must_use]
+pub fn resolve_effective_language(
+    current_language: Option<&str>,
+    primary_languages: Option<&[String]>,
+    available_languages: &[String],
+) -> Option<String> {
+    // 1. current_language が設定されていればそれを使用
+    if let Some(current) = current_language {
+        return Some(current.to_string());
+    }
+
+    // 2. primary_languages の順序で available_languages を検索
+    if let Some(primaries) = primary_languages {
+        for primary in primaries {
+            if available_languages.contains(primary) {
+                return Some(primary.clone());
+            }
+        }
+    }
+
+    // 3. 最初に見つかった言語
+    available_languages.first().cloned()
+}

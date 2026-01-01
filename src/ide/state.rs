@@ -35,6 +35,11 @@ pub struct ServerState {
     pub translations: Arc<Mutex<Vec<Translation>>>,
     /// 現在開いているファイルの URI
     pub opened_files: Arc<Mutex<HashSet<tower_lsp::lsp_types::Url>>>,
+    /// 現在選択されている言語（ランタイム状態）
+    ///
+    /// `i18n.setCurrentLanguage` コマンドで変更可能。
+    /// Virtual Text、補完、Code Actions で使用される。
+    pub current_language: Arc<Mutex<Option<String>>>,
 }
 
 impl ServerState {
@@ -45,6 +50,7 @@ impl ServerState {
             source_files: Arc::new(Mutex::new(HashMap::new())),
             translations: Arc::new(Mutex::new(Vec::new())),
             opened_files: Arc::new(Mutex::new(HashSet::new())),
+            current_language: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -94,6 +100,7 @@ impl std::fmt::Debug for ServerState {
             .field("source_files", &"<HashMap<PathBuf, SourceFile>>")
             .field("translations", &"<Vec<Translation>>")
             .field("opened_files", &"<HashSet<Url>>")
+            .field("current_language", &"<Option<String>>")
             .finish()
     }
 }
@@ -117,6 +124,7 @@ mod tests {
         expect_that!(Arc::strong_count(&state.source_files), eq(1));
         expect_that!(Arc::strong_count(&state.translations), eq(1));
         expect_that!(Arc::strong_count(&state.opened_files), eq(1));
+        expect_that!(Arc::strong_count(&state.current_language), eq(1));
     }
 
     #[googletest::test]
@@ -130,6 +138,7 @@ mod tests {
         expect_that!(Arc::strong_count(&state1.source_files), eq(2));
         expect_that!(Arc::strong_count(&state1.translations), eq(2));
         expect_that!(Arc::strong_count(&state1.opened_files), eq(2));
+        expect_that!(Arc::strong_count(&state1.current_language), eq(2));
 
         // 同じポインタを指していることを確認
         expect_that!(Arc::ptr_eq(&state1.db, &state2.db), eq(true));
@@ -149,6 +158,7 @@ mod tests {
         expect_that!(debug_str, contains_substring("source_files"));
         expect_that!(debug_str, contains_substring("translations"));
         expect_that!(debug_str, contains_substring("opened_files"));
+        expect_that!(debug_str, contains_substring("current_language"));
     }
 
     #[tokio::test]

@@ -63,13 +63,22 @@ pub async fn handle_code_action(
     // 診断から missing_languages を抽出
     let missing_languages = crate::ide::code_actions::extract_missing_languages(diagnostics);
 
+    // 有効な言語を決定（currentLanguage → primaryLanguages → 最初の言語）
+    let current_language = backend.state.current_language.lock().await.clone();
+    let primary_languages =
+        backend.config_manager.lock().await.get_settings().primary_languages.clone();
+    let effective_language = crate::ide::backend::resolve_effective_language(
+        current_language.as_deref(),
+        primary_languages.as_deref(),
+        &all_languages,
+    );
+
     // Code Action を生成（全言語対象）
-    // TODO: primary_language の設定対応
     let actions = crate::ide::code_actions::generate_code_actions(
         &key_text,
         &all_languages,
         &missing_languages,
-        None, // primary_language - 将来的に設定から取得
+        effective_language.as_deref(),
     );
 
     tracing::debug!("Generated {} code actions for key: {}", actions.len(), key_text);

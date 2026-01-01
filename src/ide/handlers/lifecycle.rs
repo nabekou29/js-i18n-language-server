@@ -73,6 +73,7 @@ pub async fn handle_initialize(
                 commands: vec![
                     "i18n.editTranslation".to_string(),
                     "i18n.getDecorations".to_string(),
+                    "i18n.setCurrentLanguage".to_string(),
                 ],
                 work_done_progress_options: WorkDoneProgressOptions::default(),
             }),
