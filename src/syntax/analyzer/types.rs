@@ -1,5 +1,7 @@
 //! Types for the analyzer module
 
+use std::str::FromStr;
+
 use serde::{
     Deserialize,
     Serialize,
@@ -8,27 +10,70 @@ use thiserror::Error;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
-/// TODO: doc
-pub mod capture_names {
-    /// TODO: doc
-    pub const CALL_TRANS_FN: &str = "i18n.call_trans_fn";
-    /// TODO: doc
-    pub const TRANS_KEY: &str = "i18n.trans_key";
-    /// TODO: doc
-    pub const TRANS_KEY_ARG: &str = "i18n.trans_key_arg";
-    /// TODO: doc
-    pub const GET_TRANS_FN_NAME: &str = "i18n.get_trans_fn_name";
-    /// TODO: doc
-    pub const CALL_TRANS_FN_NAME: &str = "i18n.call_trans_fn_name";
-    /// TODO: doc
-    pub const TRANS_ARGS: &str = "i18n.trans_args";
+/// Tree-sitter クエリで使用するキャプチャ名
+///
+/// i18n 関連の構文解析で使用するキャプチャ名を型安全に表現します。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CaptureName {
+    /// 翻訳関数の呼び出し全体 (e.g., `t("key")`)
+    CallTransFn,
+    /// 翻訳キーの文字列リテラル部分
+    TransKey,
+    /// 翻訳キーの引数ノード（引用符を含む）
+    TransKeyArg,
+    /// 翻訳関数を取得する関数名 (e.g., `useTranslation`)
+    GetTransFnName,
+    /// 翻訳関数呼び出しの関数名 (e.g., `t`)
+    CallTransFnName,
+    /// 翻訳関数呼び出しの引数全体
+    TransArgs,
+    /// 翻訳関数を取得する呼び出し全体 (e.g., `useTranslation()`)
+    GetTransFn,
+    /// 名前空間
+    Namespace,
+    /// キープレフィックス
+    KeyPrefix,
+}
 
-    /// TODO: doc
-    pub const GET_TRANS_FN: &str = "i18n.get_trans_fn";
-    /// TODO: doc
-    pub const NAMESPACE: &str = "i18n.namespace";
-    /// TODO: doc
-    pub const KEY_PREFIX: &str = "i18n.trans_key_prefix";
+impl CaptureName {
+    /// Tree-sitter クエリで使用する文字列表現を取得
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CallTransFn => "i18n.call_trans_fn",
+            Self::TransKey => "i18n.trans_key",
+            Self::TransKeyArg => "i18n.trans_key_arg",
+            Self::GetTransFnName => "i18n.get_trans_fn_name",
+            Self::CallTransFnName => "i18n.call_trans_fn_name",
+            Self::TransArgs => "i18n.trans_args",
+            Self::GetTransFn => "i18n.get_trans_fn",
+            Self::Namespace => "i18n.namespace",
+            Self::KeyPrefix => "i18n.trans_key_prefix",
+        }
+    }
+}
+
+/// 文字列から `CaptureName` への変換エラー
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseCaptureNameError;
+
+impl FromStr for CaptureName {
+    type Err = ParseCaptureNameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "i18n.call_trans_fn" => Ok(Self::CallTransFn),
+            "i18n.trans_key" => Ok(Self::TransKey),
+            "i18n.trans_key_arg" => Ok(Self::TransKeyArg),
+            "i18n.get_trans_fn_name" => Ok(Self::GetTransFnName),
+            "i18n.call_trans_fn_name" => Ok(Self::CallTransFnName),
+            "i18n.trans_args" => Ok(Self::TransArgs),
+            "i18n.get_trans_fn" => Ok(Self::GetTransFn),
+            "i18n.namespace" => Ok(Self::Namespace),
+            "i18n.trans_key_prefix" => Ok(Self::KeyPrefix),
+            _ => Err(ParseCaptureNameError),
+        }
+    }
 }
 
 /// Information about translation function calls

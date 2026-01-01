@@ -22,9 +22,9 @@ use crate::syntax::analyzer::scope::{
 use crate::syntax::analyzer::types::{
     AnalyzerError,
     CallTransFnDetail,
+    CaptureName,
     GetTransFnDetail,
     TransFnCall,
-    capture_names,
 };
 
 /// Extracts text content from a tree-sitter node
@@ -95,8 +95,12 @@ pub fn analyze_trans_fn_calls(
                     continue;
                 };
 
-                match *cap_name {
-                    capture_names::GET_TRANS_FN => {
+                let Ok(capture_name) = cap_name.parse::<CaptureName>() else {
+                    continue;
+                };
+
+                match capture_name {
+                    CaptureName::GetTransFn => {
                         let Ok(trans_fn) = parse_get_trans_fn_captures(
                             query,
                             capture.node,
@@ -115,7 +119,7 @@ pub fn analyze_trans_fn_calls(
                         let trans_fn_name = trans_fn.trans_fn_name.clone();
                         scopes.push_scope(trans_fn_name, ScopeInfo::new(scope_node, trans_fn));
                     }
-                    capture_names::CALL_TRANS_FN => {
+                    CaptureName::CallTransFn => {
                         let Ok(call_trans_fn) = parse_call_trans_fn_captures(
                             query,
                             capture.node,
@@ -157,7 +161,7 @@ pub fn analyze_trans_fn_calls(
                             key_prefix: scope_info.trans_fn.key_prefix.clone(),
                         });
                     }
-
+                    // 他のキャプチャ名はここでは処理しない（サブクエリで処理）
                     _ => {}
                 }
             }
@@ -205,14 +209,18 @@ fn parse_get_trans_fn_captures(
                 continue; // 無効なインデックスの場合はスキップ
             };
 
-            match *cap_name {
-                capture_names::GET_TRANS_FN_NAME => {
+            let Ok(capture_name) = cap_name.parse::<CaptureName>() else {
+                continue;
+            };
+
+            match capture_name {
+                CaptureName::GetTransFnName => {
                     trans_fn_name = extract_node_text(capture.node, source_bytes);
                 }
-                capture_names::NAMESPACE => {
+                CaptureName::Namespace => {
                     namespace = extract_node_text(capture.node, source_bytes);
                 }
-                capture_names::KEY_PREFIX => {
+                CaptureName::KeyPrefix => {
                     key_prefix = extract_node_text(capture.node, source_bytes);
                 }
                 _ => {}
@@ -263,21 +271,25 @@ fn parse_call_trans_fn_captures<'a>(
                 continue; // 無効なインデックスの場合はスキップ
             };
 
-            match *cap_name {
-                capture_names::TRANS_KEY => {
+            let Ok(capture_name) = cap_name.parse::<CaptureName>() else {
+                continue;
+            };
+
+            match capture_name {
+                CaptureName::TransKey => {
                     key = extract_node_text(capture.node, source_bytes);
                     key_node = Some(capture.node);
                 }
-                capture_names::TRANS_KEY_ARG => {
+                CaptureName::TransKeyArg => {
                     key_arg_node = Some(capture.node);
                 }
-                capture_names::CALL_TRANS_FN_NAME => {
+                CaptureName::CallTransFnName => {
                     trans_fn_name = extract_node_text(capture.node, source_bytes);
                 }
-                capture_names::TRANS_ARGS => {
+                CaptureName::TransArgs => {
                     trans_args_node = Some(capture.node);
                 }
-                _ => {} // 予期しないキャプチャ名
+                _ => {}
             }
         }
     }

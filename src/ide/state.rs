@@ -7,7 +7,10 @@ use std::collections::{
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use tokio::sync::{
+    Mutex,
+    MutexGuard,
+};
 
 use crate::db::I18nDatabaseImpl;
 use crate::input::source::SourceFile;
@@ -43,6 +46,44 @@ impl ServerState {
             translations: Arc::new(Mutex::new(Vec::new())),
             opened_files: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    /// `db` と `translations` のロックを一括取得
+    ///
+    /// ロック順序（`db` → `translations`）を保証します。
+    pub async fn lock_db_and_translations(
+        &self,
+    ) -> (MutexGuard<'_, I18nDatabaseImpl>, MutexGuard<'_, Vec<Translation>>) {
+        let db = self.db.lock().await;
+        let translations = self.translations.lock().await;
+        (db, translations)
+    }
+
+    /// `db` と `source_files` のロックを一括取得
+    ///
+    /// ロック順序（`db` → `source_files`）を保証します。
+    pub async fn lock_db_and_source_files(
+        &self,
+    ) -> (MutexGuard<'_, I18nDatabaseImpl>, MutexGuard<'_, HashMap<PathBuf, SourceFile>>) {
+        let db = self.db.lock().await;
+        let source_files = self.source_files.lock().await;
+        (db, source_files)
+    }
+
+    /// `db`, `source_files`, `translations` のロックを一括取得
+    ///
+    /// ロック順序（`db` → `source_files` → `translations`）を保証します。
+    pub async fn lock_all(
+        &self,
+    ) -> (
+        MutexGuard<'_, I18nDatabaseImpl>,
+        MutexGuard<'_, HashMap<PathBuf, SourceFile>>,
+        MutexGuard<'_, Vec<Translation>>,
+    ) {
+        let db = self.db.lock().await;
+        let source_files = self.source_files.lock().await;
+        let translations = self.translations.lock().await;
+        (db, source_files, translations)
     }
 }
 

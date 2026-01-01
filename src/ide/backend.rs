@@ -170,18 +170,68 @@ impl Backend {
                 let translations = self.state.translations.lock().await;
                 let config = self.config_manager.lock().await;
                 let options = self.create_diagnostic_options(&config);
-                drop(config);
+                let key_separator = config.get_settings().key_separator.as_str();
                 crate::ide::diagnostics::generate_diagnostics(
                     &*db,
                     source_file,
                     &translations,
                     &options,
+                    key_separator,
                 )
             };
 
             // Diagnostics を送信
             self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
             tracing::debug!(uri = %uri, "Diagnostics sent");
+        }
+    }
+
+    /// 翻訳ファイルに未使用キー診断を送信
+    ///
+    /// すべてのソースファイルで使用されていないキーに対して、
+    /// 翻訳ファイル上で診断メッセージを表示します。
+    pub(crate) async fn send_unused_key_diagnostics(&self) {
+        let settings = {
+            let config = self.config_manager.lock().await;
+            config.get_settings().clone()
+        };
+
+        // 機能が無効の場合はスキップ
+        if !settings.diagnostics.unused_keys {
+            tracing::debug!("Unused key diagnostics disabled, skipping");
+            return;
+        }
+
+        let key_separator = settings.key_separator.clone();
+
+        let db = self.state.db.lock().await;
+        let source_files = self.state.source_files.lock().await;
+        let translations = self.state.translations.lock().await;
+
+        let source_file_vec: Vec<crate::input::source::SourceFile> =
+            source_files.values().copied().collect();
+
+        tracing::info!(
+            translation_count = translations.len(),
+            source_file_count = source_file_vec.len(),
+            "Sending unused key diagnostics"
+        );
+
+        for translation in translations.iter() {
+            let diagnostics = crate::ide::diagnostics::generate_unused_key_diagnostics(
+                &*db,
+                *translation,
+                &source_file_vec,
+                &key_separator,
+            );
+
+            let file_path = translation.file_path(&*db);
+            if let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) {
+                self.client.publish_diagnostics(uri, diagnostics, None).await;
+                tracing::debug!(file_path = %file_path, "Unused key diagnostics sent");
+            } else {
+                tracing::warn!(file_path = %file_path, "Failed to convert file path to URI");
+            }
         }
     }
 
@@ -264,17 +314,21 @@ impl Backend {
             let translations = self.state.translations.lock().await;
             let config = self.config_manager.lock().await;
             let options = self.create_diagnostic_options(&config);
-            drop(config);
+            let key_separator = config.get_settings().key_separator.as_str();
             crate::ide::diagnostics::generate_diagnostics(
                 &*db,
                 source_file,
                 &translations,
                 &options,
+                key_separator,
             )
         };
 
         self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
         tracing::debug!(uri = %uri, "Diagnostics generated and sent");
+
+        // ソースファイル変更時に翻訳ファイルの未使用キー診断も更新
+        self.send_unused_key_diagnostics().await;
     }
 
     /// ワークスペースフォルダを取得

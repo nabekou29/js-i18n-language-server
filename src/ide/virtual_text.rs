@@ -85,7 +85,6 @@ fn get_translation_value(
                 return Some(value.clone());
             }
         }
-        None
     } else {
         // 言語未指定の場合は最初に見つかった翻訳を返す
         for translation in translations {
@@ -93,8 +92,8 @@ fn get_translation_value(
                 return Some(value.clone());
             }
         }
-        None
     }
+    None
 }
 
 /// 翻訳値を切り詰め

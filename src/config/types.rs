@@ -90,6 +90,9 @@ pub struct I18nSettings {
 
     /// Virtual Text（翻訳置換表示）の設定
     pub virtual_text: VirtualTextConfig,
+
+    /// 診断（Diagnostics）の設定
+    pub diagnostics: DiagnosticsConfig,
 }
 
 /// インデックス処理の設定
@@ -114,6 +117,20 @@ pub struct VirtualTextConfig {
 impl Default for VirtualTextConfig {
     fn default() -> Self {
         Self { max_length: 30 }
+    }
+}
+
+/// 診断（Diagnostics）の設定
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct DiagnosticsConfig {
+    /// 未使用キーの警告を有効にするか（デフォルト: true）
+    pub unused_keys: bool,
+}
+
+impl Default for DiagnosticsConfig {
+    fn default() -> Self {
+        Self { unused_keys: true }
     }
 }
 
@@ -222,6 +239,7 @@ impl Default for I18nSettings {
             required_languages: None,
             optional_languages: None,
             virtual_text: VirtualTextConfig::default(),
+            diagnostics: DiagnosticsConfig::default(),
         }
     }
 }

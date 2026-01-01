@@ -16,6 +16,11 @@ use crate::types::SourceRange;
 /// * `db` - Salsa database
 /// * `key` - Translation key
 /// * `translations` - All translation data
+/// * `key_separator` - Key separator (e.g., ".")
+///
+/// # 逆方向 prefix マッチ
+/// 完全一致がない場合、最初の子キー（例: `nested.key`）の位置にフォールバックします。
+/// これにより `t('nested')` で `nested.key` がある場合もジャンプできます。
 ///
 /// # Returns
 /// All locations where the translation key is defined (returns all if exists in multiple language files)
@@ -23,6 +28,7 @@ pub fn find_definitions(
     db: &dyn I18nDatabase,
     key: TransKey<'_>,
     translations: &[Translation],
+    key_separator: &str,
 ) -> Vec<Location> {
     let key_text = key.text(db);
     let mut locations = Vec::new();
@@ -33,6 +39,19 @@ pub fn find_definitions(
         // Check if this key exists in this translation file
         if let Some(range) = key_ranges.get(key_text.as_str()) {
             // Create URI from file path
+            let file_path = translation.file_path(db);
+            let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) else {
+                tracing::warn!("Failed to create URI from file path: {}", file_path);
+                continue;
+            };
+
+            locations.push(Location { uri, range: lsp_range_from_source_range(*range) });
+            continue;
+        }
+
+        // 逆方向 prefix マッチ：完全一致がない場合、最初の子キーにフォールバック
+        let prefix = format!("{key_text}{key_separator}");
+        if let Some((_, range)) = key_ranges.iter().find(|(k, _)| k.starts_with(&prefix)) {
             let file_path = translation.file_path(db);
             let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) else {
                 tracing::warn!("Failed to create URI from file path: {}", file_path);
@@ -102,7 +121,7 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations = vec![translation];
 
-        let locations = find_definitions(&db, key, &translations);
+        let locations = find_definitions(&db, key, &translations, ".");
 
         assert_that!(locations.len(), eq(1));
         assert_that!(locations[0].uri.path(), ends_with("en.json"));
@@ -157,7 +176,7 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations = vec![en_translation, ja_translation];
 
-        let locations = find_definitions(&db, key, &translations);
+        let locations = find_definitions(&db, key, &translations, ".");
 
         // Definitions found in both translation files
         assert_that!(locations.len(), eq(2));
@@ -186,10 +205,104 @@ mod tests {
         let key = TransKey::new(&db, "nonexistent.key".to_string());
         let translations = vec![translation];
 
-        let locations = find_definitions(&db, key, &translations);
+        let locations = find_definitions(&db, key, &translations, ".");
 
         // No definitions found
         assert_that!(locations, is_empty());
+    }
+
+    #[rstest]
+    fn find_definitions_fallback_to_child_key() {
+        let db = I18nDatabaseImpl::default();
+
+        // 親キー "nested" は存在せず、子キー "nested.key" と "nested.foo" のみ存在
+        let mut key_ranges = HashMap::new();
+        key_ranges.insert(
+            "nested.key".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 1, character: 2 },
+                end: SourcePosition { line: 1, character: 14 },
+            },
+        );
+        key_ranges.insert(
+            "nested.foo".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 2, character: 2 },
+                end: SourcePosition { line: 2, character: 14 },
+            },
+        );
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/locales/en.json".to_string(),
+            HashMap::from([
+                ("nested.key".to_string(), "Key Value".to_string()),
+                ("nested.foo".to_string(), "Foo Value".to_string()),
+            ]),
+            r#"{"nested": {"key": "Key Value", "foo": "Foo Value"}}"#.to_string(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        // "nested" で検索すると、最初の子キー "nested.foo"（アルファベット順）の位置にジャンプ
+        let key = TransKey::new(&db, "nested".to_string());
+        let translations = vec![translation];
+
+        let locations = find_definitions(&db, key, &translations, ".");
+
+        // 子キーの位置が返される
+        assert_that!(locations.len(), eq(1));
+        assert_that!(locations[0].uri.path(), ends_with("en.json"));
+        // HashMap のイテレーション順序は不定なので、どちらかの位置が返される
+        let line = locations[0].range.start.line;
+        assert_that!(line, any![eq(1), eq(2)]);
+    }
+
+    #[rstest]
+    fn find_definitions_exact_match_takes_priority() {
+        let db = I18nDatabaseImpl::default();
+
+        // 親キー "nested" と子キー "nested.key" の両方が存在
+        let mut key_ranges = HashMap::new();
+        key_ranges.insert(
+            "nested".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 0, character: 2 },
+                end: SourcePosition { line: 0, character: 10 },
+            },
+        );
+        key_ranges.insert(
+            "nested.key".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 1, character: 2 },
+                end: SourcePosition { line: 1, character: 14 },
+            },
+        );
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/locales/en.json".to_string(),
+            HashMap::from([
+                ("nested".to_string(), "Parent Value".to_string()),
+                ("nested.key".to_string(), "Key Value".to_string()),
+            ]),
+            r#"{"nested": "Parent Value"}"#.to_string(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        // "nested" で検索すると、完全一致の "nested" の位置にジャンプ（子キーにはフォールバックしない）
+        let key = TransKey::new(&db, "nested".to_string());
+        let translations = vec![translation];
+
+        let locations = find_definitions(&db, key, &translations, ".");
+
+        // 完全一致の位置が返される
+        assert_that!(locations.len(), eq(1));
+        assert_that!(locations[0].range.start.line, eq(0));
+        assert_that!(locations[0].range.start.character, eq(2));
     }
 
     #[rstest]
