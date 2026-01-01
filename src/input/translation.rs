@@ -480,7 +480,9 @@ fn extract_keys_from_node(
     match node.kind() {
         "document" | "object" => {
             // object の場合、子ノードを探索
-            for i in 0..node.child_count() {
+            // tree-sitter 0.26+ では child() が u32 を要求するため変換
+            #[allow(clippy::cast_possible_truncation)]
+            for i in 0..(node.child_count() as u32) {
                 if let Some(child) = node.child(i) {
                     extract_keys_from_node(
                         child,
@@ -496,7 +498,9 @@ fn extract_keys_from_node(
         "array" => {
             // 配列の場合、各要素を [index] 形式で探索
             let mut index = 0;
-            for i in 0..node.child_count() {
+            // tree-sitter 0.26+ では child() が u32 を要求するため変換
+            #[allow(clippy::cast_possible_truncation)]
+            for i in 0..(node.child_count() as u32) {
                 if let Some(child) = node.child(i) {
                     // 配列の区切り文字（カンマ、ブラケット）をスキップ
                     if child.kind() == "[" || child.kind() == "]" || child.kind() == "," {
