@@ -167,6 +167,10 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                     .await
                 {
                     Ok(()) => {
+                        // spawn された Progress Report が完了するのを待つ
+                        // （コールバック内で tokio::spawn しているため、競合状態を回避）
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
                         // 進捗完了通知
                         backend
                             .client
@@ -181,6 +185,9 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                             .await;
                     }
                     Err(error) => {
+                        // spawn された Progress Report が完了するのを待つ
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
                         // エラー時も進捗を終了
                         backend
                             .client
