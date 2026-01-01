@@ -79,11 +79,10 @@ fn get_translation_value(
     if let Some(lang) = language {
         // 指定された言語の翻訳を検索
         for translation in translations {
-            if translation.language(db) == lang {
-                if let Some(value) = translation.keys(db).get(key_text) {
+            if translation.language(db) == lang
+                && let Some(value) = translation.keys(db).get(key_text) {
                     return Some(value.clone());
                 }
-            }
         }
         None
     } else {

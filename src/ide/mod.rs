@@ -9,3 +9,4 @@ mod handlers;
 pub mod hover;
 pub mod references;
 pub mod state;
+pub mod virtual_text;
