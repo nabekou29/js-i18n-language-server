@@ -3,6 +3,7 @@
 //! `workspace/executeCommand` リクエストを処理し、
 //! カスタムコマンドを実行します。
 
+use serde::Deserialize;
 use serde_json::Value;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
@@ -28,6 +29,7 @@ pub async fn handle_execute_command(
 
     match params.command.as_str() {
         "i18n.editTranslation" => handle_edit_translation(backend, Some(params.arguments)).await,
+        "i18n.getDecorations" => handle_get_decorations(backend, Some(params.arguments)).await,
         _ => {
             tracing::warn!("Unknown command: {}", params.command);
             Ok(None)
@@ -159,4 +161,108 @@ async fn handle_edit_translation(
     }
 
     Ok(None)
+}
+
+/// `i18n.getDecorations` コマンドの引数
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetDecorationsArgs {
+    /// ファイル URI
+    uri: String,
+    /// 表示する言語（省略時は最初に見つかった翻訳を使用）
+    language: Option<String>,
+    /// 最大表示文字数（省略時は設定のデフォルト値）
+    max_length: Option<usize>,
+}
+
+/// `i18n.getDecorations` コマンドを実行
+///
+/// ドキュメント内の翻訳キーと翻訳値のリストを返す。
+/// エディタ拡張がこの情報を使用して、キー文字列を翻訳値で置換表示する。
+///
+/// # Arguments
+/// * `arguments[0]` - `GetDecorationsArgs` オブジェクト
+///
+/// # Returns
+/// `TranslationDecoration` の配列（JSON）
+async fn handle_get_decorations(
+    backend: &Backend,
+    arguments: Option<Vec<Value>>,
+) -> Result<Option<Value>> {
+    let args = arguments.unwrap_or_default();
+
+    // 引数をパース
+    let Some(first_arg) = args.first().cloned() else {
+        tracing::warn!("Missing arguments for i18n.getDecorations");
+        return Ok(Some(serde_json::json!([])));
+    };
+
+    let parsed_args: GetDecorationsArgs = match serde_json::from_value(first_arg) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::warn!("Invalid arguments for i18n.getDecorations: {}", e);
+            return Ok(Some(serde_json::json!([])));
+        }
+    };
+
+    tracing::debug!(
+        uri = %parsed_args.uri,
+        language = ?parsed_args.language,
+        max_length = ?parsed_args.max_length,
+        "Executing i18n.getDecorations"
+    );
+
+    // URI をパース
+    let Ok(uri) = Url::parse(&parsed_args.uri) else {
+        tracing::warn!("Invalid URI: {}", parsed_args.uri);
+        return Ok(Some(serde_json::json!([])));
+    };
+
+    // ファイルパスを取得
+    let Some(file_path) = Backend::uri_to_path(&uri) else {
+        tracing::warn!("Failed to convert URI to path: {}", parsed_args.uri);
+        return Ok(Some(serde_json::json!([])));
+    };
+
+    // 設定からデフォルト値を取得
+    let max_length = {
+        let config = backend.config_manager.lock().await;
+        let settings = config.get_settings();
+        parsed_args.max_length.unwrap_or(settings.virtual_text.max_length)
+    };
+
+    // SourceFile を取得
+    let db = backend.state.db.lock().await;
+    let source_files = backend.state.source_files.lock().await;
+
+    let Some(source_file) = source_files.get(&file_path).copied() else {
+        tracing::debug!("Source file not found: {:?}", file_path);
+        return Ok(Some(serde_json::json!([])));
+    };
+
+    // 翻訳データを取得
+    let translations = backend.state.translations.lock().await;
+
+    // 翻訳装飾情報を生成
+    let decorations = crate::ide::virtual_text::get_translation_decorations(
+        &*db,
+        source_file,
+        &translations,
+        parsed_args.language.as_deref(),
+        max_length,
+    );
+
+    // ロックを解放
+    drop(translations);
+    drop(source_files);
+    drop(db);
+
+    // JSON に変換して返す
+    match serde_json::to_value(&decorations) {
+        Ok(value) => Ok(Some(value)),
+        Err(e) => {
+            tracing::error!("Failed to serialize decorations: {}", e);
+            Ok(Some(serde_json::json!([])))
+        }
+    }
 }
