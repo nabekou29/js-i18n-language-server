@@ -129,32 +129,45 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                 // source_files をクローン（Arc のクローンは安価）
                 let source_files = backend.state.source_files.clone();
 
-                // 進捗報告コールバック
-                let client = backend.client.clone();
-                let progress_callback = move |current: u32, total: u32| {
+                // 進捗報告用チャネル（順序保証のため）
+                let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<(u32, u32)>(100);
+
+                // Progress Report 送信タスク
+                let progress_task = {
+                    let client = backend.client.clone();
                     let token = token.clone();
-                    let client = client.clone();
                     tokio::spawn(async move {
-                        let percentage = if total > 0 { (current * 100) / total } else { 0 };
-                        client
-                            .send_notification::<Progress>(ProgressParams {
-                                token,
-                                value: ProgressParamsValue::WorkDone(WorkDoneProgress::Report(
-                                    WorkDoneProgressReport {
-                                        cancellable: Some(false),
-                                        message: Some(format!(
-                                            "Processing files: {current}/{total}"
-                                        )),
-                                        percentage: Some(percentage),
-                                    },
-                                )),
-                            })
-                            .await;
-                    });
+                        while let Some((current, total)) = progress_rx.recv().await {
+                            let percentage = if total > 0 { (current * 100) / total } else { 0 };
+                            client
+                                .send_notification::<Progress>(ProgressParams {
+                                    token: token.clone(),
+                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::Report(
+                                        WorkDoneProgressReport {
+                                            cancellable: Some(false),
+                                            message: Some(format!(
+                                                "Processing files: {current}/{total}"
+                                            )),
+                                            percentage: Some(percentage),
+                                        },
+                                    )),
+                                })
+                                .await;
+                        }
+                    })
+                };
+
+                // 進捗報告コールバック（チャネル経由で送信）
+                let progress_callback = move |current: u32, total: u32| {
+                    // try_send を使用して非ブロッキングで送信
+                    // チャネルが満杯の場合は無視（進捗表示が少し遅れるだけ）
+                    let _ = progress_tx.try_send((current, total));
                 };
 
                 // インデックス実行
-                match backend
+                // progress_callback は progress_tx を所有しているため、
+                // index_workspace 終了時に自動的にドロップされ、チャネルが閉じる
+                let index_result = backend
                     .workspace_indexer
                     .index_workspace(
                         db,
@@ -164,14 +177,18 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                         backend.state.translations.clone(),
                         Some(progress_callback),
                     )
-                    .await
-                {
-                    Ok(()) => {
-                        // spawn された Progress Report が完了するのを待つ
-                        // （コールバック内で tokio::spawn しているため、競合状態を回避）
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    .await;
 
-                        // 進捗完了通知
+                // config_manager のロックを明示的に解放
+                drop(config_manager);
+
+                // すべての Progress Report 送信完了を待つ
+                // （チャネルが閉じられると progress_task は終了する）
+                let _ = progress_task.await;
+
+                // 進捗完了通知
+                match index_result {
+                    Ok(()) => {
                         backend
                             .client
                             .send_notification::<Progress>(ProgressParams {
@@ -185,10 +202,6 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                             .await;
                     }
                     Err(error) => {
-                        // spawn された Progress Report が完了するのを待つ
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-                        // エラー時も進捗を終了
                         backend
                             .client
                             .send_notification::<Progress>(ProgressParams {
