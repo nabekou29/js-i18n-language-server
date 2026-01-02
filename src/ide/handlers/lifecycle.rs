@@ -227,6 +227,9 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
             }
         }
 
+        // インデックス中に溜まった保留更新を処理
+        backend.process_pending_updates().await;
+
         // すべてのワークスペースフォルダーのインデックス完了後、診断を送信
         backend.send_diagnostics_to_opened_files().await;
 

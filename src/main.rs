@@ -26,7 +26,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "error".into()),
+                .unwrap_or_else(|_| "js_i18n_language_server=trace".into()),
         )
         .with_writer(file_appender)
         .init();

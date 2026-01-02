@@ -251,6 +251,9 @@ impl Backend {
     /// * `uri` - ファイルのURI
     /// * `text` - ファイルの内容
     /// * `force_create` - 既存の `SourceFile` を無視して新規作成するかどうか
+    #[allow(clippy::cognitive_complexity)] // デバッグトレースが多いため許容
+    #[allow(clippy::significant_drop_tightening)] // トレースログのためロック保持を明示的に行う
+    #[allow(clippy::if_not_else)] // 意図的な条件分岐
     pub(crate) async fn update_and_diagnose(
         &self,
         uri: tower_lsp::lsp_types::Url,
@@ -278,31 +281,63 @@ impl Backend {
             return;
         };
 
-        // SourceFile を更新
-        let source_file = {
-            let mut db = self.state.db.lock().await;
-            let mut source_files = self.state.source_files.lock().await;
+        // インデックス中は Salsa 操作をスキップして保留キューに追加
+        // NOTE: インデックス中に Salsa セッター（set_text）を呼ぶと、
+        // spawn_blocking 内の Salsa クエリと競合してデッドロックが発生する。
+        // インデックス完了後に process_pending_updates で処理される。
+        if !self.workspace_indexer.is_indexing_completed() {
+            tracing::debug!(
+                uri = %uri,
+                "Queueing SourceFile update during indexing to avoid Salsa lock contention"
+            );
+            // 保留キューに追加
+            self.state.pending_updates.lock().await.push((uri, text, force_create));
+            return;
+        }
 
-            // SourceFile を取得または作成
-            if force_create {
-                // 強制的に新規作成
-                let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
-                source_files.insert(file_path.clone(), source_file);
-                drop(db);
-                drop(source_files);
-                source_file
-            } else if let Some(&existing) = source_files.get(&file_path) {
+        // SourceFile を更新
+        // NOTE: デッドロック回避のため、source_files ロックを保持しながら Salsa 操作を行わない
+        // 1. まず source_files から既存の SourceFile を検索（ロックはすぐ解放）
+        // 2. Salsa 操作（set_text, new）は別途行う
+        // 3. 必要に応じて source_files に挿入
+        let source_file = {
+            // 既存の SourceFile を検索
+            tracing::trace!(uri = %uri, "update_and_diagnose: checking for existing SourceFile");
+            let existing = if !force_create {
+                tracing::trace!(uri = %uri, "update_and_diagnose: acquiring source_files lock (read)");
+                let source_files = self.state.source_files.lock().await;
+                tracing::trace!(uri = %uri, "update_and_diagnose: source_files lock acquired (read)");
+                let result = source_files.get(&file_path).copied();
+                tracing::trace!(uri = %uri, found = result.is_some(), "update_and_diagnose: source_files lock released (read)");
+                result
+            } else {
+                None
+            };
+
+            if let Some(existing) = existing {
                 // 既存の SourceFile を更新
+                // source_files ロックを解放した状態で Salsa 操作を行う
+                tracing::trace!(uri = %uri, "update_and_diagnose: acquiring db lock for set_text");
+                let mut db = self.state.db.lock().await;
+                tracing::trace!(uri = %uri, "update_and_diagnose: db lock acquired, calling set_text");
                 existing.set_text(&mut *db).to(text);
-                drop(db);
-                drop(source_files);
+                tracing::trace!(uri = %uri, "update_and_diagnose: set_text completed");
                 existing
             } else {
-                // SourceFile が存在しない場合は新規作成
+                // 新規作成が必要
+                tracing::trace!(uri = %uri, "update_and_diagnose: acquiring db lock for new SourceFile");
+                let db = self.state.db.lock().await;
+                tracing::trace!(uri = %uri, "update_and_diagnose: db lock acquired, creating SourceFile");
                 let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
-                source_files.insert(file_path.clone(), source_file);
+                tracing::trace!(uri = %uri, "update_and_diagnose: SourceFile created, releasing db lock");
                 drop(db);
-                drop(source_files);
+
+                // source_files に挿入
+                tracing::trace!(uri = %uri, "update_and_diagnose: acquiring source_files lock (write)");
+                let mut source_files = self.state.source_files.lock().await;
+                tracing::trace!(uri = %uri, "update_and_diagnose: source_files lock acquired (write)");
+                source_files.insert(file_path.clone(), source_file);
+                tracing::trace!(uri = %uri, "update_and_diagnose: inserted, releasing source_files lock");
                 source_file
             }
         };
@@ -514,6 +549,34 @@ impl Backend {
 
         globset::Glob::new(&file_pattern)
             .is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
+    }
+
+    /// 保留キューに溜まった更新を処理
+    ///
+    /// インデックス完了後に呼び出され、インデックス中にスキップされた
+    /// ファイル更新を順次処理します。
+    pub(crate) async fn process_pending_updates(&self) {
+        // 保留キューを取得してクリア
+        let pending_updates = {
+            let mut pending = self.state.pending_updates.lock().await;
+            std::mem::take(&mut *pending)
+        };
+
+        if pending_updates.is_empty() {
+            tracing::debug!("No pending updates to process");
+            return;
+        }
+
+        tracing::info!(count = pending_updates.len(), "Processing pending updates");
+
+        for (uri, text, force_create) in pending_updates {
+            tracing::debug!(uri = %uri, "Processing pending update");
+            // update_and_diagnose を再帰呼び出し
+            // インデックスは完了しているので、今度は通常通り処理される
+            self.update_and_diagnose(uri, text, force_create).await;
+        }
+
+        tracing::info!("Pending updates processed");
     }
 
     /// 設定ファイルの変更を処理

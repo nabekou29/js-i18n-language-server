@@ -16,6 +16,9 @@ use crate::db::I18nDatabaseImpl;
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 
+/// インデックス中にスキップされた更新を保持するための型
+pub type PendingUpdate = (tower_lsp::lsp_types::Url, String, bool);
+
 /// LSP サーバーの共有状態
 ///
 /// `Backend` から状態管理の責務を分離し、ハンドラー間で共有可能にします。
@@ -40,6 +43,11 @@ pub struct ServerState {
     /// `i18n.setCurrentLanguage` コマンドで変更可能。
     /// Virtual Text、補完、Code Actions で使用される。
     pub current_language: Arc<Mutex<Option<String>>>,
+    /// インデックス中にスキップされた更新を保持するキュー
+    ///
+    /// インデックス完了後に処理される。
+    /// `(uri, text, force_create)` のタプルを保持。
+    pub pending_updates: Arc<Mutex<Vec<PendingUpdate>>>,
 }
 
 impl ServerState {
@@ -51,6 +59,7 @@ impl ServerState {
             translations: Arc::new(Mutex::new(Vec::new())),
             opened_files: Arc::new(Mutex::new(HashSet::new())),
             current_language: Arc::new(Mutex::new(None)),
+            pending_updates: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -101,6 +110,7 @@ impl std::fmt::Debug for ServerState {
             .field("translations", &"<Vec<Translation>>")
             .field("opened_files", &"<HashSet<Url>>")
             .field("current_language", &"<Option<String>>")
+            .field("pending_updates", &"<Vec<PendingUpdate>>")
             .finish()
     }
 }

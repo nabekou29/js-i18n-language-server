@@ -255,14 +255,23 @@ impl WorkspaceIndexer {
             })
             .collect();
 
+        tracing::trace!("index_workspace: starting buffer_unordered collect");
         let results: Vec<_> =
             stream::iter(futures).buffer_unordered(max_concurrent_files).collect().await;
+        tracing::trace!(
+            count = results.len(),
+            "index_workspace: buffer_unordered collect completed"
+        );
 
+        tracing::trace!("index_workspace: acquiring source_files lock");
         let mut source_files_guard = source_files.lock().await;
+        tracing::trace!("index_workspace: source_files lock acquired");
         for result in results.into_iter().flatten() {
             source_files_guard.insert(result.0, result.1);
         }
+        tracing::trace!(count = source_files_guard.len(), "index_workspace: inserted all files");
         drop(source_files_guard);
+        tracing::trace!("index_workspace: source_files lock released");
 
         self.indexing_completed.store(true, Ordering::Release);
 
@@ -297,19 +306,27 @@ impl WorkspaceIndexer {
         };
 
         let path_clone = file_path.clone();
+        let file_display = file_path.display().to_string();
 
         // CPU集約的な解析処理を専用スレッドプールで実行
-        tokio::task::spawn_blocking(move || {
+        tracing::trace!(file = %file_display, "index_file: spawning blocking task");
+        let result = tokio::task::spawn_blocking(move || {
             use crate::input::source::ProgrammingLanguage;
+
+            tracing::trace!(file = %file_display, "index_file: spawn_blocking started");
 
             // ファイルの言語を推論
             let language = ProgrammingLanguage::from_uri(uri.as_str())?;
 
             // 新しい SourceFile を作成
+            tracing::trace!(file = %file_display, "index_file: creating SourceFile (Salsa new)");
             let source_file = SourceFile::new(&db, uri.to_string(), content, language);
+            tracing::trace!(file = %file_display, "index_file: SourceFile created");
 
             // analyze_source クエリを実行（Salsa が自動的にキャッシュ）
+            tracing::trace!(file = %file_display, "index_file: calling analyze_source (Salsa query)");
             let key_usages = crate::syntax::analyze_source(&db, source_file);
+            tracing::trace!(file = %file_display, usages_count = key_usages.len(), "index_file: analyze_source completed");
 
             tracing::debug!(
                 uri = %uri,
@@ -319,9 +336,10 @@ impl WorkspaceIndexer {
 
             Some((path_clone, source_file))
         })
-        .await
-        .ok()
-        .flatten()
+        .await;
+
+        tracing::trace!(file = %file_path.display(), success = result.is_ok(), "index_file: spawn_blocking finished");
+        result.ok().flatten()
     }
 
     /// ソースファイルを検索
