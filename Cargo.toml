@@ -21,7 +21,6 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tower-lsp = "0.20"
 tracing = "0.1"
-tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter = "0.26"
 tree-sitter-javascript = "0.25"
