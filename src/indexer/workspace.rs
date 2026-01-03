@@ -432,3 +432,353 @@ impl WorkspaceIndexer {
         Some(source_file)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::time::Duration;
+
+    use rstest::rstest;
+    use tempfile::TempDir;
+    use tower_lsp::lsp_types::Url;
+
+    use super::*;
+    use crate::db::I18nDatabaseImpl;
+
+    #[allow(clippy::unwrap_used)]
+    // ========================================
+    // 状態管理テスト
+    // ========================================
+
+    /// new: 初期状態は未完了
+    #[rstest]
+    fn test_new_initial_state() {
+        let indexer = WorkspaceIndexer::new();
+
+        assert!(!indexer.is_indexing_completed());
+        assert!(!indexer.is_translations_indexed());
+    }
+
+    /// Default trait: new() と同じ初期状態
+    #[rstest]
+    fn test_default_trait() {
+        let indexer = WorkspaceIndexer::default();
+
+        assert!(!indexer.is_indexing_completed());
+        assert!(!indexer.is_translations_indexed());
+    }
+
+    /// reset_indexing_state: フラグがリセットされる
+    #[rstest]
+    fn test_reset_indexing_state() {
+        let indexer = WorkspaceIndexer::new();
+
+        // 手動でフラグを true に設定
+        indexer.indexing_completed.store(true, Ordering::Release);
+        indexer.translations_indexed.store(true, Ordering::Release);
+
+        // リセット
+        indexer.reset_indexing_state();
+
+        // 両方とも false に戻る
+        assert!(!indexer.is_indexing_completed());
+        assert!(!indexer.is_translations_indexed());
+    }
+
+    /// Clone: 状態を共有する
+    #[rstest]
+    fn test_clone_shares_state() {
+        let indexer1 = WorkspaceIndexer::new();
+        let indexer2 = indexer1.clone();
+
+        // indexer1 でフラグを変更
+        indexer1.indexing_completed.store(true, Ordering::Release);
+
+        // indexer2 でも反映される（Arc で共有）
+        assert!(indexer2.is_indexing_completed());
+    }
+
+    // ========================================
+    // default_num_threads テスト
+    // ========================================
+
+    /// default_num_threads: 最低1スレッドを保証
+    #[rstest]
+    fn test_default_num_threads_minimum() {
+        let threads = WorkspaceIndexer::default_num_threads();
+
+        // 最低 1 スレッド
+        assert!(threads >= 1, "Expected at least 1 thread, got {threads}");
+    }
+
+    /// default_num_threads: CPU コア数の 40% 程度
+    #[rstest]
+    fn test_default_num_threads_calculation() {
+        let cpu_count = num_cpus::get();
+        let threads = WorkspaceIndexer::default_num_threads();
+
+        // 計算式: (cpu_count * 2) / 5 = cpu_count * 0.4
+        let expected = (cpu_count * 2) / 5;
+        let expected = expected.max(1);
+
+        assert_eq!(threads, expected, "CPU count: {cpu_count}");
+    }
+
+    /// default_num_threads: CPU コア数以下
+    #[rstest]
+    fn test_default_num_threads_upper_bound() {
+        let cpu_count = num_cpus::get();
+        let threads = WorkspaceIndexer::default_num_threads();
+
+        assert!(
+            threads <= cpu_count,
+            "Threads ({threads}) should not exceed CPU count ({cpu_count})"
+        );
+    }
+
+    // ========================================
+    // find_source_files テスト
+    // ========================================
+
+    /// find_source_files: include パターンでファイルを選択
+    #[rstest]
+    fn test_find_source_files_include_pattern() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // テストファイルを作成
+        fs::write(temp_dir.path().join("app.tsx"), "").unwrap();
+        fs::write(temp_dir.path().join("index.ts"), "").unwrap();
+        fs::write(temp_dir.path().join("readme.md"), "").unwrap();
+
+        let files =
+            WorkspaceIndexer::find_source_files(temp_dir.path(), &["**/*.tsx".to_string()], &[])
+                .unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("app.tsx"));
+    }
+
+    /// find_source_files: 複数の include パターン
+    #[rstest]
+    fn test_find_source_files_multiple_include_patterns() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::write(temp_dir.path().join("app.tsx"), "").unwrap();
+        fs::write(temp_dir.path().join("index.ts"), "").unwrap();
+        fs::write(temp_dir.path().join("readme.md"), "").unwrap();
+
+        let files = WorkspaceIndexer::find_source_files(
+            temp_dir.path(),
+            &["**/*.tsx".to_string(), "**/*.ts".to_string()],
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(files.len(), 2);
+    }
+
+    /// find_source_files: exclude パターンでファイルを除外
+    #[rstest]
+    fn test_find_source_files_exclude_pattern() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // node_modules ディレクトリを作成
+        fs::create_dir(temp_dir.path().join("node_modules")).unwrap();
+        fs::write(temp_dir.path().join("node_modules/lib.tsx"), "").unwrap();
+        fs::write(temp_dir.path().join("app.tsx"), "").unwrap();
+
+        let files = WorkspaceIndexer::find_source_files(
+            temp_dir.path(),
+            &["**/*.tsx".to_string()],
+            &["**/node_modules/**".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("app.tsx"));
+    }
+
+    /// find_source_files: ネストしたディレクトリ
+    #[rstest]
+    fn test_find_source_files_nested_directories() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // ネストしたディレクトリ構造を作成
+        fs::create_dir_all(temp_dir.path().join("src/components")).unwrap();
+        fs::write(temp_dir.path().join("src/index.tsx"), "").unwrap();
+        fs::write(temp_dir.path().join("src/components/Button.tsx"), "").unwrap();
+
+        let files =
+            WorkspaceIndexer::find_source_files(temp_dir.path(), &["**/*.tsx".to_string()], &[])
+                .unwrap();
+
+        assert_eq!(files.len(), 2);
+    }
+
+    /// find_source_files: 空のディレクトリ
+    #[rstest]
+    fn test_find_source_files_empty_directory() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let files =
+            WorkspaceIndexer::find_source_files(temp_dir.path(), &["**/*.tsx".to_string()], &[])
+                .unwrap();
+
+        assert!(files.is_empty());
+    }
+
+    /// find_source_files: 無効な include パターンでエラー
+    #[rstest]
+    fn test_find_source_files_invalid_include_pattern() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let result = WorkspaceIndexer::find_source_files(
+            temp_dir.path(),
+            &["[invalid".to_string()], // 不正な glob パターン
+            &[],
+        );
+
+        assert!(result.is_err());
+    }
+
+    /// find_source_files: 無効な exclude パターンでエラー
+    #[rstest]
+    fn test_find_source_files_invalid_exclude_pattern() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let result = WorkspaceIndexer::find_source_files(
+            temp_dir.path(),
+            &["**/*.tsx".to_string()],
+            &["[invalid".to_string()], // 不正な glob パターン
+        );
+
+        assert!(result.is_err());
+    }
+
+    /// find_source_files: include と exclude の両方が適用される
+    #[rstest]
+    fn test_find_source_files_include_and_exclude() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::create_dir(temp_dir.path().join("src")).unwrap();
+        fs::create_dir(temp_dir.path().join("test")).unwrap();
+        fs::write(temp_dir.path().join("src/app.tsx"), "").unwrap();
+        fs::write(temp_dir.path().join("test/app.test.tsx"), "").unwrap();
+
+        let files = WorkspaceIndexer::find_source_files(
+            temp_dir.path(),
+            &["**/*.tsx".to_string()],
+            &["**/test/**".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("src/app.tsx"));
+    }
+
+    // ========================================
+    // wait_for_translations_indexed テスト
+    // ========================================
+
+    /// wait_for_translations_indexed: すでに完了している場合は即座に true
+    #[rstest]
+    #[tokio::test]
+    async fn test_wait_for_translations_indexed_already_done() {
+        let indexer = WorkspaceIndexer::new();
+
+        // すでに完了状態に設定
+        indexer.translations_indexed.store(true, Ordering::Release);
+
+        let result = indexer.wait_for_translations_indexed(Duration::from_millis(100)).await;
+
+        assert!(result);
+    }
+
+    /// wait_for_translations_indexed: タイムアウト時は false
+    #[rstest]
+    #[tokio::test]
+    async fn test_wait_for_translations_indexed_timeout() {
+        let indexer = WorkspaceIndexer::new();
+
+        // 短いタイムアウトで待機（完了しないので false）
+        let result = indexer.wait_for_translations_indexed(Duration::from_millis(10)).await;
+
+        assert!(!result);
+    }
+
+    /// wait_for_translations_indexed: 通知を受け取ると状態を返す
+    #[rstest]
+    #[tokio::test]
+    async fn test_wait_for_translations_indexed_notified() {
+        let indexer = WorkspaceIndexer::new();
+        let indexer_clone = indexer.clone();
+
+        // 別タスクで通知を送信
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            indexer_clone.translations_indexed.store(true, Ordering::Release);
+            indexer_clone.translations_notify.notify_waiters();
+        });
+
+        let result = indexer.wait_for_translations_indexed(Duration::from_millis(1000)).await;
+
+        handle.await.unwrap();
+        assert!(result);
+    }
+
+    // ========================================
+    // update_file テスト
+    // ========================================
+
+    /// update_file: 有効な TypeScript ファイル
+    #[rstest]
+    fn test_update_file_valid_typescript() {
+        let indexer = WorkspaceIndexer::new();
+        let db = I18nDatabaseImpl::default();
+        let uri = Url::parse("file:///test/app.tsx").unwrap();
+        let content = r#"const { t } = useTranslation(); t("hello");"#;
+
+        let result = indexer.update_file(&db, &uri, content, ".");
+
+        assert!(result.is_some());
+    }
+
+    /// update_file: 無効な拡張子は None
+    #[rstest]
+    fn test_update_file_invalid_extension() {
+        let indexer = WorkspaceIndexer::new();
+        let db = I18nDatabaseImpl::default();
+        let uri = Url::parse("file:///test/readme.md").unwrap();
+        let content = "# README";
+
+        let result = indexer.update_file(&db, &uri, content, ".");
+
+        assert!(result.is_none());
+    }
+
+    /// update_file: JavaScript ファイルも処理可能
+    #[rstest]
+    fn test_update_file_javascript() {
+        let indexer = WorkspaceIndexer::new();
+        let db = I18nDatabaseImpl::default();
+        let uri = Url::parse("file:///test/app.js").unwrap();
+        let content = r#"const { t } = useTranslation(); t("world");"#;
+
+        let result = indexer.update_file(&db, &uri, content, ".");
+
+        assert!(result.is_some());
+    }
+
+    /// update_file: 空のファイルも処理可能
+    #[rstest]
+    fn test_update_file_empty_content() {
+        let indexer = WorkspaceIndexer::new();
+        let db = I18nDatabaseImpl::default();
+        let uri = Url::parse("file:///test/empty.tsx").unwrap();
+        let content = "";
+
+        let result = indexer.update_file(&db, &uri, content, ".");
+
+        assert!(result.is_some());
+    }
+}
