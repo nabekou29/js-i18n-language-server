@@ -6,27 +6,35 @@ Language Server の動作確認用のサンプルプロジェクト集です。
 
 ```
 playground/
-├── react-i18next/          # react-i18next のパターン
+├── react-i18next/                  # react-i18next のパターン
 │   ├── locales/
 │   │   ├── en/translation.json
 │   │   └── ja/translation.json
-│   ├── useTranslation.tsx  # useTranslation の様々なパターン
-│   ├── keyPrefix.tsx       # keyPrefix オプションのパターン
-│   ├── Trans.tsx           # Trans コンポーネントのパターン
-│   └── Translation.tsx     # Translation コンポーネントのパターン
+│   ├── useTranslation.tsx          # useTranslation の様々なパターン
+│   ├── keyPrefix.tsx               # keyPrefix オプションのパターン
+│   ├── Trans.tsx                   # Trans コンポーネントのパターン
+│   └── Translation.tsx             # Translation コンポーネントのパターン
 │
-├── i18next/                # i18next (getFixedT) のパターン
+├── i18next/                        # i18next (getFixedT) のパターン
 │   ├── locales/
 │   │   ├── en/translation.json
 │   │   └── ja/translation.json
-│   └── getFixedT.ts        # getFixedT の様々なパターン
+│   └── getFixedT.ts                # getFixedT の様々なパターン
 │
-└── next-intl/              # next-intl のパターン
-    ├── messages/
-    │   ├── en.json
-    │   └── ja.json
-    ├── useTranslations.tsx # useTranslations の様々なパターン
-    └── richText.tsx        # t.rich, t.markup, t.raw のパターン
+├── next-intl/                      # next-intl のパターン
+│   ├── messages/
+│   │   ├── en.json
+│   │   └── ja.json
+│   ├── useTranslations.tsx         # useTranslations の様々なパターン
+│   └── richText.tsx                # t.rich, t.markup, t.raw のパターン
+│
+└── react-i18next-custom-settings/  # カスタム設定のパターン
+    ├── .js-i18n.json               # keySeparator: "_" の設定
+    ├── locales/
+    │   ├── en/translation.json
+    │   └── ja/translation.json
+    ├── custom-key-separator.tsx    # カスタム key_separator のサンプル
+    └── namespace-separator.tsx     # namespace_separator のサンプル（将来用）
 ```
 
 ## 対応ライブラリとパターン
@@ -65,6 +73,16 @@ playground/
 | `t.rich("key", { tag: ... })` | richText.tsx | リッチテキスト |
 | `t.markup("key", { tag: ... })` | richText.tsx | マークアップ |
 | `t.raw("key")` | richText.tsx | 生テキスト |
+
+### カスタム設定 (react-i18next-custom-settings)
+
+| パターン | ファイル | 説明 |
+|----------|----------|------|
+| `keySeparator: "_"` | custom-key-separator.tsx | デフォルトの `.` ではなく `_` を使用 |
+| `namespaceSeparator: ":"` | namespace-separator.tsx | 名前空間区切り文字（将来対応予定） |
+
+**注**: このプロジェクトには `.js-i18n.json` 設定ファイルがあり、`keySeparator: "_"` が設定されています。
+翻訳キーは `common_greeting_hello` のような形式になります。
 
 ## 使い方
 
