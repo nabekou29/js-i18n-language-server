@@ -688,4 +688,414 @@ const msg = foo();
         // Should be None because foo is not a translation function
         assert_that!(result.is_none(), eq(true));
     }
+
+    // ========================================
+    // position_in_range 境界条件テスト
+    // ========================================
+
+    #[rstest]
+    #[case::before_start_line(
+        Position::new(0, 5),
+        Range::new(Position::new(1, 5), Position::new(2, 10)),
+        false
+    )]
+    #[case::before_start_char(
+        Position::new(1, 4),
+        Range::new(Position::new(1, 5), Position::new(2, 10)),
+        false
+    )]
+    #[case::at_start(
+        Position::new(1, 5),
+        Range::new(Position::new(1, 5), Position::new(2, 10)),
+        true
+    )]
+    #[case::inside(
+        Position::new(1, 7),
+        Range::new(Position::new(1, 5), Position::new(2, 10)),
+        true
+    )]
+    #[case::at_end(
+        Position::new(2, 10),
+        Range::new(Position::new(1, 5), Position::new(2, 10)),
+        true
+    )]
+    #[case::after_end_char(
+        Position::new(2, 11),
+        Range::new(Position::new(1, 5), Position::new(2, 10)),
+        false
+    )]
+    #[case::after_end_line(
+        Position::new(3, 0),
+        Range::new(Position::new(1, 5), Position::new(2, 10)),
+        false
+    )]
+    fn test_position_in_range(
+        #[case] position: Position,
+        #[case] range: Range,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(position_in_range(position, range), expected);
+    }
+
+    #[rstest]
+    #[case::same_line_before(
+        Position::new(1, 4),
+        Range::new(Position::new(1, 5), Position::new(1, 10)),
+        false
+    )]
+    #[case::same_line_at_start(
+        Position::new(1, 5),
+        Range::new(Position::new(1, 5), Position::new(1, 10)),
+        true
+    )]
+    #[case::same_line_middle(
+        Position::new(1, 7),
+        Range::new(Position::new(1, 5), Position::new(1, 10)),
+        true
+    )]
+    #[case::same_line_at_end(
+        Position::new(1, 10),
+        Range::new(Position::new(1, 5), Position::new(1, 10)),
+        true
+    )]
+    #[case::same_line_after(
+        Position::new(1, 11),
+        Range::new(Position::new(1, 5), Position::new(1, 10)),
+        false
+    )]
+    fn test_position_in_range_same_line(
+        #[case] position: Position,
+        #[case] range: Range,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(position_in_range(position, range), expected);
+    }
+
+    // ========================================
+    // key_prefix フィルタリングテスト
+    // ========================================
+
+    /// key_prefix あり、partial_key なし → prefix のみでフィルタ
+    #[rstest]
+    fn generate_completions_with_key_prefix_only() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/en.json".to_string(),
+            HashMap::from([
+                ("common.hello".to_string(), "Hello".to_string()),
+                ("common.goodbye".to_string(), "Goodbye".to_string()),
+                ("errors.notFound".to_string(), "Not Found".to_string()),
+            ]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let quote_context = QuoteContext::InsideQuotes {
+            key_start: Position::new(0, 0),
+            key_end: Position::new(0, 0),
+            partial_key: String::new(),
+        };
+
+        // key_prefix="common" で partial_key=None
+        let items = generate_completions(
+            &db,
+            &translations,
+            None,
+            &quote_context,
+            Some("common"),
+            None,
+            ".",
+        );
+
+        // "common." で始まるキーのみが返る
+        assert_eq!(items.len(), 2);
+        // ラベルは prefix を除いた形で返る
+        assert!(items.iter().any(|i| i.label == "hello"));
+        assert!(items.iter().any(|i| i.label == "goodbye"));
+    }
+
+    /// key_prefix あり、partial_key あり → 両方で絞り込み
+    #[rstest]
+    fn generate_completions_with_key_prefix_and_partial() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/en.json".to_string(),
+            HashMap::from([
+                ("common.hello".to_string(), "Hello".to_string()),
+                ("common.help".to_string(), "Help".to_string()),
+                ("common.goodbye".to_string(), "Goodbye".to_string()),
+            ]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let quote_context = QuoteContext::InsideQuotes {
+            key_start: Position::new(0, 0),
+            key_end: Position::new(0, 0),
+            partial_key: "hel".to_string(),
+        };
+
+        // key_prefix="common" + partial_key="hel" → "common.hel" を含むもの
+        let items = generate_completions(
+            &db,
+            &translations,
+            Some("hel"),
+            &quote_context,
+            Some("common"),
+            None,
+            ".",
+        );
+
+        assert_eq!(items.len(), 2); // hello, help
+    }
+
+    /// key_prefix でフィルタリングされるキーが除外されることを検証
+    #[rstest]
+    fn generate_completions_key_prefix_filters_out_non_matching() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/en.json".to_string(),
+            HashMap::from([
+                ("common.hello".to_string(), "Hello".to_string()),
+                ("errors.notFound".to_string(), "Not Found".to_string()),
+            ]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let quote_context = QuoteContext::InsideQuotes {
+            key_start: Position::new(0, 0),
+            key_end: Position::new(0, 0),
+            partial_key: String::new(),
+        };
+
+        // key_prefix="errors" → "common.*" は除外される
+        let items = generate_completions(
+            &db,
+            &translations,
+            None,
+            &quote_context,
+            Some("errors"),
+            None,
+            ".",
+        );
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "notFound");
+    }
+
+    // ========================================
+    // effective_language による detail 表示テスト
+    // ========================================
+
+    #[rstest]
+    fn generate_completions_with_effective_language() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/en.json".to_string(),
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let ja_translation = Translation::new(
+            &db,
+            "ja".to_string(),
+            "/test/ja.json".to_string(),
+            HashMap::from([("hello".to_string(), "こんにちは".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation, ja_translation];
+        let quote_context = QuoteContext::InsideQuotes {
+            key_start: Position::new(0, 0),
+            key_end: Position::new(0, 0),
+            partial_key: String::new(),
+        };
+
+        // effective_language="ja" → detail に日本語が表示される
+        let items =
+            generate_completions(&db, &translations, None, &quote_context, None, Some("ja"), ".");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].detail, Some("こんにちは".to_string()));
+    }
+
+    #[rstest]
+    fn generate_completions_effective_language_not_found() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/en.json".to_string(),
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let quote_context = QuoteContext::InsideQuotes {
+            key_start: Position::new(0, 0),
+            key_end: Position::new(0, 0),
+            partial_key: String::new(),
+        };
+
+        // effective_language="fr" (存在しない) → detail は None
+        let items =
+            generate_completions(&db, &translations, None, &quote_context, None, Some("fr"), ".");
+
+        assert_eq!(items.len(), 1);
+        assert!(items[0].detail.is_none());
+    }
+
+    // ========================================
+    // CompletionItem フィールド検証テスト
+    // ========================================
+
+    #[rstest]
+    fn generate_completions_item_fields() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/en.json".to_string(),
+            HashMap::from([("hello".to_string(), "Hello World".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let quote_context = QuoteContext::InsideQuotes {
+            key_start: Position::new(0, 5),
+            key_end: Position::new(0, 10),
+            partial_key: String::new(),
+        };
+
+        let items =
+            generate_completions(&db, &translations, None, &quote_context, None, Some("en"), ".");
+
+        assert_eq!(items.len(), 1);
+        let item = &items[0];
+
+        // kind が CONSTANT であること
+        assert_eq!(item.kind, Some(CompletionItemKind::CONSTANT));
+
+        // detail が設定されていること
+        assert_eq!(item.detail, Some("Hello World".to_string()));
+
+        // documentation が Markdown であること
+        assert!(matches!(
+            &item.documentation,
+            Some(Documentation::MarkupContent(c)) if c.kind == MarkupKind::Markdown
+        ));
+
+        // textEdit が設定されていること
+        assert!(item.text_edit.is_some());
+    }
+
+    // ========================================
+    // NoQuotes vs InsideQuotes の textEdit テスト
+    // ========================================
+
+    #[rstest]
+    fn generate_completions_no_quotes_text_edit() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/en.json".to_string(),
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let position = Position::new(1, 5);
+        let quote_context = QuoteContext::NoQuotes { position };
+
+        let items = generate_completions(&db, &translations, None, &quote_context, None, None, ".");
+
+        assert_eq!(items.len(), 1);
+
+        // NoQuotes → クォート付きで挿入 ("hello")
+        if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert_eq!(edit.new_text, "\"hello\"");
+            assert_eq!(edit.range.start, position);
+            assert_eq!(edit.range.end, position);
+        } else {
+            panic!("Expected TextEdit");
+        }
+    }
+
+    #[rstest]
+    fn generate_completions_inside_quotes_text_edit() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/en.json".to_string(),
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let key_start = Position::new(1, 5);
+        let key_end = Position::new(1, 10);
+        let quote_context =
+            QuoteContext::InsideQuotes { key_start, key_end, partial_key: "hel".to_string() };
+
+        let items =
+            generate_completions(&db, &translations, Some("hel"), &quote_context, None, None, ".");
+
+        assert_eq!(items.len(), 1);
+
+        // InsideQuotes → クォートなしで置換 (hello)
+        if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert_eq!(edit.new_text, "hello");
+            assert_eq!(edit.range.start, key_start);
+            assert_eq!(edit.range.end, key_end);
+        } else {
+            panic!("Expected TextEdit");
+        }
+    }
+
+    // ========================================
+    // 空の translations テスト
+    // ========================================
+
+    #[rstest]
+    fn generate_completions_empty_translations() {
+        let db = I18nDatabaseImpl::default();
+        let translations: Vec<Translation> = vec![];
+        let quote_context = QuoteContext::InsideQuotes {
+            key_start: Position::new(0, 0),
+            key_end: Position::new(0, 0),
+            partial_key: String::new(),
+        };
+
+        let items = generate_completions(&db, &translations, None, &quote_context, None, None, ".");
+
+        assert!(items.is_empty());
+    }
 }
