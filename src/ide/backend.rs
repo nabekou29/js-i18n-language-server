@@ -18,9 +18,17 @@ use tower_lsp::lsp_types::{
     FileSystemWatcher,
     GlobPattern,
     MessageType,
+    NumberOrString,
+    ProgressParams,
+    ProgressParamsValue,
     Registration,
     WatchKind,
+    WorkDoneProgress,
+    WorkDoneProgressBegin,
+    WorkDoneProgressEnd,
+    WorkDoneProgressReport,
     WorkspaceFolder,
+    notification::Progress,
 };
 use tower_lsp::{
     Client,
@@ -282,6 +290,15 @@ impl Backend {
             return;
         };
 
+        // includePatterns/excludePatterns をチェック
+        if !self.is_source_file(&file_path).await {
+            tracing::debug!(
+                "Skipping SourceFile creation for file not matching includePatterns: {}",
+                file_path.display()
+            );
+            return;
+        }
+
         // インデックス中は Salsa 操作をスキップして保留キューに追加
         // NOTE: インデックス中に Salsa セッター（set_text）を呼ぶと、
         // spawn_blocking 内の Salsa クエリと競合してデッドロックが発生する。
@@ -378,7 +395,7 @@ impl Backend {
     /// これにより、設定変更が反映され、古いキャッシュがクリアされます。
     #[tracing::instrument(skip(self))]
     pub(crate) async fn reindex_workspace(&self) {
-        self.client.log_message(MessageType::INFO, "Reindexing workspace...").await;
+        tracing::info!("Starting workspace reindex");
 
         // 新しい Salsa データベースを作成（古いキャッシュをクリア）
         let new_db = I18nDatabaseImpl::default();
@@ -395,11 +412,66 @@ impl Backend {
         if let Ok(workspace_folders) = self.get_workspace_folders().await {
             for folder in workspace_folders {
                 if let Ok(workspace_path) = folder.uri.to_file_path() {
+                    // 進捗トークン
+                    let token = NumberOrString::String("workspace-reindexing".to_string());
+
+                    // 進捗開始通知
+                    self.client
+                        .send_notification::<Progress>(ProgressParams {
+                            token: token.clone(),
+                            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(
+                                WorkDoneProgressBegin {
+                                    title: "Reindexing Workspace".to_string(),
+                                    cancellable: Some(false),
+                                    message: Some(
+                                        "Configuration changed, reindexing...".to_string(),
+                                    ),
+                                    percentage: Some(0),
+                                },
+                            )),
+                        })
+                        .await;
+
                     let config_manager = self.config_manager.lock().await;
                     let db = self.state.db.lock().await.clone();
                     let source_files = self.state.source_files.clone();
 
-                    match self
+                    // 進捗報告用チャネル
+                    let (progress_tx, mut progress_rx) =
+                        tokio::sync::mpsc::channel::<(u32, u32)>(100);
+
+                    // Progress Report 送信タスク
+                    let progress_task = {
+                        let client = self.client.clone();
+                        let token = token.clone();
+                        tokio::spawn(async move {
+                            while let Some((current, total)) = progress_rx.recv().await {
+                                let percentage =
+                                    if total > 0 { (current * 100) / total } else { 0 };
+                                client
+                                    .send_notification::<Progress>(ProgressParams {
+                                        token: token.clone(),
+                                        value: ProgressParamsValue::WorkDone(
+                                            WorkDoneProgress::Report(WorkDoneProgressReport {
+                                                cancellable: Some(false),
+                                                message: Some(format!(
+                                                    "Processing files: {current}/{total}"
+                                                )),
+                                                percentage: Some(percentage),
+                                            }),
+                                        ),
+                                    })
+                                    .await;
+                            }
+                        })
+                    };
+
+                    // 進捗報告コールバック
+                    let progress_callback = move |current: u32, total: u32| {
+                        let _ = progress_tx.try_send((current, total));
+                    };
+
+                    let index_result = self
                         .workspace_indexer
                         .index_workspace(
                             db,
@@ -407,20 +479,43 @@ impl Backend {
                             &config_manager,
                             source_files,
                             self.state.translations.clone(),
-                            None::<fn(u32, u32)>,
+                            Some(progress_callback),
                         )
-                        .await
-                    {
+                        .await;
+
+                    // config_manager のロックを解放
+                    drop(config_manager);
+
+                    // Progress 送信完了を待つ
+                    let _ = progress_task.await;
+
+                    // 進捗完了通知
+                    match index_result {
                         Ok(()) => {
-                            self.client.log_message(MessageType::INFO, "Reindexing complete").await;
+                            self.client
+                                .send_notification::<Progress>(ProgressParams {
+                                    token: token.clone(),
+                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
+                                        WorkDoneProgressEnd {
+                                            message: Some("Reindexing complete".to_string()),
+                                        },
+                                    )),
+                                })
+                                .await;
+                            tracing::info!("Workspace reindex complete");
                         }
                         Err(error) => {
                             self.client
-                                .log_message(
-                                    MessageType::ERROR,
-                                    format!("Reindexing failed: {error}"),
-                                )
+                                .send_notification::<Progress>(ProgressParams {
+                                    token: token.clone(),
+                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
+                                        WorkDoneProgressEnd {
+                                            message: Some(format!("Reindexing failed: {error}")),
+                                        },
+                                    )),
+                                })
                                 .await;
+                            tracing::error!("Workspace reindex failed: {}", error);
                         }
                     }
                 }
@@ -535,6 +630,32 @@ impl Backend {
             .is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
     }
 
+    /// ソースファイルとして処理対象かどうかを判定
+    ///
+    /// `includePatterns` にマッチし、かつ `excludePatterns` にマッチしないファイルを対象とする。
+    pub(crate) async fn is_source_file(&self, file_path: &Path) -> bool {
+        let config_manager = self.config_manager.lock().await;
+        let include_patterns = config_manager.get_settings().include_patterns.clone();
+        let exclude_patterns = config_manager.get_settings().exclude_patterns.clone();
+        drop(config_manager); // ロックを早期解放
+
+        // include_patterns のいずれかにマッチするか
+        let matches_include = include_patterns.iter().any(|pattern| {
+            globset::Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
+        });
+
+        if !matches_include {
+            return false;
+        }
+
+        // exclude_patterns のいずれにもマッチしないか
+        let matches_exclude = exclude_patterns.iter().any(|pattern| {
+            globset::Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
+        });
+
+        !matches_exclude
+    }
+
     /// 保留キューに溜まった更新を処理
     ///
     /// インデックス完了後に呼び出され、インデックス中にスキップされた
@@ -566,22 +687,106 @@ impl Backend {
 
     /// 設定ファイルの変更を処理
     ///
-    /// TODO: 設定ファイルが変更された場合の処理を実装
-    /// - 設定の再読み込み
-    /// - ファイルウォッチャーの再登録（パターンが変わった場合）
-    /// - ワークスペースの再インデックス
-    #[allow(clippy::unused_async)] // TODO: 実装時に async 処理が必要になる予定
+    /// 設定ファイルが作成、変更、または削除された場合に呼び出され、
+    /// 以下の処理を行う:
+    /// 1. 設定の再読み込み（またはデフォルトへのリセット）
+    /// 2. ファイルウォッチャーの再登録（パターンが変わった場合）
+    /// 3. ワークスペースの再インデックス
+    /// 4. 診断の更新
     pub(crate) async fn handle_config_file_change(
         &self,
         file_path: &Path,
         change_type: FileChangeType,
     ) {
-        tracing::info!(
-            "Config file changed: {:?}, type: {:?} (handling not yet implemented)",
-            file_path,
-            change_type
-        );
-        // TODO: 実装
+        tracing::info!("Config file changed: {:?}, type: {:?}", file_path, change_type);
+
+        // 設定ファイルの親ディレクトリからワークスペースルートを取得
+        let workspace_root = file_path.parent().map(Path::to_path_buf);
+
+        // 変更前のパターンを保存（ウォッチャー再登録判定用）
+        let old_pattern = {
+            let config_manager = self.config_manager.lock().await;
+            config_manager.get_settings().translation_files.file_pattern.clone()
+        };
+
+        // 変更タイプに応じた処理
+        match change_type {
+            FileChangeType::CREATED | FileChangeType::CHANGED => {
+                // 設定ファイルを再読み込み
+                let mut config_manager = self.config_manager.lock().await;
+                match config_manager.load_settings(workspace_root) {
+                    Ok(()) => {
+                        self.client
+                            .log_message(MessageType::INFO, "Configuration reloaded successfully")
+                            .await;
+                        tracing::info!("Configuration reloaded successfully");
+                    }
+                    Err(error) => {
+                        self.client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("Failed to reload configuration: {error}"),
+                            )
+                            .await;
+                        tracing::error!("Failed to reload configuration: {}", error);
+                        return; // エラー時は処理を中断（古い設定を維持）
+                    }
+                }
+            }
+            FileChangeType::DELETED => {
+                // 設定ファイルが削除された場合はデフォルト設定にリセット
+                let mut config_manager = self.config_manager.lock().await;
+                match config_manager.update_settings(crate::config::I18nSettings::default()) {
+                    Ok(()) => {
+                        self.client
+                            .log_message(
+                                MessageType::INFO,
+                                "Configuration file deleted, using default settings",
+                            )
+                            .await;
+                        tracing::info!("Configuration reset to defaults");
+                    }
+                    Err(error) => {
+                        self.client
+                            .log_message(
+                                MessageType::ERROR,
+                                format!("Failed to reset configuration: {error}"),
+                            )
+                            .await;
+                        tracing::error!("Failed to reset configuration: {}", error);
+                        return;
+                    }
+                }
+            }
+            _ => {
+                // 未知の変更タイプは無視
+                tracing::warn!("Unknown file change type: {:?}", change_type);
+                return;
+            }
+        }
+
+        // 新しいパターンを取得
+        let new_pattern = {
+            let config_manager = self.config_manager.lock().await;
+            config_manager.get_settings().translation_files.file_pattern.clone()
+        };
+
+        // パターンが変わった場合はウォッチャーを再登録
+        if old_pattern != new_pattern {
+            tracing::info!(
+                "Translation file pattern changed: '{}' -> '{}', re-registering watchers",
+                old_pattern,
+                new_pattern
+            );
+            self.register_file_watchers().await;
+        }
+
+        // ワークスペースを再インデックス
+        self.reindex_workspace().await;
+
+        // 診断を更新
+        self.send_diagnostics_to_opened_files().await;
+        self.send_unused_key_diagnostics().await;
     }
 }
 
