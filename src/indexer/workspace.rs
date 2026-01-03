@@ -434,6 +434,7 @@ impl WorkspaceIndexer {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use std::fs;
     use std::time::Duration;
@@ -445,12 +446,11 @@ mod tests {
     use super::*;
     use crate::db::I18nDatabaseImpl;
 
-    #[allow(clippy::unwrap_used)]
     // ========================================
     // 状態管理テスト
     // ========================================
 
-    /// new: 初期状態は未完了
+    /// `new`: 初期状態は未完了
     #[rstest]
     fn test_new_initial_state() {
         let indexer = WorkspaceIndexer::new();
@@ -459,7 +459,7 @@ mod tests {
         assert!(!indexer.is_translations_indexed());
     }
 
-    /// Default trait: new() と同じ初期状態
+    /// `Default` trait: `new()` と同じ初期状態
     #[rstest]
     fn test_default_trait() {
         let indexer = WorkspaceIndexer::default();
@@ -468,7 +468,7 @@ mod tests {
         assert!(!indexer.is_translations_indexed());
     }
 
-    /// reset_indexing_state: フラグがリセットされる
+    /// `reset_indexing_state`: フラグがリセットされる
     #[rstest]
     fn test_reset_indexing_state() {
         let indexer = WorkspaceIndexer::new();
@@ -485,7 +485,7 @@ mod tests {
         assert!(!indexer.is_translations_indexed());
     }
 
-    /// Clone: 状態を共有する
+    /// `Clone`: 状態を共有する
     #[rstest]
     fn test_clone_shares_state() {
         let indexer1 = WorkspaceIndexer::new();
@@ -502,7 +502,7 @@ mod tests {
     // default_num_threads テスト
     // ========================================
 
-    /// default_num_threads: 最低1スレッドを保証
+    /// `default_num_threads`: 最低1スレッドを保証
     #[rstest]
     fn test_default_num_threads_minimum() {
         let threads = WorkspaceIndexer::default_num_threads();
@@ -511,7 +511,7 @@ mod tests {
         assert!(threads >= 1, "Expected at least 1 thread, got {threads}");
     }
 
-    /// default_num_threads: CPU コア数の 40% 程度
+    /// `default_num_threads`: CPU コア数の 40% 程度
     #[rstest]
     fn test_default_num_threads_calculation() {
         let cpu_count = num_cpus::get();
@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(threads, expected, "CPU count: {cpu_count}");
     }
 
-    /// default_num_threads: CPU コア数以下
+    /// `default_num_threads`: CPU コア数以下
     #[rstest]
     fn test_default_num_threads_upper_bound() {
         let cpu_count = num_cpus::get();
@@ -540,7 +540,7 @@ mod tests {
     // find_source_files テスト
     // ========================================
 
-    /// find_source_files: include パターンでファイルを選択
+    /// `find_source_files`: include パターンでファイルを選択
     #[rstest]
     fn test_find_source_files_include_pattern() {
         let temp_dir = TempDir::new().unwrap();
@@ -558,7 +558,7 @@ mod tests {
         assert!(files[0].ends_with("app.tsx"));
     }
 
-    /// find_source_files: 複数の include パターン
+    /// `find_source_files`: 複数の include パターン
     #[rstest]
     fn test_find_source_files_multiple_include_patterns() {
         let temp_dir = TempDir::new().unwrap();
@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(files.len(), 2);
     }
 
-    /// find_source_files: exclude パターンでファイルを除外
+    /// `find_source_files`: exclude パターンでファイルを除外
     #[rstest]
     fn test_find_source_files_exclude_pattern() {
         let temp_dir = TempDir::new().unwrap();
@@ -598,7 +598,7 @@ mod tests {
         assert!(files[0].ends_with("app.tsx"));
     }
 
-    /// find_source_files: ネストしたディレクトリ
+    /// `find_source_files`: ネストしたディレクトリ
     #[rstest]
     fn test_find_source_files_nested_directories() {
         let temp_dir = TempDir::new().unwrap();
@@ -615,7 +615,7 @@ mod tests {
         assert_eq!(files.len(), 2);
     }
 
-    /// find_source_files: 空のディレクトリ
+    /// `find_source_files`: 空のディレクトリ
     #[rstest]
     fn test_find_source_files_empty_directory() {
         let temp_dir = TempDir::new().unwrap();
@@ -627,7 +627,7 @@ mod tests {
         assert!(files.is_empty());
     }
 
-    /// find_source_files: 無効な include パターンでエラー
+    /// `find_source_files`: 無効な include パターンでエラー
     #[rstest]
     fn test_find_source_files_invalid_include_pattern() {
         let temp_dir = TempDir::new().unwrap();
@@ -641,7 +641,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// find_source_files: 無効な exclude パターンでエラー
+    /// `find_source_files`: 無効な exclude パターンでエラー
     #[rstest]
     fn test_find_source_files_invalid_exclude_pattern() {
         let temp_dir = TempDir::new().unwrap();
@@ -655,7 +655,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// find_source_files: include と exclude の両方が適用される
+    /// `find_source_files`: include と exclude の両方が適用される
     #[rstest]
     fn test_find_source_files_include_and_exclude() {
         let temp_dir = TempDir::new().unwrap();
@@ -680,7 +680,7 @@ mod tests {
     // wait_for_translations_indexed テスト
     // ========================================
 
-    /// wait_for_translations_indexed: すでに完了している場合は即座に true
+    /// `wait_for_translations_indexed`: すでに完了している場合は即座に true
     #[rstest]
     #[tokio::test]
     async fn test_wait_for_translations_indexed_already_done() {
@@ -694,7 +694,7 @@ mod tests {
         assert!(result);
     }
 
-    /// wait_for_translations_indexed: タイムアウト時は false
+    /// `wait_for_translations_indexed`: タイムアウト時は false
     #[rstest]
     #[tokio::test]
     async fn test_wait_for_translations_indexed_timeout() {
@@ -706,7 +706,7 @@ mod tests {
         assert!(!result);
     }
 
-    /// wait_for_translations_indexed: 通知を受け取ると状態を返す
+    /// `wait_for_translations_indexed`: 通知を受け取ると状態を返す
     #[rstest]
     #[tokio::test]
     async fn test_wait_for_translations_indexed_notified() {
@@ -730,7 +730,7 @@ mod tests {
     // update_file テスト
     // ========================================
 
-    /// update_file: 有効な TypeScript ファイル
+    /// `update_file`: 有効な TypeScript ファイル
     #[rstest]
     fn test_update_file_valid_typescript() {
         let indexer = WorkspaceIndexer::new();
@@ -743,7 +743,7 @@ mod tests {
         assert!(result.is_some());
     }
 
-    /// update_file: 無効な拡張子は None
+    /// `update_file`: 無効な拡張子は None
     #[rstest]
     fn test_update_file_invalid_extension() {
         let indexer = WorkspaceIndexer::new();
@@ -756,7 +756,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    /// update_file: JavaScript ファイルも処理可能
+    /// `update_file`: JavaScript ファイルも処理可能
     #[rstest]
     fn test_update_file_javascript() {
         let indexer = WorkspaceIndexer::new();
@@ -769,7 +769,7 @@ mod tests {
         assert!(result.is_some());
     }
 
-    /// update_file: 空のファイルも処理可能
+    /// `update_file`: 空のファイルも処理可能
     #[rstest]
     fn test_update_file_empty_content() {
         let indexer = WorkspaceIndexer::new();

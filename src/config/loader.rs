@@ -82,6 +82,7 @@ pub(super) fn load_from_package_json(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use std::fs;
 
@@ -90,9 +91,7 @@ mod tests {
 
     use super::*;
 
-    #[allow(clippy::unwrap_used)]
-
-    /// load_from_workspace: 設定ファイルが存在する場合
+    /// `load_from_workspace`: 設定ファイルが存在する場合
     #[rstest]
     fn test_load_from_workspace_with_valid_config() {
         let temp_dir = TempDir::new().unwrap();
@@ -107,7 +106,7 @@ mod tests {
         assert_eq!(settings.unwrap().key_separator, "-");
     }
 
-    /// load_from_workspace: 設定ファイルが存在しない場合
+    /// `load_from_workspace`: 設定ファイルが存在しない場合
     #[rstest]
     fn test_load_from_workspace_no_config_file() {
         let temp_dir = TempDir::new().unwrap();
@@ -118,7 +117,7 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
-    /// load_from_workspace: JSON パースエラー
+    /// `load_from_workspace`: JSON パースエラー
     #[rstest]
     fn test_load_from_workspace_invalid_json() {
         let temp_dir = TempDir::new().unwrap();
@@ -129,7 +128,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// load_from_package_json: jsI18n フィールドがある場合
+    /// `load_from_package_json`: jsI18n フィールドがある場合
     #[rstest]
     fn test_load_from_package_json_with_js_i18n_field() {
         let temp_dir = TempDir::new().unwrap();
@@ -147,7 +146,7 @@ mod tests {
         assert_eq!(settings.unwrap().key_separator, ":");
     }
 
-    /// load_from_package_json: jsI18n フィールドがない場合
+    /// `load_from_package_json`: jsI18n フィールドがない場合
     #[rstest]
     fn test_load_from_package_json_without_js_i18n_field() {
         let temp_dir = TempDir::new().unwrap();
@@ -160,7 +159,7 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
-    /// load_from_package_json: package.json が存在しない場合
+    /// `load_from_package_json`: package.json が存在しない場合
     #[rstest]
     fn test_load_from_package_json_no_file() {
         let temp_dir = TempDir::new().unwrap();
@@ -171,7 +170,7 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
-    /// load_from_package_json: JSON パースエラー
+    /// `load_from_package_json`: JSON パースエラー
     #[rstest]
     fn test_load_from_package_json_invalid_json() {
         let temp_dir = TempDir::new().unwrap();

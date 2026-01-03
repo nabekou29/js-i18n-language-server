@@ -269,6 +269,13 @@ fn key_exists_or_has_children(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    clippy::iter_on_single_items,
+    clippy::redundant_closure_for_method_calls
+)]
 mod tests {
     use std::collections::HashMap;
 

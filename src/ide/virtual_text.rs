@@ -112,7 +112,7 @@ fn truncate_value(value: &str, max_length: usize) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use std::collections::HashMap;
 
@@ -123,7 +123,7 @@ mod tests {
     use crate::db::I18nDatabaseImpl;
     use crate::input::source::ProgrammingLanguage;
 
-    /// テスト用の Translation を作成するヘルパー関数
+    /// テスト用の `Translation` を作成するヘルパー関数
     fn create_translation(
         db: &I18nDatabaseImpl,
         language: &str,
@@ -141,7 +141,7 @@ mod tests {
         )
     }
 
-    /// テスト用の SourceFile を作成するヘルパー関数
+    /// テスト用の `SourceFile` を作成するヘルパー関数
     fn create_source_file(db: &I18nDatabaseImpl, content: &str) -> SourceFile {
         SourceFile::new(
             db,

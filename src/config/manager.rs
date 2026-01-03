@@ -90,6 +90,7 @@ impl ConfigManager {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::field_reassign_with_default)]
 mod tests {
     use std::fs;
 
@@ -98,9 +99,7 @@ mod tests {
 
     use super::*;
 
-    #[allow(clippy::unwrap_used)]
-
-    /// new: デフォルト値で作成される
+    /// `new`: デフォルト値で作成される
     #[rstest]
     fn test_new_creates_default_settings() {
         let manager = ConfigManager::new();
@@ -109,7 +108,7 @@ mod tests {
         assert!(manager.workspace_root().is_none());
     }
 
-    /// load_settings: workspace_root が None の場合
+    /// `load_settings`: `workspace_root` が None の場合
     #[rstest]
     fn test_load_settings_without_workspace() {
         let mut manager = ConfigManager::new();
@@ -121,7 +120,7 @@ mod tests {
         assert!(manager.workspace_root().is_none());
     }
 
-    /// load_settings: 設定ファイルがある場合
+    /// `load_settings`: 設定ファイルがある場合
     #[rstest]
     fn test_load_settings_with_config_file() {
         let temp_dir = TempDir::new().unwrap();
@@ -136,7 +135,7 @@ mod tests {
         assert!(manager.workspace_root().is_some());
     }
 
-    /// load_settings: 設定ファイルがない場合はデフォルト値
+    /// `load_settings`: 設定ファイルがない場合はデフォルト値
     #[rstest]
     fn test_load_settings_without_config_file() {
         let temp_dir = TempDir::new().unwrap();
@@ -148,7 +147,7 @@ mod tests {
         assert_eq!(manager.get_settings().key_separator, ".");
     }
 
-    /// update_settings: 有効な設定で更新成功
+    /// `update_settings`: 有効な設定で更新成功
     #[rstest]
     fn test_update_settings_valid() {
         let mut manager = ConfigManager::new();
@@ -161,7 +160,7 @@ mod tests {
         assert_eq!(manager.get_settings().key_separator, "-");
     }
 
-    /// update_settings: 無効な設定でエラー
+    /// `update_settings`: 無効な設定でエラー
     #[rstest]
     fn test_update_settings_invalid() {
         let mut manager = ConfigManager::new();

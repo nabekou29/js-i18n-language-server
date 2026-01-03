@@ -775,7 +775,7 @@ const msg = foo();
     // key_prefix フィルタリングテスト
     // ========================================
 
-    /// key_prefix あり、partial_key なし → prefix のみでフィルタ
+    /// `key_prefix` あり、`partial_key` なし → prefix のみでフィルタ
     #[rstest]
     fn generate_completions_with_key_prefix_only() {
         let db = I18nDatabaseImpl::default();
@@ -818,7 +818,7 @@ const msg = foo();
         assert!(items.iter().any(|i| i.label == "goodbye"));
     }
 
-    /// key_prefix あり、partial_key あり → 両方で絞り込み
+    /// `key_prefix` あり、`partial_key` あり → 両方で絞り込み
     #[rstest]
     fn generate_completions_with_key_prefix_and_partial() {
         let db = I18nDatabaseImpl::default();
@@ -857,7 +857,7 @@ const msg = foo();
         assert_eq!(items.len(), 2); // hello, help
     }
 
-    /// key_prefix でフィルタリングされるキーが除外されることを検証
+    /// `key_prefix` でフィルタリングされるキーが除外されることを検証
     #[rstest]
     fn generate_completions_key_prefix_filters_out_non_matching() {
         let db = I18nDatabaseImpl::default();

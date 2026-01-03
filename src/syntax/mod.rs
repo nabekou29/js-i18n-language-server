@@ -87,12 +87,12 @@ mod tests {
 
     use super::*;
 
-    /// テスト用ヘルパー: SourcePosition を作成
+    /// テスト用ヘルパー: `SourcePosition` を作成
     const fn pos(line: u32, character: u32) -> SourcePosition {
         SourcePosition { line, character }
     }
 
-    /// テスト用ヘルパー: SourceRange を作成
+    /// テスト用ヘルパー: `SourceRange` を作成
     const fn range(start_line: u32, start_char: u32, end_line: u32, end_char: u32) -> SourceRange {
         SourceRange { start: pos(start_line, start_char), end: pos(end_line, end_char) }
     }

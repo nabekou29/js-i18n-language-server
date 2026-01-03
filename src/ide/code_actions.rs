@@ -204,6 +204,13 @@ fn find_cursor_position(json_text: &str, key: &str, separator: &str) -> Option<R
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::expect_used,
+    clippy::iter_on_single_items,
+    clippy::redundant_closure_for_method_calls
+)]
 mod tests {
     use googletest::prelude::*;
 

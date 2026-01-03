@@ -116,6 +116,11 @@ impl std::fmt::Debug for ServerState {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::significant_drop_tightening,
+    clippy::field_reassign_with_default
+)]
 mod tests {
     use std::path::PathBuf;
 
@@ -160,7 +165,7 @@ mod tests {
         let db = I18nDatabaseImpl::default();
         let state = ServerState::new(db);
 
-        let debug_str = format!("{:?}", state);
+        let debug_str = format!("{state:?}");
 
         // Debug 出力に主要なフィールド名が含まれていることを確認
         expect_that!(debug_str, contains_substring("ServerState"));
