@@ -32,6 +32,20 @@ fn extract_node_text(node: Node<'_>, source_bytes: &[u8]) -> Option<String> {
     node.utf8_text(source_bytes).ok().map(ToString::to_string)
 }
 
+/// Extracts the base function name from a node
+///
+/// For member expressions like `t.rich("key")`, this returns "t".
+/// For identifiers, this returns the identifier text.
+fn extract_base_function_name(node: Node<'_>, source_bytes: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" => extract_node_text(node, source_bytes),
+        "member_expression" => node
+            .child_by_field_name("object")
+            .and_then(|obj| extract_base_function_name(obj, source_bytes)),
+        _ => None,
+    }
+}
+
 /// Finds the closest ancestor node of a given type
 fn get_closest_node<'a>(node: Node<'a>, target_types: &[&str]) -> Option<Node<'a>> {
     let mut current_node = node;
@@ -83,7 +97,14 @@ pub fn analyze_trans_fn_calls(
     // デフォルトのスコープを追加
     scopes.push_scope("t".to_string(), ScopeInfo::new(root_node, GetTransFnDetail::new("t")));
 
-    for query in queries {
+    // 複数のクエリからのマッチを収集し、ソースコードの位置順で処理する。
+    // これにより、i18next.scm と react-i18next.scm など別々のクエリファイルでも、
+    // 翻訳関数の定義が関数呼び出しより前に処理されることが保証される。
+
+    // 全てのクエリからキャプチャを収集
+    let mut all_captures: Vec<(usize, CaptureName, Node<'_>, usize)> = Vec::new();
+
+    for (query_idx, query) in queries.iter().enumerate() {
         let cap_names = query.capture_names();
         let mut cursor = QueryCursor::new();
         let mut matches = cursor.matches(query, root_node, source_bytes);
@@ -99,72 +120,93 @@ pub fn analyze_trans_fn_calls(
                     continue;
                 };
 
-                match capture_name {
-                    CaptureName::GetTransFn => {
-                        let Ok(trans_fn) = parse_get_trans_fn_captures(
-                            query,
-                            capture.node,
-                            source_bytes,
-                            cap_names,
-                        ) else {
-                            continue;
-                        };
-
-                        cleanup_out_of_scopes(&mut scopes, &trans_fn.trans_fn_name, capture.node);
-
-                        let scope_node =
-                            get_closest_node(capture.node, &["statement_block", "jsx_element"])
-                                .unwrap_or(root_node);
-
-                        let trans_fn_name = trans_fn.trans_fn_name.clone();
-                        scopes.push_scope(trans_fn_name, ScopeInfo::new(scope_node, trans_fn));
-                    }
-                    CaptureName::CallTransFn => {
-                        let Ok(call_trans_fn) = parse_call_trans_fn_captures(
-                            query,
-                            capture.node,
-                            source_bytes,
-                            cap_names,
-                        ) else {
-                            continue;
-                        };
-
-                        // TODO: next-intl などでは、t.rich のようなケースがあるので、それへの対応が必要。
-
-                        // 現在のスコープに存在しない翻訳関数は無視
-                        if !scopes.has_scope(&call_trans_fn.trans_fn_name) {
-                            continue;
-                        }
-
-                        cleanup_out_of_scopes(
-                            &mut scopes,
-                            &call_trans_fn.trans_fn_name,
-                            capture.node,
-                        );
-
-                        // 現在のスコープ情報を取得
-                        let Some(scope_info) = scopes.current_scope(&call_trans_fn.trans_fn_name)
-                        else {
-                            continue;
-                        };
-
-                        let arg_key_node = call_trans_fn.arg_key_node;
-
-                        calls.push(TransFnCall {
-                            key: scope_info.trans_fn.key_prefix.as_ref().map_or_else(
-                                || call_trans_fn.key.clone(),
-                                // TODO: key_separator は設定から取得するようにする
-                                |prefix| format!("{}.{}", prefix, &call_trans_fn.key),
-                            ),
-                            arg_key: call_trans_fn.key.clone(),
-                            arg_key_node: get_node_range(arg_key_node),
-                            key_prefix: scope_info.trans_fn.key_prefix.clone(),
-                        });
-                    }
-                    // 他のキャプチャ名はここでは処理しない（サブクエリで処理）
-                    _ => {}
+                // GetTransFn と CallTransFn のみを収集
+                if matches!(capture_name, CaptureName::GetTransFn | CaptureName::CallTransFn) {
+                    all_captures.push((
+                        query_idx,
+                        capture_name,
+                        capture.node,
+                        capture.node.start_byte(),
+                    ));
                 }
             }
+        }
+    }
+
+    // ソースコードの位置順でソート（開始位置が同じ場合は GetTransFn を先に）
+    all_captures.sort_by(|a, b| {
+        a.3.cmp(&b.3).then_with(|| {
+            // GetTransFn を CallTransFn より先に処理する
+            match (&a.1, &b.1) {
+                (CaptureName::GetTransFn, CaptureName::CallTransFn) => std::cmp::Ordering::Less,
+                (CaptureName::CallTransFn, CaptureName::GetTransFn) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            }
+        })
+    });
+
+    // 位置順で処理
+    for (query_idx, capture_name, node, _) in all_captures {
+        let Some(query) = queries.get(query_idx) else {
+            continue;
+        };
+        let cap_names = query.capture_names();
+
+        match capture_name {
+            CaptureName::GetTransFn => {
+                let Ok(trans_fn) =
+                    parse_get_trans_fn_captures(query, node, source_bytes, cap_names)
+                else {
+                    continue;
+                };
+
+                cleanup_out_of_scopes(&mut scopes, &trans_fn.trans_fn_name, node);
+
+                let scope_node = get_closest_node(node, &["statement_block", "jsx_element"])
+                    .unwrap_or(root_node);
+
+                let trans_fn_name = trans_fn.trans_fn_name.clone();
+                scopes.push_scope(trans_fn_name, ScopeInfo::new(scope_node, trans_fn));
+            }
+            CaptureName::CallTransFn => {
+                let Ok(call_trans_fn) =
+                    parse_call_trans_fn_captures(query, node, source_bytes, cap_names)
+                else {
+                    continue;
+                };
+
+                // 現在のスコープに存在しない翻訳関数は無視
+                if !scopes.has_scope(&call_trans_fn.trans_fn_name) {
+                    continue;
+                }
+
+                cleanup_out_of_scopes(&mut scopes, &call_trans_fn.trans_fn_name, node);
+
+                // スコープ情報を取得
+                // Trans コンポーネントで t 属性がない場合はデフォルトのスコープを使用
+                let scope_info = if call_trans_fn.use_default_scope {
+                    scopes.default_scope(&call_trans_fn.trans_fn_name)
+                } else {
+                    scopes.current_scope(&call_trans_fn.trans_fn_name)
+                };
+                let Some(scope_info) = scope_info else {
+                    continue;
+                };
+
+                let arg_key_node = call_trans_fn.arg_key_node;
+
+                calls.push(TransFnCall {
+                    key: scope_info.trans_fn.key_prefix.as_ref().map_or_else(
+                        || call_trans_fn.key.clone(),
+                        // TODO: key_separator は設定から取得するようにする
+                        |prefix| format!("{}.{}", prefix, &call_trans_fn.key),
+                    ),
+                    arg_key: call_trans_fn.key.clone(),
+                    arg_key_node: get_node_range(arg_key_node),
+                    key_prefix: scope_info.trans_fn.key_prefix.clone(),
+                });
+            }
+            _ => {}
         }
     }
 
@@ -178,6 +220,31 @@ fn cleanup_out_of_scopes(scopes: &mut Scopes<'_>, trans_fn_name: &str, current_n
     {
         scopes.pop_scope(trans_fn_name);
     }
+}
+
+/// Extracts string arguments from an arguments node
+///
+/// Returns a vector of string values from the arguments, in order.
+/// Only string literals are extracted; other argument types are represented as None.
+fn extract_string_arguments(args_node: Node<'_>, source_bytes: &[u8]) -> Vec<Option<String>> {
+    let mut strings = Vec::new();
+
+    for i in 0..args_node.named_child_count() {
+        #[allow(clippy::cast_possible_truncation)] // 引数の数が 42 億を超えることはない
+        if let Some(child) = args_node.named_child(i as u32) {
+            if child.kind() == "string"
+                && let Some(fragment) = child.named_child(0)
+                && fragment.kind() == "string_fragment"
+            {
+                strings.push(extract_node_text(fragment, source_bytes));
+                continue;
+            }
+            // Non-string argument (null, undefined, variable, etc.)
+            strings.push(None);
+        }
+    }
+
+    strings
 }
 
 /// Parses get translation function captures from a tree-sitter node
@@ -199,6 +266,8 @@ fn parse_get_trans_fn_captures(
     let mut trans_fn_name: Option<String> = None;
     let mut namespace = None;
     let mut key_prefix = None;
+    let mut args_node: Option<Node<'_>> = None;
+    let mut func_name: Option<String> = None;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, capture_node, source_bytes);
@@ -206,10 +275,14 @@ fn parse_get_trans_fn_captures(
     while let Some(match_) = matches.next_mut() {
         for capture in match_.captures {
             let Some(cap_name) = cap_names.get(capture.index as usize) else {
-                continue; // 無効なインデックスの場合はスキップ
+                continue;
             };
 
             let Ok(capture_name) = cap_name.parse::<CaptureName>() else {
+                // Check for function-specific captures that aren't CaptureName variants
+                if *cap_name == "get_fixed_t_func" || *cap_name == "use_translations" {
+                    func_name = extract_node_text(capture.node, source_bytes);
+                }
                 continue;
             };
 
@@ -223,7 +296,34 @@ fn parse_get_trans_fn_captures(
                 CaptureName::KeyPrefix => {
                     key_prefix = extract_node_text(capture.node, source_bytes);
                 }
+                CaptureName::GetTransFnArgs => {
+                    args_node = Some(capture.node);
+                }
                 _ => {}
+            }
+        }
+    }
+
+    // If we have args_node and func_name, extract library-specific arguments
+    if let (Some(args), Some(func)) = (args_node, &func_name) {
+        let string_args = extract_string_arguments(args, source_bytes);
+
+        if func.ends_with("getFixedT") {
+            // i18next: getFixedT(lang, ns?, keyPrefix?)
+            // - Index 0: lang (ignored)
+            // - Index 1: namespace
+            // - Index 2: keyPrefix
+            if string_args.len() >= 2 {
+                namespace = string_args.get(1).and_then(Option::clone);
+            }
+            if string_args.len() >= 3 {
+                key_prefix = string_args.get(2).and_then(Option::clone);
+            }
+        } else if func == "useTranslations" {
+            // next-intl: useTranslations(namespace?)
+            // The namespace in next-intl acts as a key prefix
+            if let Some(Some(ns)) = string_args.first() {
+                key_prefix = Some(ns.clone());
             }
         }
     }
@@ -284,7 +384,8 @@ fn parse_call_trans_fn_captures<'a>(
                     key_arg_node = Some(capture.node);
                 }
                 CaptureName::CallTransFnName => {
-                    trans_fn_name = extract_node_text(capture.node, source_bytes);
+                    // member_expression の場合、base 関数名を抽出 (e.g., t.rich -> t)
+                    trans_fn_name = extract_base_function_name(capture.node, source_bytes);
                 }
                 CaptureName::TransArgs => {
                     trans_args_node = Some(capture.node);
@@ -312,11 +413,15 @@ fn parse_call_trans_fn_captures<'a>(
         return Err(AnalyzerError::ParseFailed);
     };
 
+    // Trans コンポーネントで t 属性がない場合、デフォルトのスコープの "t" を使用
+    let use_default_scope = trans_fn_name.is_none();
+
     Ok(CallTransFnDetail {
-        trans_fn_name: trans_fn_name.ok_or(AnalyzerError::ParseFailed)?,
+        trans_fn_name: trans_fn_name.unwrap_or_else(|| "t".to_string()),
         key: key.unwrap_or_default(),
         key_node: key_node.unwrap_or(arg_key_node),
         arg_key_node,
+        use_default_scope,
     })
 }
 
@@ -339,14 +444,22 @@ mod tests {
         tree_sitter_javascript::LANGUAGE.into()
     }
 
-    /// Tree-sitter クエリ
+    /// Tree-sitter クエリ（すべてのライブラリ対応）
     #[fixture]
     fn queries(js_lang: Language) -> Vec<Query> {
-        let mut queries = Vec::new();
+        let query_files = [
+            ("react-i18next", include_str!("../../../queries/javascript/react-i18next.scm")),
+            ("i18next", include_str!("../../../queries/javascript/i18next.scm")),
+            ("next-intl", include_str!("../../../queries/javascript/next-intl.scm")),
+        ];
 
-        let i18next_query = include_str!("../../../queries/javascript/react-i18next.scm");
-        queries.push(Query::new(&js_lang, i18next_query).expect("Failed to parse i18next query"));
-        queries
+        query_files
+            .iter()
+            .map(|(name, content)| {
+                Query::new(&js_lang, content)
+                    .unwrap_or_else(|e| panic!("Failed to parse {name} query: {e}"))
+            })
+            .collect()
     }
 
     #[rstest]
@@ -778,5 +891,138 @@ mod tests {
                 field!(TransFnCall.key, eq("global.error"))
             ]
         );
+    }
+
+    // ===== i18next テスト =====
+
+    #[rstest]
+    fn test_i18next_get_fixed_t(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = i18n.getFixedT(null, "common");
+            const message = t("hello.world");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello.world"))]);
+    }
+
+    #[rstest]
+    fn test_i18next_get_fixed_t_with_key_prefix(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = i18n.getFixedT(null, "common", "buttons");
+            const message = t("save");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("buttons.save"))]);
+    }
+
+    // ===== next-intl テスト =====
+
+    #[rstest]
+    fn test_next_intl_use_translations(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = useTranslations("common");
+            const message = t("hello");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
+    }
+
+    #[rstest]
+    fn test_next_intl_use_translations_without_prefix(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = useTranslations();
+            const message = t("hello");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
+    }
+
+    #[rstest]
+    fn test_next_intl_t_rich(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = useTranslations("common");
+            const message = t.rich("hello", { strong: (chunks) => chunks });
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
+    }
+
+    // ===== react-i18next Trans/Translation コンポーネントテスト =====
+
+    #[rstest]
+    fn test_trans_component_self_closing(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation();
+            return <Trans i18nKey="welcome" t={t} />;
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("welcome"))]);
+    }
+
+    #[rstest]
+    fn test_trans_component_without_t_attr(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation();
+            return <Trans i18nKey="welcome" />;
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        // t 属性がなくても、スコープ内の "t" を使用してマッチする
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("welcome"))]);
+    }
+
+    #[rstest]
+    fn test_trans_component_opening(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation();
+            return <Trans i18nKey="greeting" t={t}>Hello <strong>World</strong></Trans>;
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("greeting"))]);
+    }
+
+    #[rstest]
+    fn test_translation_component(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            return (
+                <Translation keyPrefix="common">
+                    {(t) => <p>{t("hello")}</p>}
+                </Translation>
+            );
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
+    }
+
+    #[rstest]
+    fn test_translation_component_without_key_prefix(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            return (
+                <Translation>
+                    {(t) => <p>{t("hello")}</p>}
+                </Translation>
+            );
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
     }
 }

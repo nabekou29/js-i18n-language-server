@@ -33,6 +33,8 @@ pub enum CaptureName {
     Namespace,
     /// キープレフィックス
     KeyPrefix,
+    /// 翻訳関数を取得する呼び出しの引数全体 (e.g., `getFixedT(...)`の引数)
+    GetTransFnArgs,
 }
 
 impl CaptureName {
@@ -49,6 +51,7 @@ impl CaptureName {
             Self::GetTransFn => "i18n.get_trans_fn",
             Self::Namespace => "i18n.namespace",
             Self::KeyPrefix => "i18n.trans_key_prefix",
+            Self::GetTransFnArgs => "i18n.get_trans_fn_args",
         }
     }
 }
@@ -71,6 +74,7 @@ impl FromStr for CaptureName {
             "i18n.get_trans_fn" => Ok(Self::GetTransFn),
             "i18n.namespace" => Ok(Self::Namespace),
             "i18n.trans_key_prefix" => Ok(Self::KeyPrefix),
+            "i18n.get_trans_fn_args" => Ok(Self::GetTransFnArgs),
             _ => Err(ParseCaptureNameError),
         }
     }
@@ -100,6 +104,8 @@ pub struct CallTransFnDetail<'a> {
     pub key_node: Node<'a>,
     /// TODO: doc
     pub arg_key_node: Node<'a>,
+    /// デフォルトのスコープを使用するか（Trans コンポーネントで t 属性がない場合）
+    pub use_default_scope: bool,
 }
 
 /// Details about a `trans_fn`

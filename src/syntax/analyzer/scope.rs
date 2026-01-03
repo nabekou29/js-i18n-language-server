@@ -69,7 +69,7 @@ impl<'a> Scopes<'a> {
         self.stacks.get_mut(trans_fn_name).and_then(Vec::pop)
     }
 
-    /// 現在のスコープを取得
+    /// 現在のスコープを取得（最も内側）
     /// # Arguments
     /// * `trans_fn_name` - 取得するスコープの翻訳関数名
     /// # Returns
@@ -77,6 +77,16 @@ impl<'a> Scopes<'a> {
     #[must_use]
     pub fn current_scope(&self, trans_fn_name: &str) -> Option<&ScopeInfo<'a>> {
         self.stacks.get(trans_fn_name).and_then(|stack| stack.last())
+    }
+
+    /// デフォルトのスコープを取得（最初にプッシュされたスコープ）
+    /// # Arguments
+    /// * `trans_fn_name` - 取得するスコープの翻訳関数名
+    /// # Returns
+    /// * `Option<&ScopeInfo>` - デフォルトのスコープ情報、 存在しない場合はNone
+    #[must_use]
+    pub fn default_scope(&self, trans_fn_name: &str) -> Option<&ScopeInfo<'a>> {
+        self.stacks.get(trans_fn_name).and_then(|stack| stack.first())
     }
 
     /// ノードが現在のスコープ内にあるかをチェック
