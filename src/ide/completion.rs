@@ -205,8 +205,8 @@ pub fn extract_completion_context_tree_sitter(
     let tree_sitter_lang = language.tree_sitter_language();
     let queries = load_queries(language);
 
-    let trans_fn_calls = analyze_trans_fn_calls(text, &tree_sitter_lang, queries, key_separator)
-        .unwrap_or_default();
+    let trans_fn_calls =
+        analyze_trans_fn_calls(text, &tree_sitter_lang, queries, key_separator).unwrap_or_default();
 
     let cursor_position = Position::new(line, character);
 

@@ -53,10 +53,11 @@ const TSX_QUERIES: &[QueryFile] = &[
     QueryFile { content: include_str!("../../../queries/tsx/next-intl.scm"), name: "next-intl" },
 ];
 
-// === 言語別クエリキャッシュ ===
-// Query は Sync + Send なので OnceLock で安全にキャッシュできる
+/// JavaScript/JSX 用クエリキャッシュ
 static JS_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
+/// TypeScript 用クエリキャッシュ
 static TS_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
+/// TSX 用クエリキャッシュ
 static TSX_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
 
 /// 指定した言語用のクエリファイル群をパースする（内部関数）

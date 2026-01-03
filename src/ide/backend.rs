@@ -394,6 +394,7 @@ impl Backend {
     /// 新しい Salsa データベースを作成して、全ファイルを再インデックスします。
     /// これにより、設定変更が反映され、古いキャッシュがクリアされます。
     #[tracing::instrument(skip(self))]
+    #[allow(clippy::too_many_lines)]
     pub(crate) async fn reindex_workspace(&self) {
         tracing::info!("Starting workspace reindex");
 
