@@ -1,4 +1,4 @@
-//! TODO
+//! インデクサーで使用される型定義
 
 use thiserror::Error;
 use tower_lsp::lsp_types::{
@@ -6,7 +6,7 @@ use tower_lsp::lsp_types::{
     Url,
 };
 
-/// TODO
+/// 翻訳キーの使用箇所を表す構造体
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyUsageLocation {
     /// ファイルURI
@@ -15,7 +15,7 @@ pub struct KeyUsageLocation {
     pub range: Range,
 }
 
-/// TODO
+/// インデクサーで発生するエラー
 #[derive(Error, Debug)]
 pub enum IndexerError {
     /// Error when failing to read a file

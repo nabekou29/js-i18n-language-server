@@ -96,13 +96,13 @@ pub struct TransFnCall {
 /// Details about a `trans_fn` call
 #[derive(Debug, Clone)]
 pub struct CallTransFnDetail<'a> {
-    /// The node representing the function call
+    /// 翻訳関数名（例: `t`, `i18n.t`）
     pub trans_fn_name: String,
-    /// TODO: doc
+    /// 翻訳キー（`key_prefix` 適用済み）
     pub key: String,
-    /// TODO: doc
+    /// 翻訳キーのノード（引用符を除いた文字列部分）
     pub key_node: Node<'a>,
-    /// TODO: doc
+    /// 翻訳キー引数のノード（引用符を含む）
     pub arg_key_node: Node<'a>,
     /// デフォルトのスコープを使用するか（Trans コンポーネントで t 属性がない場合）
     pub use_default_scope: bool,
@@ -111,11 +111,11 @@ pub struct CallTransFnDetail<'a> {
 /// Details about a `trans_fn`
 #[derive(Debug, Clone, Default)]
 pub struct GetTransFnDetail {
-    /// TODO: doc
+    /// 翻訳関数名（例: `t`, `i18n.t`）
     pub trans_fn_name: String,
-    /// TODO: doc
+    /// 名前空間（翻訳ファイルのグループ化に使用）
     pub namespace: Option<String>,
-    /// TODO: doc
+    /// キープレフィックス（翻訳キーの先頭に付加される文字列）
     pub key_prefix: Option<String>,
 }
 

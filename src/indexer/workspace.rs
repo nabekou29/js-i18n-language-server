@@ -365,7 +365,6 @@ impl WorkspaceIndexer {
 
         // ignore クレートでファイルを走査
         for result in WalkBuilder::new(workspace_path)
-            // TODO: 設定で変更可能にするかも
             .hidden(false)
             .git_ignore(true)
             .git_global(true)

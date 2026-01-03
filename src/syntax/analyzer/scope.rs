@@ -8,9 +8,9 @@ use super::types::GetTransFnDetail;
 /// スコープ情報を保持する構造体
 #[derive(Debug, Clone)]
 pub struct ScopeInfo<'a> {
-    /// TODO: doc
+    /// スコープを定義するノード（関数やコンポーネントなど）
     pub scope_node: Node<'a>,
-    /// TODO: doc
+    /// スコープ内で使用される翻訳関数の詳細情報
     pub trans_fn: GetTransFnDetail,
 }
 
@@ -31,7 +31,7 @@ impl<'a> ScopeInfo<'a> {
 /// スコープ管理を行うクラス
 #[derive(Default, Debug)]
 pub struct Scopes<'a> {
-    /// TODO: docs
+    /// 翻訳関数名ごとのスコープスタック
     stacks: HashMap<String, Vec<ScopeInfo<'a>>>,
 }
 
