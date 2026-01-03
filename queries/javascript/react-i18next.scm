@@ -40,3 +40,55 @@
       )? @i18n.trans_key_arg
     ) @i18n.trans_args
 ) @i18n.call_trans_fn
+
+;; Translation コンポーネント
+(jsx_element
+  open_tag: (jsx_opening_element
+    name: (identifier) @translation (#eq? @translation "Translation")
+    attribute: (jsx_attribute
+      (property_identifier) @key_prefix_attr (#eq? @key_prefix_attr "keyPrefix")
+      [
+        (string (string_fragment) @i18n.trans_key_prefix)
+        (jsx_expression (string (string_fragment) @i18n.trans_key_prefix))
+      ]
+    )?
+  )
+  (jsx_expression
+    [
+      (arrow_function parameters: (formal_parameters (_) @i18n.get_trans_fn_name))
+      (function_expression parameters: (formal_parameters (_) @i18n.get_trans_fn_name))
+    ]
+  )
+) @i18n.get_trans_fn
+
+;; Trans コンポーネント (self-closing)
+(jsx_self_closing_element
+  name: (identifier) @trans (#eq? @trans "Trans")
+  attribute: (jsx_attribute
+    (property_identifier) @i18n_key (#eq? @i18n_key "i18nKey")
+    [
+      (string (string_fragment) @i18n.trans_key) @i18n.trans_key_arg
+      (jsx_expression (string (string_fragment) @i18n.trans_key) @i18n.trans_key_arg)
+    ]
+  )
+  attribute: (jsx_attribute
+    (property_identifier) @attr_t (#eq? @attr_t "t")
+    (jsx_expression (identifier) @i18n.call_trans_fn_name)
+  )?
+) @i18n.call_trans_fn
+
+;; Trans コンポーネント (opening element)
+(jsx_opening_element
+  name: (identifier) @trans (#eq? @trans "Trans")
+  attribute: (jsx_attribute
+    (property_identifier) @i18n_key (#eq? @i18n_key "i18nKey")
+    [
+      (string (string_fragment) @i18n.trans_key) @i18n.trans_key_arg
+      (jsx_expression (string (string_fragment) @i18n.trans_key) @i18n.trans_key_arg)
+    ]
+  )
+  attribute: (jsx_attribute
+    (property_identifier) @attr_t (#eq? @attr_t "t")
+    (jsx_expression (identifier) @i18n.call_trans_fn_name)
+  )?
+) @i18n.call_trans_fn
