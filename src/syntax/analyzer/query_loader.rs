@@ -1,4 +1,9 @@
 //! Load Tree-sitter queries from files.
+//!
+//! クエリのパースはコストが高いため、言語ごとに1回だけパースし、
+//! 以降はキャッシュを使用する。
+
+use std::sync::OnceLock;
 
 use tree_sitter::Query;
 
@@ -48,12 +53,14 @@ const TSX_QUERIES: &[QueryFile] = &[
     QueryFile { content: include_str!("../../../queries/tsx/next-intl.scm"), name: "next-intl" },
 ];
 
-/// クエリをロード
-///
-/// # Errors
-/// クエリのパースに失敗した場合、空の Vec を返す
-#[must_use]
-pub fn load_queries(language: ProgrammingLanguage) -> Vec<Query> {
+// === 言語別クエリキャッシュ ===
+// Query は Sync + Send なので OnceLock で安全にキャッシュできる
+static JS_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
+static TS_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
+static TSX_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
+
+/// 指定した言語用のクエリファイル群をパースする（内部関数）
+fn parse_queries(language: ProgrammingLanguage) -> Vec<Query> {
     let tree_sitter_lang = language.tree_sitter_language();
 
     let query_files = match language {
@@ -70,4 +77,26 @@ pub fn load_queries(language: ProgrammingLanguage) -> Vec<Query> {
                 .ok()
         })
         .collect()
+}
+
+/// クエリをロード（キャッシュ付き）
+///
+/// クエリのパースは言語ごとに1回だけ行われ、以降はキャッシュを使用する。
+/// これにより、大量のファイルを処理する際のパフォーマンスが大幅に向上する。
+///
+/// # 注意
+/// キャッシュされた `Query` への参照を返すため、寿命は `'static` となる。
+#[must_use]
+pub fn load_queries(language: ProgrammingLanguage) -> &'static [Query] {
+    match language {
+        ProgrammingLanguage::JavaScript | ProgrammingLanguage::Jsx => {
+            JS_QUERY_CACHE.get_or_init(|| parse_queries(ProgrammingLanguage::JavaScript))
+        }
+        ProgrammingLanguage::TypeScript => {
+            TS_QUERY_CACHE.get_or_init(|| parse_queries(ProgrammingLanguage::TypeScript))
+        }
+        ProgrammingLanguage::Tsx => {
+            TSX_QUERY_CACHE.get_or_init(|| parse_queries(ProgrammingLanguage::Tsx))
+        }
+    }
 }

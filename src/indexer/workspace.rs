@@ -85,15 +85,15 @@ impl WorkspaceIndexer {
 
     /// デフォルトのスレッド数を計算
     ///
-    /// CPUコア数の80%を返す（最低1スレッド）。
+    /// CPUコア数の40%を返す（最低1スレッド）。
     /// これはcclsなど他のLSP実装の例に従い、複数のLSPサーバーが
     /// 同時に起動する環境を考慮した設定。
     #[must_use]
     fn default_num_threads() -> usize {
-        // CPUコア数の80% = (コア数 * 4) / 5
+        // CPUコア数の40% = (コア数 * 2) / 5
         // 浮動小数点演算を避けるため整数演算を使用
         let cpu_count = num_cpus::get();
-        let num_threads = (cpu_count * 4) / 5;
+        let num_threads = (cpu_count * 2) / 5;
         num_threads.max(1)
     }
 
@@ -313,8 +313,10 @@ impl WorkspaceIndexer {
             // ファイルの言語を推論
             let language = ProgrammingLanguage::from_uri(uri.as_str())?;
 
-            // SourceFile を作成して解析
+            // SourceFile を作成
             let source_file = SourceFile::new(&db, uri.to_string(), content, language);
+
+            // analyze_source クエリを実行
             let key_usages = crate::syntax::analyze_source(&db, source_file, key_separator);
 
             tracing::debug!(

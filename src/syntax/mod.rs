@@ -19,14 +19,13 @@ pub fn analyze_source(
 ) -> Vec<KeyUsage<'_>> {
     let text = file.text(db);
     let language = file.language(db);
-
     let tree_sitter_lang = language.tree_sitter_language();
     let queries = analyzer::query_loader::load_queries(language);
 
     let trans_fn_calls = analyzer::extractor::analyze_trans_fn_calls(
         text,
         &tree_sitter_lang,
-        &queries,
+        queries,
         &key_separator,
     )
     .unwrap_or_default();
