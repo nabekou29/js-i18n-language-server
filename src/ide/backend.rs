@@ -109,11 +109,12 @@ impl Backend {
             source_files.get(file_path).copied()
         };
 
+        let key_separator = self.config_manager.lock().await.get_settings().key_separator.clone();
         let db = self.state.db.lock().await;
 
         if let Some(source_file) = source_file {
             // SourceFile からカーソル位置の翻訳キーを取得
-            crate::syntax::key_at_position(&*db, source_file, position)
+            crate::syntax::key_at_position(&*db, source_file, position, key_separator)
                 .map(|key| key.text(&*db).clone())
         } else {
             // SourceFile が見つからない場合、Translation から試す

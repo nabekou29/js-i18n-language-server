@@ -82,6 +82,7 @@ pub fn analyze_trans_fn_calls(
     source: &str,
     language: &Language,
     queries: &[Query],
+    key_separator: &str,
 ) -> Result<Vec<TransFnCall>, AnalyzerError> {
     let mut parser = Parser::new();
     parser.set_language(language).map_err(AnalyzerError::LanguageSetup)?;
@@ -198,8 +199,7 @@ pub fn analyze_trans_fn_calls(
                 calls.push(TransFnCall {
                     key: scope_info.trans_fn.key_prefix.as_ref().map_or_else(
                         || call_trans_fn.key.clone(),
-                        // TODO: key_separator は設定から取得するようにする
-                        |prefix| format!("{}.{}", prefix, &call_trans_fn.key),
+                        |prefix| format!("{}{}{}", prefix, key_separator, &call_trans_fn.key),
                     ),
                     arg_key: call_trans_fn.key.clone(),
                     arg_key_node: get_node_range(arg_key_node),
@@ -469,7 +469,7 @@ mod tests {
             const message = t("hello.world");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -489,7 +489,7 @@ mod tests {
             const message3 = t("key3");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -508,7 +508,7 @@ mod tests {
             const message = translate("custom.key");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -533,7 +533,7 @@ mod tests {
             }
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -558,7 +558,7 @@ mod tests {
             t("outer.key2");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -590,7 +590,7 @@ mod tests {
             }
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -617,7 +617,7 @@ mod tests {
             t("original.key2");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -638,7 +638,7 @@ mod tests {
             const message = t("button.save");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         // プレフィックスが適用されたkeyと、元のarg_keyをチェック
         assert_that!(
@@ -665,7 +665,7 @@ mod tests {
             t("no.prefix.again");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -685,7 +685,7 @@ mod tests {
             const message = t("simple.key");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(
             calls,
@@ -702,7 +702,7 @@ mod tests {
     fn test_empty_code(queries: Vec<Query>, js_lang: Language) {
         let code = "";
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, is_empty()); // 空チェックに最適
     }
@@ -714,7 +714,7 @@ mod tests {
             const message = t("undefined.key");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         // デフォルトスコープ "t" が存在するため、呼び出しは検出される
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("undefined.key"))]);
@@ -739,7 +739,7 @@ mod tests {
             t(`template.${key}`);
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         // 文字列リテラルのみが有効
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("valid.key"))]);
@@ -775,7 +775,7 @@ mod tests {
             "
         );
 
-        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries)
+        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
         // keyとarg_keyの両方をチェック
@@ -806,7 +806,7 @@ mod tests {
             "
         );
 
-        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries)
+        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
         // 期待される検出数と、最初のキーが"key."で始まることを確認
@@ -834,7 +834,7 @@ mod tests {
             "
         );
 
-        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries)
+        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
         // 無効な引数パターンは検出されない
@@ -875,7 +875,7 @@ mod tests {
             }
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         // 実際の解析順序（関数定義が先に解析される）
         assert_that!(
@@ -902,7 +902,7 @@ mod tests {
             const message = t("hello.world");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello.world"))]);
     }
@@ -914,7 +914,7 @@ mod tests {
             const message = t("save");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("buttons.save"))]);
     }
@@ -928,7 +928,7 @@ mod tests {
             const message = t("hello");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
     }
@@ -940,7 +940,7 @@ mod tests {
             const message = t("hello");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
     }
@@ -952,7 +952,7 @@ mod tests {
             const message = t.rich("hello", { strong: (chunks) => chunks });
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
     }
@@ -966,7 +966,7 @@ mod tests {
             return <Trans i18nKey="welcome" t={t} />;
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("welcome"))]);
     }
@@ -978,7 +978,7 @@ mod tests {
             return <Trans i18nKey="welcome" />;
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         // t 属性がなくても、スコープ内の "t" を使用してマッチする
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("welcome"))]);
@@ -991,7 +991,7 @@ mod tests {
             return <Trans i18nKey="greeting" t={t}>Hello <strong>World</strong></Trans>;
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("greeting"))]);
     }
@@ -1006,7 +1006,7 @@ mod tests {
             );
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
     }
@@ -1021,7 +1021,7 @@ mod tests {
             );
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries).unwrap();
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
     }

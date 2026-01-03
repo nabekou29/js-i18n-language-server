@@ -82,7 +82,7 @@ pub fn generate_diagnostics(
     tracing::debug!("Generating diagnostics for source file '{}'", source_file.uri(db));
 
     // キー使用箇所を解析
-    let key_usages = analyze_source(db, source_file);
+    let key_usages = analyze_source(db, source_file, key_separator.to_string());
 
     // 各言語の翻訳キーセットを構築
     let language_keys: Vec<(String, HashSet<String>)> = translations
@@ -172,7 +172,7 @@ pub fn generate_unused_key_diagnostics(
     // 1. すべてのソースファイルから使用されているキーを集計
     let mut used_keys: HashSet<String> = HashSet::new();
     for source_file in source_files {
-        let key_usages = analyze_source(db, *source_file);
+        let key_usages = analyze_source(db, *source_file, key_separator.to_string());
         for usage in key_usages {
             used_keys.insert(usage.key(db).text(db).clone());
         }

@@ -16,6 +16,7 @@ use crate::syntax::analyze_source;
 /// * `db` - Salsa database
 /// * `key` - The translation key to search for
 /// * `source_files` - Map of all source files (`PathBuf` -> `SourceFile`)
+/// * `key_separator` - キーの区切り文字
 ///
 /// # Returns
 /// List of locations where the key is used
@@ -23,6 +24,7 @@ pub fn find_references<S: std::hash::BuildHasher>(
     db: &dyn I18nDatabase,
     key: TransKey<'_>,
     source_files: &HashMap<PathBuf, SourceFile, S>,
+    key_separator: &str,
 ) -> Vec<Location> {
     let key_text = key.text(db);
     let mut locations = Vec::new();
@@ -30,7 +32,7 @@ pub fn find_references<S: std::hash::BuildHasher>(
     // Iterate through all source files
     for source_file in source_files.values() {
         // Get key usages for this file (cached by Salsa)
-        let usages = analyze_source(db, *source_file);
+        let usages = analyze_source(db, *source_file, key_separator.to_string());
 
         // Filter usages that match the target key
         for usage in usages {
@@ -105,7 +107,7 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
 
         // 参照を検索
-        let locations = find_references(&db, key, &source_files);
+        let locations = find_references(&db, key, &source_files, ".");
 
         // "common.hello" は2回使用されている
         expect_that!(locations.len(), eq(2));
@@ -146,7 +148,7 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
 
         // 参照を検索
-        let locations = find_references(&db, key, &source_files);
+        let locations = find_references(&db, key, &source_files, ".");
 
         // 両方のファイルで使用されている
         expect_that!(locations.len(), eq(2));
@@ -172,7 +174,7 @@ mod tests {
         let key = TransKey::new(&db, "common.nonexistent".to_string());
 
         // 参照を検索
-        let locations = find_references(&db, key, &source_files);
+        let locations = find_references(&db, key, &source_files, ".");
 
         // 一致なし
         expect_that!(locations, is_empty());
@@ -189,7 +191,7 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
 
         // 参照を検索
-        let locations = find_references(&db, key, &source_files);
+        let locations = find_references(&db, key, &source_files, ".");
 
         // 一致なし
         expect_that!(locations, is_empty());

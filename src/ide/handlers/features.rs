@@ -55,6 +55,7 @@ pub async fn handle_completion(
     let db = backend.state.db.lock().await;
     let text = source_file.text(&*db);
     let language = source_file.language(&*db);
+    let key_separator = backend.config_manager.lock().await.get_settings().key_separator.clone();
 
     // Use tree-sitter based extraction (supports renamed functions, ignores comments)
     let completion_context = crate::ide::completion::extract_completion_context_tree_sitter(
@@ -62,6 +63,7 @@ pub async fn handle_completion(
         language,
         position.line,
         position.character,
+        &key_separator,
     );
 
     let Some(context) = completion_context else {
@@ -103,6 +105,7 @@ pub async fn handle_completion(
         &context.quote_context,
         context.key_prefix.as_deref(),
         effective_language.as_deref(),
+        &key_separator,
     );
     drop(db);
     drop(translations);
@@ -243,7 +246,9 @@ pub async fn handle_references(
         let db = backend.state.db.lock().await;
         let key = crate::interned::TransKey::new(&*db, key_text.clone());
         let source_files = backend.state.source_files.lock().await;
-        crate::ide::references::find_references(&*db, key, &source_files)
+        let key_separator =
+            backend.config_manager.lock().await.get_settings().key_separator.clone();
+        crate::ide::references::find_references(&*db, key, &source_files, &key_separator)
     };
 
     tracing::debug!("Found {} references for key: {}", locations.len(), key_text);

@@ -67,6 +67,7 @@ pub fn generate_completions(
     quote_context: &QuoteContext,
     key_prefix: Option<&str>,
     effective_language: Option<&str>,
+    key_separator: &str,
 ) -> Vec<CompletionItem> {
     let mut completion_items = Vec::new();
     let mut key_translations: std::collections::HashMap<String, Vec<(String, String)>> =
@@ -74,7 +75,9 @@ pub fn generate_completions(
 
     // key_prefix + partial_key で検索するフルパターンを構築
     let full_partial = match (key_prefix, partial_key) {
-        (Some(prefix), Some(partial)) if !partial.is_empty() => Some(format!("{prefix}.{partial}")),
+        (Some(prefix), Some(partial)) if !partial.is_empty() => {
+            Some(format!("{prefix}{key_separator}{partial}"))
+        }
         (Some(prefix), _) => Some(prefix.to_string()),
         (None, Some(partial)) if !partial.is_empty() => Some(partial.to_string()),
         _ => None,
@@ -119,7 +122,7 @@ pub fn generate_completions(
             || key.clone(),
             |prefix| {
                 key.strip_prefix(prefix)
-                    .and_then(|s| s.strip_prefix('.'))
+                    .and_then(|s| s.strip_prefix(key_separator))
                     .unwrap_or(&key)
                     .to_string()
             },
@@ -186,6 +189,7 @@ pub fn generate_completions(
 /// * `language` - Programming language of the source file
 /// * `line` - Line number (0-indexed)
 /// * `character` - Character position in line (0-indexed)
+/// * `key_separator` - キーの区切り文字
 ///
 /// # Returns
 /// `CompletionContext` if cursor is inside a translation function call, `None` otherwise
@@ -195,13 +199,14 @@ pub fn extract_completion_context_tree_sitter(
     language: ProgrammingLanguage,
     line: u32,
     character: u32,
+    key_separator: &str,
 ) -> Option<CompletionContext> {
     // Parse source code with tree-sitter
     let tree_sitter_lang = language.tree_sitter_language();
     let queries = load_queries(language);
 
-    let trans_fn_calls =
-        analyze_trans_fn_calls(text, &tree_sitter_lang, &queries).unwrap_or_default();
+    let trans_fn_calls = analyze_trans_fn_calls(text, &tree_sitter_lang, &queries, key_separator)
+        .unwrap_or_default();
 
     let cursor_position = Position::new(line, character);
 
@@ -350,7 +355,7 @@ mod tests {
             key_end: Position::new(0, 0),
             partial_key: String::new(),
         };
-        let items = generate_completions(&db, &translations, None, &quote_context, None, None);
+        let items = generate_completions(&db, &translations, None, &quote_context, None, None, ".");
 
         assert_that!(items.len(), eq(3));
         assert_that!(items[0].label, eq("common.goodbye"));
@@ -382,8 +387,15 @@ mod tests {
             key_end: Position::new(0, 0),
             partial_key: "common.".to_string(),
         };
-        let items =
-            generate_completions(&db, &translations, Some("common."), &quote_context, None, None);
+        let items = generate_completions(
+            &db,
+            &translations,
+            Some("common."),
+            &quote_context,
+            None,
+            None,
+            ".",
+        );
 
         assert_that!(items.len(), eq(2));
         assert_that!(items[0].label, eq("common.goodbye"));
@@ -421,7 +433,7 @@ mod tests {
             key_end: Position::new(0, 0),
             partial_key: String::new(),
         };
-        let items = generate_completions(&db, &translations, None, &quote_context, None, None);
+        let items = generate_completions(&db, &translations, None, &quote_context, None, None, ".");
 
         // Should have one item with both languages
         assert_that!(items.len(), eq(1));
@@ -463,6 +475,7 @@ mod tests {
             &quote_context,
             None,
             None,
+            ".",
         );
 
         assert_that!(items, is_empty());
@@ -479,7 +492,7 @@ const msg = t2("common.hello");
         let language = ProgrammingLanguage::JavaScript;
 
         // Cursor inside "common.hello" at position after "common."
-        let result = extract_completion_context_tree_sitter(text, language, 2, 23);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 23, ".");
 
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
@@ -500,7 +513,7 @@ const msg = translate("errors.notFound");
         // Position 29 = .
         // Position 30 = n (after the dot)
         // Cursor at position 30 should give partial_key = "errors."
-        let result = extract_completion_context_tree_sitter(text, language, 2, 30);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 30, ".");
 
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
@@ -519,7 +532,7 @@ const msg = myT("hello");
         // Position 16 = " (opening quote)
         // Position 17 = h (key starts)
         // Cursor at position 17 (right after quote) should give partial_key = ""
-        let result = extract_completion_context_tree_sitter(text, language, 2, 17);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 17, ".");
 
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
@@ -542,7 +555,7 @@ function Component() {
         // Position 21 = .
         // Position 22 = k (after the dot)
         // Cursor at position 22 should give partial_key = "scoped."
-        let result = extract_completion_context_tree_sitter(text, language, 3, 22);
+        let result = extract_completion_context_tree_sitter(text, language, 3, 22, ".");
 
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
@@ -558,7 +571,7 @@ const msg = "not a function call";
         let language = ProgrammingLanguage::JavaScript;
 
         // Cursor in regular string (not a translation function)
-        let result = extract_completion_context_tree_sitter(text, language, 2, 15);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 15, ".");
 
         assert_that!(result.is_none(), eq(true));
     }
@@ -577,7 +590,7 @@ return <div>{translate("ui.button.save")}</div>;
         // Position 26 = .
         // Position 27 = b (after "ui.")
         // Cursor at position 27 should give partial_key = "ui."
-        let result = extract_completion_context_tree_sitter(text, language, 2, 27);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 27, ".");
 
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
@@ -595,7 +608,7 @@ const msg = t("real.key");
 
         // Line 2 is a comment: // t("comment.key")
         // tree-sitter should NOT detect this as a translation call
-        let result = extract_completion_context_tree_sitter(text, language, 2, 10);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 10, ".");
 
         // Should be None because it's inside a comment
         assert_that!(result.is_none(), eq(true));
@@ -614,7 +627,7 @@ const msg = t("");
         // Position 14 = " (opening quote)
         // Position 15 = " (closing quote)
         // Cursor at position 15 (between quotes)
-        let result = extract_completion_context_tree_sitter(text, language, 2, 15);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 15, ".");
 
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
@@ -634,7 +647,7 @@ const msg = t();
         // Position 14 = ( (opening paren)
         // Position 15 = ) (closing paren)
         // Cursor at position 14 (inside empty parentheses)
-        let result = extract_completion_context_tree_sitter(text, language, 2, 14);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 14, ".");
 
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
@@ -653,7 +666,7 @@ const msg = t2();
 
         // Line 2: const msg = t2();
         // Cursor inside the empty parentheses
-        let result = extract_completion_context_tree_sitter(text, language, 2, 15);
+        let result = extract_completion_context_tree_sitter(text, language, 2, 15, ".");
 
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
@@ -670,7 +683,7 @@ const msg = foo();
         let language = ProgrammingLanguage::JavaScript;
 
         // Cursor inside the empty parentheses of foo()
-        let result = extract_completion_context_tree_sitter(text, language, 1, 16);
+        let result = extract_completion_context_tree_sitter(text, language, 1, 16, ".");
 
         // Should be None because foo is not a translation function
         assert_that!(result.is_none(), eq(true));

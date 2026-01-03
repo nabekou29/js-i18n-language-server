@@ -229,9 +229,10 @@ async fn handle_get_decorations(
 
     // 設定からデフォルト値を取得
     let config = backend.config_manager.lock().await;
-    let max_length =
-        parsed_args.max_length.unwrap_or_else(|| config.get_settings().virtual_text.max_length);
-    let primary_languages = config.get_settings().primary_languages.clone();
+    let settings = config.get_settings();
+    let max_length = parsed_args.max_length.unwrap_or(settings.virtual_text.max_length);
+    let primary_languages = settings.primary_languages.clone();
+    let key_separator = settings.key_separator.clone();
     drop(config);
 
     // SourceFile を取得
@@ -269,6 +270,7 @@ async fn handle_get_decorations(
         &translations,
         language.as_deref(),
         max_length,
+        &key_separator,
     );
 
     // ロックを解放

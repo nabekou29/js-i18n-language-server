@@ -33,6 +33,7 @@ pub struct TranslationDecoration {
 /// * `translations` - 翻訳データ
 /// * `language` - 表示する言語（None の場合は最初に見つかった翻訳を使用）
 /// * `max_length` - 最大表示文字数（超過時は省略記号を追加）
+/// * `key_separator` - キーの区切り文字
 #[must_use]
 pub fn get_translation_decorations(
     db: &dyn I18nDatabase,
@@ -40,9 +41,10 @@ pub fn get_translation_decorations(
     translations: &[Translation],
     language: Option<&str>,
     max_length: usize,
+    key_separator: &str,
 ) -> Vec<TranslationDecoration> {
     // ソースファイルからキー使用箇所を取得
-    let key_usages = crate::syntax::analyze_source(db, source_file);
+    let key_usages = crate::syntax::analyze_source(db, source_file, key_separator.to_string());
 
     let mut decorations = Vec::new();
 
@@ -189,7 +191,7 @@ mod tests {
         );
 
         let decorations =
-            get_translation_decorations(&db, source_file, &[translation], Some("ja"), 30);
+            get_translation_decorations(&db, source_file, &[translation], Some("ja"), 30, ".");
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].key, eq("common.hello"));
@@ -213,7 +215,7 @@ mod tests {
         );
 
         let decorations =
-            get_translation_decorations(&db, source_file, &[translation], Some("ja"), 10);
+            get_translation_decorations(&db, source_file, &[translation], Some("ja"), 10, ".");
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].value, eq("これは非常に長いメ…"));
@@ -234,7 +236,7 @@ mod tests {
 
         // 存在しない言語を指定
         let decorations =
-            get_translation_decorations(&db, source_file, &[translation], Some("fr"), 30);
+            get_translation_decorations(&db, source_file, &[translation], Some("fr"), 30, ".");
 
         assert_that!(decorations, is_empty());
     }
@@ -253,7 +255,8 @@ mod tests {
         );
 
         // 言語未指定の場合は最初に見つかった翻訳を使用
-        let decorations = get_translation_decorations(&db, source_file, &[translation], None, 30);
+        let decorations =
+            get_translation_decorations(&db, source_file, &[translation], None, 30, ".");
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].value, eq("Hello"));

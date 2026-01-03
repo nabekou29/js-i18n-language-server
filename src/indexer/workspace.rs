@@ -244,14 +244,16 @@ impl WorkspaceIndexer {
         // 【ステップ2】並列度を制限してソースファイルをインデックス
         // CPU飢餓を防ぐため、buffer_unordered で並列度を制限する
 
+        let key_separator = settings.key_separator.clone();
         let futures: Vec<_> = files
             .iter()
             .map(|file| {
                 let db_clone = db.clone();
                 let processed = Arc::clone(&processed_files);
                 let report = Arc::clone(&report_progress);
+                let sep = key_separator.clone();
                 async move {
-                    let result = self.index_file(db_clone, file).await;
+                    let result = self.index_file(db_clone, file, sep).await;
                     let current = processed.fetch_add(1, Ordering::Relaxed) + 1;
                     report(current);
                     result
@@ -280,11 +282,12 @@ impl WorkspaceIndexer {
     }
 
     /// 単一ファイルをインデックス
-    #[tracing::instrument(skip(self, db), fields(file_path = %file_path.display()))]
+    #[tracing::instrument(skip(self, db, key_separator), fields(file_path = %file_path.display()))]
     async fn index_file(
         &self,
         db: crate::db::I18nDatabaseImpl,
         file_path: &PathBuf,
+        key_separator: String,
     ) -> Option<(PathBuf, SourceFile)> {
         // ファイル内容を読み込み
         let content = match tokio::fs::read_to_string(file_path).await {
@@ -312,7 +315,7 @@ impl WorkspaceIndexer {
 
             // SourceFile を作成して解析
             let source_file = SourceFile::new(&db, uri.to_string(), content, language);
-            let key_usages = crate::syntax::analyze_source(&db, source_file);
+            let key_usages = crate::syntax::analyze_source(&db, source_file, key_separator);
 
             tracing::debug!(
                 uri = %uri,
@@ -406,6 +409,7 @@ impl WorkspaceIndexer {
         db: &crate::db::I18nDatabaseImpl,
         uri: &Url,
         content: &str,
+        key_separator: &str,
     ) -> Option<SourceFile> {
         use crate::input::source::ProgrammingLanguage;
 
@@ -416,7 +420,7 @@ impl WorkspaceIndexer {
         let source_file = SourceFile::new(db, uri.to_string(), content.to_string(), language);
 
         // analyze_source クエリを実行（Salsa が自動的にキャッシュ）
-        let key_usages = crate::syntax::analyze_source(db, source_file);
+        let key_usages = crate::syntax::analyze_source(db, source_file, key_separator.to_string());
 
         tracing::debug!(
             uri = %uri,
