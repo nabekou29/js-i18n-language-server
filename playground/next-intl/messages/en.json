@@ -1,0 +1,35 @@
+{
+  "common": {
+    "hello": "Hello",
+    "goodbye": "Goodbye",
+    "welcome": "Welcome, {name}!"
+  },
+  "home": {
+    "title": "Home",
+    "description": "Welcome to our website",
+    "hero": {
+      "heading": "Build something amazing",
+      "subheading": "Start your journey today"
+    }
+  },
+  "navigation": {
+    "home": "Home",
+    "about": "About",
+    "contact": "Contact",
+    "products": "Products"
+  },
+  "rich": {
+    "terms": "By signing up, you agree to our <terms>Terms of Service</terms>",
+    "highlight": "This is <highlight>important</highlight> information",
+    "link": "Visit our <link>documentation</link> for more details"
+  },
+  "markup": {
+    "bold": "This is <b>bold</b> text",
+    "italic": "This is <i>italic</i> text",
+    "code": "Use <code>npm install</code> to install"
+  },
+  "raw": {
+    "html": "<p>This is raw HTML</p>",
+    "markdown": "# Heading\n\nParagraph text"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "common": {
+    "hello": "Hello",
+    "goodbye": "Goodbye",
+    "welcome": "Welcome!"
+  },
+  "buttons": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "submit": "Submit",
+    "delete": "Delete"
+  },
+  "messages": {
+    "success": "Operation successful",
+    "error": "An error occurred",
+    "loading": "Loading..."
+  },
+  "user": {
+    "profile": {
+      "name": "Name",
+      "email": "Email",
+      "avatar": "Avatar"
+    },
+    "settings": {
+      "language": "Language",
+      "theme": "Theme",
+      "notifications": "Notifications"
+    }
+  }
+}

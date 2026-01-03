@@ -1,0 +1,7 @@
+{
+  "name": "playground-i18next",
+  "private": true,
+  "dependencies": {
+    "i18next": "^23.0.0"
+  }
+}

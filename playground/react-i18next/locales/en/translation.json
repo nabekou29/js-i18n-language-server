@@ -1,0 +1,32 @@
+{
+  "common": {
+    "hello": "Hello",
+    "goodbye": "Goodbye",
+    "welcome": "Welcome, {{name}}!",
+    "buttons": {
+      "save": "Save",
+      "cancel": "Cancel",
+      "submit": "Submit"
+    }
+  },
+  "home": {
+    "title": "Home Page",
+    "description": "Welcome to our website"
+  },
+  "form": {
+    "field": {
+      "name": "Name",
+      "email": "Email",
+      "password": "Password"
+    },
+    "validation": {
+      "required": "This field is required",
+      "invalid_email": "Please enter a valid email"
+    }
+  },
+  "trans": {
+    "simple": "Simple text",
+    "with_component": "Click <link>here</link> for more",
+    "nested": "Hello <bold>{{name}}</bold>!"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "common": {
+    "hello": "こんにちは",
+    "goodbye": "さようなら",
+    "welcome": "ようこそ、{name}さん！"
+  },
+  "home": {
+    "title": "ホーム",
+    "description": "当サイトへようこそ",
+    "hero": {
+      "heading": "素晴らしいものを作ろう",
+      "subheading": "今日から始めよう"
+    }
+  },
+  "navigation": {
+    "home": "ホーム",
+    "about": "概要",
+    "contact": "お問い合わせ",
+    "products": "製品"
+  },
+  "rich": {
+    "terms": "登録すると、<terms>利用規約</terms>に同意したことになります",
+    "highlight": "これは<highlight>重要な</highlight>情報です",
+    "link": "詳細は<link>ドキュメント</link>をご覧ください"
+  },
+  "markup": {
+    "bold": "これは<b>太字</b>のテキストです",
+    "italic": "これは<i>斜体</i>のテキストです",
+    "code": "<code>npm install</code>でインストールしてください"
+  },
+  "raw": {
+    "html": "<p>これは生のHTMLです</p>",
+    "markdown": "# 見出し\n\n段落テキスト"
+  }
+}

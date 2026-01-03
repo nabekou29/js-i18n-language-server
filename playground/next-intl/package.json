@@ -1,0 +1,9 @@
+{
+  "name": "playground-next-intl",
+  "private": true,
+  "dependencies": {
+    "next": "^14.0.0",
+    "next-intl": "^3.0.0",
+    "react": "^18.0.0"
+  }
+}

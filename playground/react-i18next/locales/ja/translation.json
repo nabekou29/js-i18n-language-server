@@ -1,0 +1,32 @@
+{
+  "common": {
+    "hello": "こんにちは",
+    "goodbye": "さようなら",
+    "welcome": "ようこそ、{{name}}さん！",
+    "buttons": {
+      "save": "保存",
+      "cancel": "キャンセル",
+      "submit": "送信"
+    }
+  },
+  "home": {
+    "title": "ホームページ",
+    "description": "当サイトへようこそ"
+  },
+  "form": {
+    "field": {
+      "name": "名前",
+      "email": "メールアドレス",
+      "password": "パスワード"
+    },
+    "validation": {
+      "required": "この項目は必須です",
+      "invalid_email": "有効なメールアドレスを入力してください"
+    }
+  },
+  "trans": {
+    "simple": "シンプルなテキスト",
+    "with_component": "詳細は<link>こちら</link>をクリック",
+    "nested": "こんにちは、<bold>{{name}}</bold>さん！"
+  }
+}

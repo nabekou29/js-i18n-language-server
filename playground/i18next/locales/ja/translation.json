@@ -1,0 +1,30 @@
+{
+  "common": {
+    "hello": "こんにちは",
+    "goodbye": "さようなら",
+    "welcome": "ようこそ！"
+  },
+  "buttons": {
+    "save": "保存",
+    "cancel": "キャンセル",
+    "submit": "送信",
+    "delete": "削除"
+  },
+  "messages": {
+    "success": "操作が成功しました",
+    "error": "エラーが発生しました",
+    "loading": "読み込み中..."
+  },
+  "user": {
+    "profile": {
+      "name": "名前",
+      "email": "メールアドレス",
+      "avatar": "アバター"
+    },
+    "settings": {
+      "language": "言語",
+      "theme": "テーマ",
+      "notifications": "通知"
+    }
+  }
+}
