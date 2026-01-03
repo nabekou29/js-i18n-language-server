@@ -1,0 +1,12 @@
+{
+  "common": {
+    "greeting": {
+      "hello": "Hello",
+      "goodbye": "Goodbye"
+    },
+    "buttons": {
+      "save": "Save",
+      "cancel": "Cancel"
+    }
+  }
+}

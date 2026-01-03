@@ -1,0 +1,12 @@
+{
+  "common": {
+    "greeting": {
+      "hello": "こんにちは",
+      "goodbye": "さようなら"
+    },
+    "buttons": {
+      "save": "保存",
+      "cancel": "キャンセル"
+    }
+  }
+}
