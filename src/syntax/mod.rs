@@ -80,3 +80,56 @@ const fn position_in_range(position: SourcePosition, range: SourceRange) -> bool
 
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::*;
+
+    /// テスト用ヘルパー: SourcePosition を作成
+    const fn pos(line: u32, character: u32) -> SourcePosition {
+        SourcePosition { line, character }
+    }
+
+    /// テスト用ヘルパー: SourceRange を作成
+    const fn range(start_line: u32, start_char: u32, end_line: u32, end_char: u32) -> SourceRange {
+        SourceRange { start: pos(start_line, start_char), end: pos(end_line, end_char) }
+    }
+
+    // position_in_range の境界条件テスト
+    // 範囲: (1, 5) から (2, 10) を使用
+
+    #[rstest]
+    #[case::before_start_line(pos(0, 5), range(1, 5, 2, 10), false)]
+    #[case::before_start_char(pos(1, 4), range(1, 5, 2, 10), false)]
+    #[case::at_start(pos(1, 5), range(1, 5, 2, 10), true)]
+    #[case::after_start_same_line(pos(1, 6), range(1, 5, 2, 10), true)]
+    #[case::middle_line(pos(1, 10), range(1, 5, 2, 10), true)]
+    #[case::end_line_before_end_char(pos(2, 5), range(1, 5, 2, 10), true)]
+    #[case::at_end(pos(2, 10), range(1, 5, 2, 10), true)]
+    #[case::after_end_char(pos(2, 11), range(1, 5, 2, 10), false)]
+    #[case::after_end_line(pos(3, 0), range(1, 5, 2, 10), false)]
+    fn test_position_in_range(
+        #[case] position: SourcePosition,
+        #[case] range: SourceRange,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(position_in_range(position, range), expected);
+    }
+
+    // 同一行内での境界テスト
+    #[rstest]
+    #[case::same_line_before(pos(1, 4), range(1, 5, 1, 10), false)]
+    #[case::same_line_at_start(pos(1, 5), range(1, 5, 1, 10), true)]
+    #[case::same_line_middle(pos(1, 7), range(1, 5, 1, 10), true)]
+    #[case::same_line_at_end(pos(1, 10), range(1, 5, 1, 10), true)]
+    #[case::same_line_after(pos(1, 11), range(1, 5, 1, 10), false)]
+    fn test_position_in_range_same_line(
+        #[case] position: SourcePosition,
+        #[case] range: SourceRange,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(position_in_range(position, range), expected);
+    }
+}

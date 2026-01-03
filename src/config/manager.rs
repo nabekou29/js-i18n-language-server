@@ -88,3 +88,88 @@ impl ConfigManager {
         self.workspace_root.as_ref()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use rstest::rstest;
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[allow(clippy::unwrap_used)]
+
+    /// new: デフォルト値で作成される
+    #[rstest]
+    fn test_new_creates_default_settings() {
+        let manager = ConfigManager::new();
+
+        assert_eq!(manager.get_settings().key_separator, ".");
+        assert!(manager.workspace_root().is_none());
+    }
+
+    /// load_settings: workspace_root が None の場合
+    #[rstest]
+    fn test_load_settings_without_workspace() {
+        let mut manager = ConfigManager::new();
+
+        let result = manager.load_settings(None);
+
+        assert!(result.is_ok());
+        assert_eq!(manager.get_settings().key_separator, ".");
+        assert!(manager.workspace_root().is_none());
+    }
+
+    /// load_settings: 設定ファイルがある場合
+    #[rstest]
+    fn test_load_settings_with_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_content = r#"{"keySeparator": "-"}"#;
+        fs::write(temp_dir.path().join(".js-i18n.json"), config_content).unwrap();
+
+        let mut manager = ConfigManager::new();
+        let result = manager.load_settings(Some(temp_dir.path().to_path_buf()));
+
+        assert!(result.is_ok());
+        assert_eq!(manager.get_settings().key_separator, "-");
+        assert!(manager.workspace_root().is_some());
+    }
+
+    /// load_settings: 設定ファイルがない場合はデフォルト値
+    #[rstest]
+    fn test_load_settings_without_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let mut manager = ConfigManager::new();
+        let result = manager.load_settings(Some(temp_dir.path().to_path_buf()));
+
+        assert!(result.is_ok());
+        assert_eq!(manager.get_settings().key_separator, ".");
+    }
+
+    /// update_settings: 有効な設定で更新成功
+    #[rstest]
+    fn test_update_settings_valid() {
+        let mut manager = ConfigManager::new();
+        let mut new_settings = I18nSettings::default();
+        new_settings.key_separator = "-".to_string();
+
+        let result = manager.update_settings(new_settings);
+
+        assert!(result.is_ok());
+        assert_eq!(manager.get_settings().key_separator, "-");
+    }
+
+    /// update_settings: 無効な設定でエラー
+    #[rstest]
+    fn test_update_settings_invalid() {
+        let mut manager = ConfigManager::new();
+        let mut new_settings = I18nSettings::default();
+        new_settings.key_separator = String::new(); // 空文字は無効
+
+        let result = manager.update_settings(new_settings);
+
+        assert!(result.is_err());
+    }
+}

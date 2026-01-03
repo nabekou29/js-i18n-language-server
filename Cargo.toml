@@ -30,8 +30,9 @@ jsonc-parser = { version = "0.28", features = ["cst"] }
 
 [dev-dependencies]
 googletest = "0.14"
-tokio-test = "0.4"
 rstest = "0.26"
+tempfile = "3"
+tokio-test = "0.4"
 
 [lints.rust]
 # === 絶対禁止事項 ===
