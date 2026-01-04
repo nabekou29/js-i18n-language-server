@@ -33,6 +33,7 @@ pub async fn handle_execute_command(
         "i18n.setCurrentLanguage" => {
             handle_set_current_language(backend, Some(params.arguments)).await
         }
+        "i18n.deleteUnusedKeys" => handle_delete_unused_keys(backend, Some(params.arguments)).await,
         _ => {
             tracing::warn!("Unknown command: {}", params.command);
             Ok(None)
@@ -340,4 +341,183 @@ async fn handle_set_current_language(
         .await;
 
     Ok(None)
+}
+
+/// `i18n.deleteUnusedKeys` コマンドの引数
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteUnusedKeysArgs {
+    /// 翻訳ファイルの URI
+    uri: String,
+}
+
+/// `i18n.deleteUnusedKeys` コマンドを実行
+///
+/// 翻訳ファイル内の未使用キーを一括で削除する。
+///
+/// # Arguments
+/// * `arguments[0]` - `DeleteUnusedKeysArgs` オブジェクト
+///
+/// # Returns
+/// 成功時は削除されたキーの数を含むオブジェクト
+#[allow(clippy::too_many_lines)]
+async fn handle_delete_unused_keys(
+    backend: &Backend,
+    arguments: Option<Vec<Value>>,
+) -> Result<Option<Value>> {
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    let args = arguments.unwrap_or_default();
+
+    // 引数をパース
+    let Some(first_arg) = args.first().cloned() else {
+        tracing::warn!("Missing arguments for i18n.deleteUnusedKeys");
+        return Ok(None);
+    };
+
+    let parsed_args: DeleteUnusedKeysArgs = match serde_json::from_value(first_arg) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::warn!("Invalid arguments for i18n.deleteUnusedKeys: {e}");
+            return Ok(None);
+        }
+    };
+
+    tracing::debug!(uri = %parsed_args.uri, "Executing i18n.deleteUnusedKeys");
+
+    // URI をパース
+    let Ok(uri) = Url::parse(&parsed_args.uri) else {
+        tracing::warn!("Invalid URI: {}", parsed_args.uri);
+        return Ok(None);
+    };
+
+    // ファイルパスを取得
+    let Some(file_path) = Backend::uri_to_path(&uri) else {
+        tracing::warn!("Failed to convert URI to path: {}", parsed_args.uri);
+        return Ok(None);
+    };
+
+    // 設定から key_separator を取得
+    let key_separator = {
+        let config = backend.config_manager.lock().await;
+        config.get_settings().key_separator.clone()
+    };
+
+    // ソースファイルの使用キーを収集
+    let used_keys: HashSet<String> = {
+        let db = backend.state.db.lock().await;
+        let source_files = backend.state.source_files.lock().await;
+        let source_file_vec: Vec<_> = source_files.values().copied().collect();
+        drop(source_files);
+
+        let mut keys = HashSet::new();
+        for source_file in source_file_vec {
+            let key_usages =
+                crate::syntax::analyze_source(&*db, source_file, key_separator.clone());
+            for usage in key_usages {
+                keys.insert(usage.key(&*db).text(&*db).clone());
+            }
+        }
+        keys
+    };
+
+    // 対象の Translation を取得し、未使用キーを検出
+    let (json_text, unused_keys) = {
+        let db = backend.state.db.lock().await;
+        let translations = backend.state.translations.lock().await;
+
+        let file_path_str = file_path.to_string_lossy().to_string();
+        let Some(translation) = translations.iter().find(|t| t.file_path(&*db) == &file_path_str)
+        else {
+            tracing::warn!("Translation file not found: {:?}", file_path);
+            return Ok(None);
+        };
+
+        let json_text = translation.json_text(&*db).clone();
+        let all_keys = translation.keys(&*db).clone();
+        drop(translations);
+        drop(db);
+
+        // 未使用キーを収集
+        let unused: Vec<String> = all_keys
+            .keys()
+            .filter(|key| !crate::ide::diagnostics::is_key_used(key, &used_keys, &key_separator))
+            .cloned()
+            .collect();
+
+        (json_text, unused)
+    };
+
+    if unused_keys.is_empty() {
+        backend.client.log_message(MessageType::INFO, "No unused translation keys found").await;
+        return Ok(Some(serde_json::json!({
+            "deletedCount": 0,
+            "deletedKeys": []
+        })));
+    }
+
+    // キーを削除
+    let Some(result) = crate::ide::code_actions::delete_keys_from_json_text(
+        &json_text,
+        &unused_keys,
+        &key_separator,
+    ) else {
+        tracing::error!("Failed to delete keys from JSON");
+        return Ok(None);
+    };
+
+    tracing::info!(deleted_count = result.deleted_count, "Deleting unused translation keys");
+
+    // ファイル全体を置換する WorkspaceEdit を作成
+    #[allow(clippy::cast_possible_truncation)] // 翻訳JSONが42億行を超えることはない
+    let text_edit = {
+        let line_count = json_text.lines().count();
+        let last_line = json_text.lines().last().unwrap_or("");
+
+        TextEdit {
+            range: Range {
+                start: Position { line: 0, character: 0 },
+                end: Position {
+                    line: line_count.saturating_sub(1) as u32,
+                    character: last_line.len() as u32,
+                },
+            },
+            new_text: result.new_text,
+        }
+    };
+
+    let mut changes = std::collections::HashMap::new();
+    changes.insert(uri.clone(), vec![text_edit]);
+
+    let edit_result = backend
+        .client
+        .apply_edit(WorkspaceEdit { changes: Some(changes), ..Default::default() })
+        .await;
+
+    if let Err(e) = edit_result {
+        tracing::error!("Failed to apply workspace edit: {e}");
+        return Ok(None);
+    }
+
+    // 翻訳ファイルを再読み込み
+    backend.reload_translation_file(Path::new(&file_path)).await;
+
+    // 診断を更新
+    backend.send_unused_key_diagnostics().await;
+
+    // 結果をログ出力
+    let deleted_count = result.deleted_count;
+    backend
+        .client
+        .log_message(
+            MessageType::INFO,
+            format!("Deleted {deleted_count} unused translation key(s)"),
+        )
+        .await;
+
+    Ok(Some(serde_json::json!({
+        "deletedCount": result.deleted_count,
+        "deletedKeys": result.deleted_keys
+    })))
 }

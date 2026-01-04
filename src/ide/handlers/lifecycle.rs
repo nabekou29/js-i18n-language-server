@@ -74,6 +74,7 @@ pub async fn handle_initialize(
                     "i18n.editTranslation".to_string(),
                     "i18n.getDecorations".to_string(),
                     "i18n.setCurrentLanguage".to_string(),
+                    "i18n.deleteUnusedKeys".to_string(),
                 ],
                 work_done_progress_options: WorkDoneProgressOptions::default(),
             }),
