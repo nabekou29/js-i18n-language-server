@@ -31,6 +31,19 @@ pub struct KeyInsertionResult {
     pub cursor_range: Range,
 }
 
+/// キー削除結果（CST ベース）
+///
+/// フォーマットを保持したまま JSON からキーを削除した結果を返します。
+#[derive(Debug, Clone)]
+pub struct KeyDeletionResult {
+    /// 変更後の JSON テキスト全体
+    pub new_text: String,
+    /// 実際に削除されたキー数
+    pub deleted_count: usize,
+    /// 削除されたキーのリスト
+    pub deleted_keys: Vec<String>,
+}
+
 /// 診断から `missing_languages` を抽出
 #[must_use]
 pub fn extract_missing_languages(diagnostics: &[Diagnostic]) -> HashSet<String> {
@@ -201,6 +214,114 @@ fn find_cursor_position(json_text: &str, key: &str, separator: &str) -> Option<R
         start: Position { line, character: col_start },
         end: Position { line, character: col_start },
     })
+}
+
+/// JSON テキストから指定されたキーを削除（CST ベース）
+///
+/// フォーマットを保持したまま複数のキーを削除します。
+/// 削除後に空になった親オブジェクトも再帰的に削除します。
+///
+/// # Arguments
+/// * `json_text` - 元の JSON テキスト
+/// * `keys_to_delete` - 削除するキーのリスト（ドット区切り形式）
+/// * `separator` - キーのセパレータ（例: "."）
+///
+/// # Returns
+/// 成功時は `Some(KeyDeletionResult)`、パース失敗時は `None`
+#[must_use]
+pub fn delete_keys_from_json_text(
+    json_text: &str,
+    keys_to_delete: &[String],
+    separator: &str,
+) -> Option<KeyDeletionResult> {
+    // CST でパース
+    let root = CstRootNode::parse(json_text, &ParseOptions::default()).ok()?;
+    let root_obj = root.object_value()?;
+
+    let mut deleted_keys = Vec::new();
+
+    // 削除対象のキーを深い順にソート（リーフから削除）
+    // 深さ = セパレータの数
+    let mut sorted_keys: Vec<_> = keys_to_delete.to_vec();
+    sorted_keys.sort_by(|a, b| {
+        let depth_a = a.matches(separator).count();
+        let depth_b = b.matches(separator).count();
+        depth_b.cmp(&depth_a) // 深い順（降順）
+    });
+
+    // 各キーを削除
+    for key in &sorted_keys {
+        if delete_single_key(&root_obj, key, separator) {
+            deleted_keys.push(key.clone());
+        }
+    }
+
+    // 空の親オブジェクトをクリーンアップ
+    cleanup_empty_objects(&root_obj);
+
+    Some(KeyDeletionResult {
+        new_text: root.to_string(),
+        deleted_count: deleted_keys.len(),
+        deleted_keys,
+    })
+}
+
+/// 単一のキーを削除
+///
+/// ネストされたキー（例: `common.hello`）にも対応。
+fn delete_single_key(root_obj: &jsonc_parser::cst::CstObject, key: &str, separator: &str) -> bool {
+    let parts: Vec<&str> = key.split(separator).collect();
+
+    // ネストされたオブジェクトを辿る
+    let mut current_obj = root_obj.clone();
+    for (i, part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            // 最後のキー: プロパティを削除
+            if let Some(prop) = current_obj.get(part) {
+                prop.remove();
+                return true;
+            }
+            return false;
+        }
+        // 中間キー: 子オブジェクトを取得
+        match current_obj.object_value(part) {
+            Some(child) => current_obj = child,
+            None => return false,
+        }
+    }
+    false
+}
+
+/// 空のオブジェクトを再帰的に削除
+///
+/// プロパティ値が空のオブジェクトである場合、そのプロパティを削除します。
+/// 削除によって親が空になる可能性があるため、繰り返し実行します。
+fn cleanup_empty_objects(obj: &jsonc_parser::cst::CstObject) {
+    // 最大深度の制限（無限ループ防止）
+    for _ in 0..100 {
+        let mut removed_any = false;
+
+        // 現在のプロパティを取得（削除中にイテレータが無効になるため先にコレクト）
+        let props: Vec<_> = obj.properties();
+
+        for prop in props {
+            // プロパティの値がオブジェクトかチェック
+            if let Some(child_obj) = prop.value().and_then(|v| v.as_object()) {
+                // 再帰的にクリーンアップ
+                cleanup_empty_objects(&child_obj);
+
+                // 子オブジェクトが空になったら削除
+                if child_obj.properties().is_empty() {
+                    prop.remove();
+                    removed_any = true;
+                }
+            }
+        }
+
+        if !removed_any {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -385,5 +506,129 @@ mod tests {
         // カーソル位置が設定されていることを確認（空文字列の中）
         expect_that!(result.cursor_range.start.line, ge(0));
         expect_that!(result.cursor_range.start.character, ge(0));
+    }
+
+    // ========================================
+    // delete_keys_from_json_text テスト
+    // ========================================
+
+    #[googletest::test]
+    fn test_delete_single_key() {
+        let json = r#"{
+  "hello": "world",
+  "unused": "value"
+}"#;
+        let result = delete_keys_from_json_text(json, &["unused".to_string()], ".")
+            .expect("deletion should succeed");
+
+        expect_that!(result.deleted_count, eq(1));
+        expect_that!(result.new_text, not(contains_substring("\"unused\"")));
+        expect_that!(result.new_text, contains_substring("\"hello\""));
+    }
+
+    #[googletest::test]
+    fn test_delete_nested_key() {
+        let json = r#"{
+  "common": {
+    "used": "value",
+    "unused": "value"
+  }
+}"#;
+        let result = delete_keys_from_json_text(json, &["common.unused".to_string()], ".")
+            .expect("deletion should succeed");
+
+        expect_that!(result.deleted_count, eq(1));
+        expect_that!(result.new_text, not(contains_substring("\"unused\"")));
+        expect_that!(result.new_text, contains_substring("\"used\""));
+        // common オブジェクトは残る
+        expect_that!(result.new_text, contains_substring("\"common\""));
+    }
+
+    #[googletest::test]
+    fn test_delete_cleanup_empty_parent() {
+        let json = r#"{
+  "used": "value",
+  "empty_parent": {
+    "unused": "value"
+  }
+}"#;
+        let result = delete_keys_from_json_text(json, &["empty_parent.unused".to_string()], ".")
+            .expect("deletion should succeed");
+
+        // 空になった empty_parent も削除される
+        expect_that!(result.new_text, not(contains_substring("\"empty_parent\"")));
+        expect_that!(result.new_text, contains_substring("\"used\""));
+    }
+
+    #[googletest::test]
+    fn test_delete_preserves_formatting() {
+        let json = r#"{
+    "used": "value",
+    "unused": "value"
+}"#;
+        let result = delete_keys_from_json_text(json, &["unused".to_string()], ".")
+            .expect("deletion should succeed");
+
+        // 4スペースインデントが保持される
+        expect_that!(result.new_text, contains_substring("    \"used\""));
+    }
+
+    #[googletest::test]
+    fn test_delete_multiple_keys() {
+        let json = r#"{
+  "a": "1",
+  "b": "2",
+  "c": "3"
+}"#;
+        let result = delete_keys_from_json_text(json, &["a".to_string(), "c".to_string()], ".")
+            .expect("deletion should succeed");
+
+        expect_that!(result.deleted_count, eq(2));
+        expect_that!(result.new_text, not(contains_substring("\"a\"")));
+        expect_that!(result.new_text, not(contains_substring("\"c\"")));
+        expect_that!(result.new_text, contains_substring("\"b\""));
+    }
+
+    #[googletest::test]
+    fn test_delete_nonexistent_key() {
+        let json = r#"{
+  "hello": "world"
+}"#;
+        let result = delete_keys_from_json_text(json, &["nonexistent".to_string()], ".")
+            .expect("deletion should succeed");
+
+        // キーが見つからなくても成功し、deleted_count は 0
+        expect_that!(result.deleted_count, eq(0));
+        expect_that!(result.new_text, contains_substring("\"hello\""));
+    }
+
+    #[googletest::test]
+    fn test_delete_deeply_nested_cleanup() {
+        let json = r#"{
+  "keep": "value",
+  "deep": {
+    "nested": {
+      "unused": "value"
+    }
+  }
+}"#;
+        let result = delete_keys_from_json_text(json, &["deep.nested.unused".to_string()], ".")
+            .expect("deletion should succeed");
+
+        // 空になった nested と deep も削除される
+        expect_that!(result.new_text, not(contains_substring("\"deep\"")));
+        expect_that!(result.new_text, not(contains_substring("\"nested\"")));
+        expect_that!(result.new_text, contains_substring("\"keep\""));
+    }
+
+    #[googletest::test]
+    fn test_delete_empty_keys_list() {
+        let json = r#"{
+  "hello": "world"
+}"#;
+        let result = delete_keys_from_json_text(json, &[], ".").expect("deletion should succeed");
+
+        expect_that!(result.deleted_count, eq(0));
+        expect_that!(result.new_text, contains_substring("\"hello\""));
     }
 }

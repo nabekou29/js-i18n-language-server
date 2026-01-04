@@ -210,7 +210,7 @@ pub fn generate_unused_key_diagnostics(
 ///   → 完全一致なので `true` を返す
 /// - `key = "other.key"`, `used_keys = {"hoge.fuga"}`
 ///   → マッチしないので `false` を返す
-fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &str) -> bool {
+pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &str) -> bool {
     // 完全一致
     if used_keys.contains(key) {
         return true;
