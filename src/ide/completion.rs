@@ -19,6 +19,10 @@ use crate::syntax::analyzer::{
     extractor::analyze_trans_fn_calls,
     query_loader::load_queries,
 };
+use crate::types::{
+    SourcePosition,
+    SourceRange,
+};
 
 /// クォートのコンテキスト情報
 #[derive(Debug, Clone)]
@@ -215,7 +219,7 @@ pub fn extract_completion_context_tree_sitter(
         let arg_range = call.arg_key_node;
 
         // Check if cursor is within the argument range
-        if !position_in_range(cursor_position, arg_range) {
+        if !SourceRange::from(arg_range).contains(SourcePosition::from(cursor_position)) {
             continue;
         }
 
@@ -296,27 +300,6 @@ pub fn extract_completion_context_tree_sitter(
     }
 
     None
-}
-
-/// Check if a position is within a range
-const fn position_in_range(position: Position, range: Range) -> bool {
-    // Before range start
-    if position.line < range.start.line {
-        return false;
-    }
-    if position.line == range.start.line && position.character < range.start.character {
-        return false;
-    }
-
-    // After range end
-    if position.line > range.end.line {
-        return false;
-    }
-    if position.line == range.end.line && position.character > range.end.character {
-        return false;
-    }
-
-    true
 }
 
 #[cfg(test)]
@@ -687,88 +670,6 @@ const msg = foo();
 
         // Should be None because foo is not a translation function
         assert_that!(result.is_none(), eq(true));
-    }
-
-    // ========================================
-    // position_in_range 境界条件テスト
-    // ========================================
-
-    #[rstest]
-    #[case::before_start_line(
-        Position::new(0, 5),
-        Range::new(Position::new(1, 5), Position::new(2, 10)),
-        false
-    )]
-    #[case::before_start_char(
-        Position::new(1, 4),
-        Range::new(Position::new(1, 5), Position::new(2, 10)),
-        false
-    )]
-    #[case::at_start(
-        Position::new(1, 5),
-        Range::new(Position::new(1, 5), Position::new(2, 10)),
-        true
-    )]
-    #[case::inside(
-        Position::new(1, 7),
-        Range::new(Position::new(1, 5), Position::new(2, 10)),
-        true
-    )]
-    #[case::at_end(
-        Position::new(2, 10),
-        Range::new(Position::new(1, 5), Position::new(2, 10)),
-        true
-    )]
-    #[case::after_end_char(
-        Position::new(2, 11),
-        Range::new(Position::new(1, 5), Position::new(2, 10)),
-        false
-    )]
-    #[case::after_end_line(
-        Position::new(3, 0),
-        Range::new(Position::new(1, 5), Position::new(2, 10)),
-        false
-    )]
-    fn test_position_in_range(
-        #[case] position: Position,
-        #[case] range: Range,
-        #[case] expected: bool,
-    ) {
-        assert_eq!(position_in_range(position, range), expected);
-    }
-
-    #[rstest]
-    #[case::same_line_before(
-        Position::new(1, 4),
-        Range::new(Position::new(1, 5), Position::new(1, 10)),
-        false
-    )]
-    #[case::same_line_at_start(
-        Position::new(1, 5),
-        Range::new(Position::new(1, 5), Position::new(1, 10)),
-        true
-    )]
-    #[case::same_line_middle(
-        Position::new(1, 7),
-        Range::new(Position::new(1, 5), Position::new(1, 10)),
-        true
-    )]
-    #[case::same_line_at_end(
-        Position::new(1, 10),
-        Range::new(Position::new(1, 5), Position::new(1, 10)),
-        true
-    )]
-    #[case::same_line_after(
-        Position::new(1, 11),
-        Range::new(Position::new(1, 5), Position::new(1, 10)),
-        false
-    )]
-    fn test_position_in_range_same_line(
-        #[case] position: Position,
-        #[case] range: Range,
-        #[case] expected: bool,
-    ) {
-        assert_eq!(position_in_range(position, range), expected);
     }
 
     // ========================================

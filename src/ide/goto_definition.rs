@@ -1,14 +1,10 @@
 //! Go to Definition implementation
 
-use tower_lsp::lsp_types::{
-    Location,
-    Range,
-};
+use tower_lsp::lsp_types::Location;
 
 use crate::db::I18nDatabase;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
-use crate::types::SourceRange;
 
 /// Find translation key definitions
 ///
@@ -45,7 +41,7 @@ pub fn find_definitions(
                 continue;
             };
 
-            locations.push(Location { uri, range: lsp_range_from_source_range(*range) });
+            locations.push(Location { uri, range: (*range).into() });
             continue;
         }
 
@@ -58,25 +54,11 @@ pub fn find_definitions(
                 continue;
             };
 
-            locations.push(Location { uri, range: lsp_range_from_source_range(*range) });
+            locations.push(Location { uri, range: (*range).into() });
         }
     }
 
     locations
-}
-
-/// Convert `SourceRange` to LSP `Range`
-const fn lsp_range_from_source_range(range: SourceRange) -> Range {
-    Range {
-        start: tower_lsp::lsp_types::Position {
-            line: range.start.line,
-            character: range.start.character,
-        },
-        end: tower_lsp::lsp_types::Position {
-            line: range.end.line,
-            character: range.end.character,
-        },
-    }
 }
 
 #[cfg(test)]
@@ -86,6 +68,7 @@ mod tests {
 
     use googletest::prelude::*;
     use rstest::*;
+    use tower_lsp::lsp_types::Range;
 
     use super::*;
     use crate::db::I18nDatabaseImpl;
@@ -312,7 +295,7 @@ mod tests {
             end: SourcePosition { line: 5, character: 25 },
         };
 
-        let lsp_range = lsp_range_from_source_range(source_range);
+        let lsp_range: Range = source_range.into();
 
         assert_that!(lsp_range.start.line, eq(5));
         assert_that!(lsp_range.start.character, eq(10));

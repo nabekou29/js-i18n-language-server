@@ -7,8 +7,6 @@ use tower_lsp::lsp_types::{
     DiagnosticSeverity,
     DiagnosticTag,
     NumberOrString,
-    Position,
-    Range,
 };
 
 use crate::db::I18nDatabase;
@@ -124,10 +122,7 @@ pub fn generate_diagnostics(
                 format!("Translation key '{}' missing for: {}", key, missing_languages.join(", "));
 
             diagnostics.push(Diagnostic {
-                range: Range {
-                    start: Position { line: range.start.line, character: range.start.character },
-                    end: Position { line: range.end.line, character: range.end.character },
-                },
+                range: range.into(),
                 severity: Some(DiagnosticSeverity::WARNING),
                 code: Some(NumberOrString::String("missing-translation".to_string())),
                 code_description: None,
@@ -190,10 +185,7 @@ pub fn generate_unused_key_diagnostics(
 
         if !is_used && let Some(range) = key_ranges.get(key) {
             diagnostics.push(Diagnostic {
-                range: Range {
-                    start: Position { line: range.start.line, character: range.start.character },
-                    end: Position { line: range.end.line, character: range.end.character },
-                },
+                range: (*range).into(),
                 severity: Some(DiagnosticSeverity::HINT),
                 code: Some(NumberOrString::String("unused-translation-key".to_string())),
                 code_description: None,
