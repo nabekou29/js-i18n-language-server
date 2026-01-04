@@ -48,19 +48,7 @@ pub fn find_references<S: std::hash::BuildHasher>(
                     continue;
                 };
 
-                locations.push(Location {
-                    uri: parsed_uri,
-                    range: tower_lsp::lsp_types::Range {
-                        start: tower_lsp::lsp_types::Position {
-                            line: range.start.line,
-                            character: range.start.character,
-                        },
-                        end: tower_lsp::lsp_types::Position {
-                            line: range.end.line,
-                            character: range.end.character,
-                        },
-                    },
-                });
+                locations.push(Location { uri: parsed_uri, range: range.into() });
             }
         }
     }

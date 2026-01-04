@@ -692,7 +692,7 @@ impl Translation {
         // まずキーの範囲をチェック
         let key_ranges = self.key_ranges(db);
         for (key, range) in key_ranges {
-            if position_in_range(position, *range) {
+            if range.contains(position) {
                 return Some(crate::interned::TransKey::new(db, key.clone()));
             }
         }
@@ -700,34 +700,13 @@ impl Translation {
         // 次に値の範囲をチェック
         let value_ranges = self.value_ranges(db);
         for (key, range) in value_ranges {
-            if position_in_range(position, *range) {
+            if range.contains(position) {
                 return Some(crate::interned::TransKey::new(db, key.clone()));
             }
         }
 
         None
     }
-}
-
-/// 位置が範囲内にあるかをチェック
-const fn position_in_range(position: SourcePosition, range: SourceRange) -> bool {
-    // 開始位置より前の場合
-    if position.line < range.start.line {
-        return false;
-    }
-    if position.line == range.start.line && position.character < range.start.character {
-        return false;
-    }
-
-    // 終了位置より後の場合
-    if position.line > range.end.line {
-        return false;
-    }
-    if position.line == range.end.line && position.character > range.end.character {
-        return false;
-    }
-
-    true
 }
 
 /// 翻訳ファイルを読み込む

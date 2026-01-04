@@ -122,24 +122,7 @@ mod tests {
     use super::*;
     use crate::db::I18nDatabaseImpl;
     use crate::input::source::ProgrammingLanguage;
-
-    /// テスト用の `Translation` を作成するヘルパー関数
-    fn create_translation(
-        db: &I18nDatabaseImpl,
-        language: &str,
-        file_path: &str,
-        keys: HashMap<String, String>,
-    ) -> Translation {
-        Translation::new(
-            db,
-            language.to_string(),
-            file_path.to_string(),
-            keys,
-            "{}".to_string(),
-            HashMap::new(),
-            HashMap::new(),
-        )
-    }
+    use crate::test_utils::create_translation;
 
     /// テスト用の `SourceFile` を作成するヘルパー関数
     fn create_source_file(db: &I18nDatabaseImpl, content: &str) -> SourceFile {
