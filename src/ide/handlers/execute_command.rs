@@ -249,18 +249,14 @@ async fn handle_get_decorations(
 
     // 有効な言語を決定（リクエスト指定 → currentLanguage → primaryLanguages → 最初の言語）
     let language = parsed_args.language.clone().or_else(|| {
-        let available_languages: Vec<String> = translations
-            .iter()
-            .map(|t| t.language(&*db))
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
-            .collect();
         let current_language = backend.state.current_language.blocking_lock().clone();
-        crate::ide::backend::resolve_effective_language(
+        let sorted_languages = crate::ide::backend::collect_sorted_languages(
+            &*db,
+            &translations,
             current_language.as_deref(),
             primary_languages.as_deref(),
-            &available_languages,
-        )
+        );
+        sorted_languages.first().cloned()
     });
 
     // 翻訳装飾情報を生成

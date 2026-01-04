@@ -3,8 +3,6 @@
 //! `textDocument/codeAction` リクエストを処理し、
 //! 翻訳キーに対する編集アクションを提供します。
 
-use std::collections::HashSet;
-
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CodeActionParams,
@@ -48,14 +46,22 @@ pub async fn handle_code_action(
 
     tracing::debug!(key = %key_text, "Found translation key for code action");
 
-    // すべての利用可能な言語を取得
-    let all_languages: Vec<String> = {
+    // すべての利用可能な言語をソートして取得
+    let current_language = backend.state.current_language.lock().await.clone();
+    let primary_languages =
+        backend.config_manager.lock().await.get_settings().primary_languages.clone();
+    let sorted_languages = {
         let db = backend.state.db.lock().await;
         let translations = backend.state.translations.lock().await;
-        translations.iter().map(|t| t.language(&*db)).collect::<HashSet<_>>().into_iter().collect()
+        crate::ide::backend::collect_sorted_languages(
+            &*db,
+            &translations,
+            current_language.as_deref(),
+            primary_languages.as_deref(),
+        )
     };
 
-    if all_languages.is_empty() {
+    if sorted_languages.is_empty() {
         tracing::debug!("No translations available");
         return Ok(Some(vec![]));
     }
@@ -63,20 +69,13 @@ pub async fn handle_code_action(
     // 診断から missing_languages を抽出
     let missing_languages = crate::ide::code_actions::extract_missing_languages(diagnostics);
 
-    // 有効な言語を決定（currentLanguage → primaryLanguages → 最初の言語）
-    let current_language = backend.state.current_language.lock().await.clone();
-    let primary_languages =
-        backend.config_manager.lock().await.get_settings().primary_languages.clone();
-    let effective_language = crate::ide::backend::resolve_effective_language(
-        current_language.as_deref(),
-        primary_languages.as_deref(),
-        &all_languages,
-    );
+    // 有効な言語（ソート済みの先頭）
+    let effective_language = sorted_languages.first().cloned();
 
     // Code Action を生成（全言語対象）
     let actions = crate::ide::code_actions::generate_code_actions(
         &key_text,
-        &all_languages,
+        &sorted_languages,
         &missing_languages,
         effective_language.as_deref(),
     );
