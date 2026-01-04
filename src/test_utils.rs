@@ -1,7 +1,6 @@
 //! テスト用ユーティリティ関数
 //!
 //! 複数のテストモジュールで使用される共通のヘルパー関数を提供します。
-#![cfg(test)]
 
 use std::collections::HashMap;
 
@@ -18,6 +17,7 @@ use crate::input::translation::Translation;
 ///
 /// # Returns
 /// 作成された Translation
+#[allow(clippy::redundant_pub_crate)]
 pub(crate) fn create_translation(
     db: &I18nDatabaseImpl,
     language: &str,

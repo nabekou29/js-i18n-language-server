@@ -167,6 +167,7 @@ impl FileMatcher {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use std::path::PathBuf;
 
@@ -180,11 +181,14 @@ mod tests {
         exclude: &[&str],
         translation_pattern: &str,
     ) -> I18nSettings {
-        let mut settings = I18nSettings::default();
-        settings.include_patterns = source_include.iter().map(|s| s.to_string()).collect();
-        settings.exclude_patterns = exclude.iter().map(|s| s.to_string()).collect();
-        settings.translation_files.file_pattern = translation_pattern.to_string();
-        settings
+        I18nSettings {
+            include_patterns: source_include.iter().copied().map(String::from).collect(),
+            exclude_patterns: exclude.iter().copied().map(String::from).collect(),
+            translation_files: crate::config::TranslationFilesConfig {
+                file_pattern: translation_pattern.to_string(),
+            },
+            ..I18nSettings::default()
+        }
     }
 
     // ===== ソースファイル判定テスト =====

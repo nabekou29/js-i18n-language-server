@@ -525,11 +525,14 @@ mod tests {
         exclude: &[&str],
         translation: &str,
     ) -> crate::config::I18nSettings {
-        let mut settings = crate::config::I18nSettings::default();
-        settings.include_patterns = include.iter().map(|s| s.to_string()).collect();
-        settings.exclude_patterns = exclude.iter().map(|s| s.to_string()).collect();
-        settings.translation_files.file_pattern = translation.to_string();
-        settings
+        crate::config::I18nSettings {
+            include_patterns: include.iter().copied().map(String::from).collect(),
+            exclude_patterns: exclude.iter().copied().map(String::from).collect(),
+            translation_files: crate::config::TranslationFilesConfig {
+                file_pattern: translation.to_string(),
+            },
+            ..crate::config::I18nSettings::default()
+        }
     }
 
     /// `find_files`: include パターンでファイルを選択

@@ -1005,12 +1005,17 @@ mod tests {
 
     /// 期待する言語リストを作成するヘルパー
     fn langs(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| s.to_string()).collect()
+        list.iter().copied().map(String::from).collect()
+    }
+
+    /// テスト用の言語セットを作成するヘルパー
+    fn lang_set(list: &[&str]) -> HashSet<String> {
+        list.iter().copied().map(String::from).collect()
     }
 
     #[rstest]
     fn sort_languages_no_priority() {
-        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let languages = lang_set(&["en", "ja", "zh"]);
 
         let result = sort_languages(languages, None, None);
 
@@ -1020,7 +1025,7 @@ mod tests {
 
     #[rstest]
     fn sort_languages_with_current_language() {
-        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let languages = lang_set(&["en", "ja", "zh"]);
 
         let result = sort_languages(languages, Some("ja"), None);
 
@@ -1030,7 +1035,7 @@ mod tests {
 
     #[rstest]
     fn sort_languages_with_primary_languages() {
-        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let languages = lang_set(&["en", "ja", "zh"]);
         let primaries = langs(&["zh", "ja"]);
 
         let result = sort_languages(languages, None, Some(&primaries));
@@ -1041,7 +1046,7 @@ mod tests {
 
     #[rstest]
     fn sort_languages_current_overrides_primary() {
-        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let languages = lang_set(&["en", "ja", "zh"]);
         let primaries = langs(&["zh", "ja"]);
 
         let result = sort_languages(languages, Some("en"), Some(&primaries));
@@ -1052,7 +1057,7 @@ mod tests {
 
     #[rstest]
     fn sort_languages_current_in_primary_no_duplicate() {
-        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let languages = lang_set(&["en", "ja", "zh"]);
         let primaries = langs(&["ja", "zh"]);
 
         // current_language が primary にも含まれている場合
@@ -1064,7 +1069,7 @@ mod tests {
 
     #[rstest]
     fn sort_languages_nonexistent_current_ignored() {
-        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let languages = lang_set(&["en", "ja", "zh"]);
 
         // 存在しない言語を current_language に指定
         let result = sort_languages(languages, Some("fr"), None);
@@ -1075,7 +1080,7 @@ mod tests {
 
     #[rstest]
     fn sort_languages_nonexistent_primary_ignored() {
-        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let languages = lang_set(&["en", "ja", "zh"]);
         let primaries = langs(&["fr", "de"]);
 
         // 存在しない言語を primary_languages に指定
