@@ -424,7 +424,6 @@ fn flatten_json_value(
 /// 上記の JSON の場合、キーの位置情報（`"hello"` の位置）と値の位置情報（`"Hello"` の位置）が
 /// それぞれマッピングされます。
 #[must_use]
-#[allow(dead_code)]
 pub fn extract_key_value_ranges(
     json_text: &str,
     separator: &str,
