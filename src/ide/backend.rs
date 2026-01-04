@@ -84,9 +84,7 @@ impl Backend {
     }
 
     /// 設定から診断オプションを作成
-    #[allow(clippy::unused_self)]
     pub(crate) fn create_diagnostic_options(
-        &self,
         config: &ConfigManager,
     ) -> super::diagnostics::DiagnosticOptions {
         let settings = config.get_settings();
@@ -179,7 +177,7 @@ impl Backend {
                 let (options, key_separator) = {
                     let config = self.config_manager.lock().await;
                     (
-                        self.create_diagnostic_options(&config),
+                        Self::create_diagnostic_options(&config),
                         config.get_settings().key_separator.clone(),
                     )
                 };
@@ -356,7 +354,7 @@ impl Backend {
             let (options, key_separator) = {
                 let config = self.config_manager.lock().await;
                 (
-                    self.create_diagnostic_options(&config),
+                    Self::create_diagnostic_options(&config),
                     config.get_settings().key_separator.clone(),
                 )
             };
