@@ -632,27 +632,12 @@ impl Backend {
     /// ソースファイルとして処理対象かどうかを判定
     ///
     /// `includePatterns` にマッチし、かつ `excludePatterns` にマッチしないファイルを対象とする。
+    /// パターンマッチングはワークスペースルートからの相対パスで行われる。
     pub(crate) async fn is_source_file(&self, file_path: &Path) -> bool {
         let config_manager = self.config_manager.lock().await;
-        let include_patterns = config_manager.get_settings().include_patterns.clone();
-        let exclude_patterns = config_manager.get_settings().exclude_patterns.clone();
-        drop(config_manager); // ロックを早期解放
 
-        // include_patterns のいずれかにマッチするか
-        let matches_include = include_patterns.iter().any(|pattern| {
-            globset::Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
-        });
-
-        if !matches_include {
-            return false;
-        }
-
-        // exclude_patterns のいずれにもマッチしないか
-        let matches_exclude = exclude_patterns.iter().any(|pattern| {
-            globset::Glob::new(pattern).is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
-        });
-
-        !matches_exclude
+        // FileMatcher があればそれを使用、なければ false
+        config_manager.file_matcher().is_some_and(|matcher| matcher.is_source_file(file_path))
     }
 
     /// 保留キューに溜まった更新を処理

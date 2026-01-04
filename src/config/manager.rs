@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use super::matcher::FileMatcher;
 use super::{
     ConfigError,
     I18nSettings,
@@ -9,20 +10,29 @@ use super::{
 };
 
 /// 設定管理を行う
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ConfigManager {
     /// 現在の設定
     current_settings: I18nSettings,
 
     /// ワークスペースのルートパス
     workspace_root: Option<PathBuf>,
+
+    /// ファイルマッチャー（ワークスペースルートが設定されている場合のみ有効）
+    file_matcher: Option<FileMatcher>,
+}
+
+impl Default for ConfigManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConfigManager {
     /// 新しい設定マネージャーを作成
     #[must_use]
     pub fn new() -> Self {
-        Self { current_settings: I18nSettings::default(), workspace_root: None }
+        Self { current_settings: I18nSettings::default(), workspace_root: None, file_matcher: None }
     }
 
     /// 設定を読み込む
@@ -54,9 +64,21 @@ impl ConfigManager {
         // バリデーション
         settings.validate().map_err(ConfigError::ValidationErrors)?;
 
+        // ファイルマッチャーを構築（ワークスペースルートが設定されている場合のみ）
+        let file_matcher = workspace_root.as_ref().and_then(|root| {
+            match FileMatcher::new(root.clone(), &settings) {
+                Ok(matcher) => Some(matcher),
+                Err(e) => {
+                    tracing::warn!("Failed to build file matcher: {}", e);
+                    None
+                }
+            }
+        });
+
         // 設定を保存
         self.current_settings = settings;
         self.workspace_root = workspace_root;
+        self.file_matcher = file_matcher;
         tracing::debug!("Settings loaded successfully: {:?}", self.current_settings);
 
         Ok(())
@@ -86,6 +108,12 @@ impl ConfigManager {
     #[must_use]
     pub const fn workspace_root(&self) -> Option<&PathBuf> {
         self.workspace_root.as_ref()
+    }
+
+    /// ファイルマッチャーを取得
+    #[must_use]
+    pub const fn file_matcher(&self) -> Option<&FileMatcher> {
+        self.file_matcher.as_ref()
     }
 }
 

@@ -14,10 +14,6 @@ use futures::stream::{
     self,
     StreamExt,
 };
-use globset::{
-    Glob,
-    GlobSetBuilder,
-};
 use ignore::WalkBuilder;
 use tokio::sync::{
     Mutex,
@@ -167,16 +163,21 @@ impl WorkspaceIndexer {
             "Indexing workspace"
         );
 
-        let include_patterns = &settings.include_patterns;
-        let exclude_patterns = &settings.exclude_patterns;
+        // FileMatcher を使用してファイルを検索
+        let Some(file_matcher) = config_manager.file_matcher() else {
+            return Err(IndexerError::Error(
+                "FileMatcher not available (workspace root not set?)".to_string(),
+            ));
+        };
 
-        // ソースファイルをインデックス
-        let files = Self::find_source_files(workspace_path, include_patterns, exclude_patterns)?;
+        // ソースファイルを検索
+        let files =
+            Self::find_files(workspace_path, |path| file_matcher.is_source_file_relative(path));
 
         // 翻訳ファイルを検索（総ファイル数計算のため先に実行）
-        let translation_pattern = vec![settings.translation_files.file_pattern.clone()];
-        let translation_files =
-            Self::find_source_files(workspace_path, &translation_pattern, exclude_patterns)?;
+        let translation_files = Self::find_files(workspace_path, |path| {
+            file_matcher.is_translation_file_relative(path)
+        });
 
         // 総ファイル数と進捗カウンター
         #[allow(clippy::cast_possible_truncation)]
@@ -332,36 +333,15 @@ impl WorkspaceIndexer {
         result.ok().flatten()
     }
 
-    /// ソースファイルを検索
-    fn find_source_files(
-        workspace_path: &Path,
-        include_patterns: &[String],
-        exclude_patterns: &[String],
-    ) -> Result<Vec<PathBuf>, IndexerError> {
+    /// ファイルを検索
+    ///
+    /// ワークスペースを走査し、フィルタ関数を満たすファイルを返します。
+    /// フィルタ関数にはワークスペースルートからの相対パスが渡されます。
+    fn find_files<F>(workspace_path: &Path, filter: F) -> Vec<PathBuf>
+    where
+        F: Fn(&Path) -> bool,
+    {
         let mut found_files = Vec::new();
-        // Include パターンセットをビルド
-        let mut include_builder = GlobSetBuilder::new();
-        for pattern in include_patterns {
-            let glob = Glob::new(pattern).map_err(|e| {
-                IndexerError::Error(format!("Invalid include pattern '{pattern}': {e}"))
-            })?;
-            include_builder.add(glob);
-        }
-        let include_set = include_builder
-            .build()
-            .map_err(|e| IndexerError::Error(format!("Failed to build include patterns: {e}")))?;
-
-        // Exclude パターンセットをビルド
-        let mut exclude_builder = GlobSetBuilder::new();
-        for pattern in exclude_patterns {
-            let glob = Glob::new(pattern).map_err(|e| {
-                IndexerError::Error(format!("Invalid exclude pattern '{pattern}': {e}"))
-            })?;
-            exclude_builder.add(glob);
-        }
-        let exclude_set = exclude_builder
-            .build()
-            .map_err(|e| IndexerError::Error(format!("Failed to build exclude patterns: {e}")))?;
 
         // ignore クレートでファイルを走査
         for result in WalkBuilder::new(workspace_path)
@@ -391,14 +371,13 @@ impl WorkspaceIndexer {
             let Ok(relative_path) = path.strip_prefix(workspace_path) else {
                 continue;
             };
-            if !include_set.is_match(relative_path) || exclude_set.is_match(relative_path) {
-                continue;
-            }
 
-            found_files.push(path.to_path_buf());
+            if filter(relative_path) {
+                found_files.push(path.to_path_buf());
+            }
         }
 
-        Ok(found_files)
+        found_files
     }
 
     /// ファイル内容を更新
@@ -444,6 +423,7 @@ mod tests {
     use tower_lsp::lsp_types::Url;
 
     use super::*;
+    use crate::config::FileMatcher;
     use crate::db::I18nDatabaseImpl;
 
     // ========================================
@@ -537,12 +517,24 @@ mod tests {
     }
 
     // ========================================
-    // find_source_files テスト
+    // find_files テスト
     // ========================================
 
-    /// `find_source_files`: include パターンでファイルを選択
+    fn create_test_settings(
+        include: &[&str],
+        exclude: &[&str],
+        translation: &str,
+    ) -> crate::config::I18nSettings {
+        let mut settings = crate::config::I18nSettings::default();
+        settings.include_patterns = include.iter().map(|s| s.to_string()).collect();
+        settings.exclude_patterns = exclude.iter().map(|s| s.to_string()).collect();
+        settings.translation_files.file_pattern = translation.to_string();
+        settings
+    }
+
+    /// `find_files`: include パターンでファイルを選択
     #[rstest]
-    fn test_find_source_files_include_pattern() {
+    fn test_find_files_include_pattern() {
         let temp_dir = TempDir::new().unwrap();
 
         // テストファイルを作成
@@ -550,36 +542,39 @@ mod tests {
         fs::write(temp_dir.path().join("index.ts"), "").unwrap();
         fs::write(temp_dir.path().join("readme.md"), "").unwrap();
 
-        let files =
-            WorkspaceIndexer::find_source_files(temp_dir.path(), &["**/*.tsx".to_string()], &[])
-                .unwrap();
+        let settings = create_test_settings(&["**/*.tsx"], &[], "**/locales/**/*.json");
+        let matcher = FileMatcher::new(temp_dir.path().to_path_buf(), &settings).unwrap();
+
+        let files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
+            matcher.is_source_file_relative(path)
+        });
 
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("app.tsx"));
     }
 
-    /// `find_source_files`: 複数の include パターン
+    /// `find_files`: 複数の include パターン
     #[rstest]
-    fn test_find_source_files_multiple_include_patterns() {
+    fn test_find_files_multiple_include_patterns() {
         let temp_dir = TempDir::new().unwrap();
 
         fs::write(temp_dir.path().join("app.tsx"), "").unwrap();
         fs::write(temp_dir.path().join("index.ts"), "").unwrap();
         fs::write(temp_dir.path().join("readme.md"), "").unwrap();
 
-        let files = WorkspaceIndexer::find_source_files(
-            temp_dir.path(),
-            &["**/*.tsx".to_string(), "**/*.ts".to_string()],
-            &[],
-        )
-        .unwrap();
+        let settings = create_test_settings(&["**/*.tsx", "**/*.ts"], &[], "**/locales/**/*.json");
+        let matcher = FileMatcher::new(temp_dir.path().to_path_buf(), &settings).unwrap();
+
+        let files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
+            matcher.is_source_file_relative(path)
+        });
 
         assert_eq!(files.len(), 2);
     }
 
-    /// `find_source_files`: exclude パターンでファイルを除外
+    /// `find_files`: exclude パターンでファイルを除外
     #[rstest]
-    fn test_find_source_files_exclude_pattern() {
+    fn test_find_files_exclude_pattern() {
         let temp_dir = TempDir::new().unwrap();
 
         // node_modules ディレクトリを作成
@@ -587,20 +582,21 @@ mod tests {
         fs::write(temp_dir.path().join("node_modules/lib.tsx"), "").unwrap();
         fs::write(temp_dir.path().join("app.tsx"), "").unwrap();
 
-        let files = WorkspaceIndexer::find_source_files(
-            temp_dir.path(),
-            &["**/*.tsx".to_string()],
-            &["**/node_modules/**".to_string()],
-        )
-        .unwrap();
+        let settings =
+            create_test_settings(&["**/*.tsx"], &["**/node_modules/**"], "**/locales/**/*.json");
+        let matcher = FileMatcher::new(temp_dir.path().to_path_buf(), &settings).unwrap();
+
+        let files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
+            matcher.is_source_file_relative(path)
+        });
 
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("app.tsx"));
     }
 
-    /// `find_source_files`: ネストしたディレクトリ
+    /// `find_files`: ネストしたディレクトリ
     #[rstest]
-    fn test_find_source_files_nested_directories() {
+    fn test_find_files_nested_directories() {
         let temp_dir = TempDir::new().unwrap();
 
         // ネストしたディレクトリ構造を作成
@@ -608,56 +604,34 @@ mod tests {
         fs::write(temp_dir.path().join("src/index.tsx"), "").unwrap();
         fs::write(temp_dir.path().join("src/components/Button.tsx"), "").unwrap();
 
-        let files =
-            WorkspaceIndexer::find_source_files(temp_dir.path(), &["**/*.tsx".to_string()], &[])
-                .unwrap();
+        let settings = create_test_settings(&["**/*.tsx"], &[], "**/locales/**/*.json");
+        let matcher = FileMatcher::new(temp_dir.path().to_path_buf(), &settings).unwrap();
+
+        let files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
+            matcher.is_source_file_relative(path)
+        });
 
         assert_eq!(files.len(), 2);
     }
 
-    /// `find_source_files`: 空のディレクトリ
+    /// `find_files`: 空のディレクトリ
     #[rstest]
-    fn test_find_source_files_empty_directory() {
+    fn test_find_files_empty_directory() {
         let temp_dir = TempDir::new().unwrap();
 
-        let files =
-            WorkspaceIndexer::find_source_files(temp_dir.path(), &["**/*.tsx".to_string()], &[])
-                .unwrap();
+        let settings = create_test_settings(&["**/*.tsx"], &[], "**/locales/**/*.json");
+        let matcher = FileMatcher::new(temp_dir.path().to_path_buf(), &settings).unwrap();
+
+        let files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
+            matcher.is_source_file_relative(path)
+        });
 
         assert!(files.is_empty());
     }
 
-    /// `find_source_files`: 無効な include パターンでエラー
+    /// `find_files`: include と exclude の両方が適用される
     #[rstest]
-    fn test_find_source_files_invalid_include_pattern() {
-        let temp_dir = TempDir::new().unwrap();
-
-        let result = WorkspaceIndexer::find_source_files(
-            temp_dir.path(),
-            &["[invalid".to_string()], // 不正な glob パターン
-            &[],
-        );
-
-        assert!(result.is_err());
-    }
-
-    /// `find_source_files`: 無効な exclude パターンでエラー
-    #[rstest]
-    fn test_find_source_files_invalid_exclude_pattern() {
-        let temp_dir = TempDir::new().unwrap();
-
-        let result = WorkspaceIndexer::find_source_files(
-            temp_dir.path(),
-            &["**/*.tsx".to_string()],
-            &["[invalid".to_string()], // 不正な glob パターン
-        );
-
-        assert!(result.is_err());
-    }
-
-    /// `find_source_files`: include と exclude の両方が適用される
-    #[rstest]
-    fn test_find_source_files_include_and_exclude() {
+    fn test_find_files_include_and_exclude() {
         let temp_dir = TempDir::new().unwrap();
 
         fs::create_dir(temp_dir.path().join("src")).unwrap();
@@ -665,15 +639,35 @@ mod tests {
         fs::write(temp_dir.path().join("src/app.tsx"), "").unwrap();
         fs::write(temp_dir.path().join("test/app.test.tsx"), "").unwrap();
 
-        let files = WorkspaceIndexer::find_source_files(
-            temp_dir.path(),
-            &["**/*.tsx".to_string()],
-            &["**/test/**".to_string()],
-        )
-        .unwrap();
+        let settings = create_test_settings(&["**/*.tsx"], &["**/test/**"], "**/locales/**/*.json");
+        let matcher = FileMatcher::new(temp_dir.path().to_path_buf(), &settings).unwrap();
+
+        let files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
+            matcher.is_source_file_relative(path)
+        });
 
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("src/app.tsx"));
+    }
+
+    /// `find_files`: 翻訳ファイルを検索
+    #[rstest]
+    fn test_find_files_translation_files() {
+        let temp_dir = TempDir::new().unwrap();
+
+        fs::create_dir_all(temp_dir.path().join("locales")).unwrap();
+        fs::write(temp_dir.path().join("locales/en.json"), "{}").unwrap();
+        fs::write(temp_dir.path().join("locales/ja.json"), "{}").unwrap();
+        fs::write(temp_dir.path().join("package.json"), "{}").unwrap();
+
+        let settings = create_test_settings(&["**/*.tsx"], &[], "**/locales/**/*.json");
+        let matcher = FileMatcher::new(temp_dir.path().to_path_buf(), &settings).unwrap();
+
+        let files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
+            matcher.is_translation_file_relative(path)
+        });
+
+        assert_eq!(files.len(), 2);
     }
 
     // ========================================
