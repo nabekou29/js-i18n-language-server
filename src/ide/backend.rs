@@ -944,3 +944,159 @@ pub fn resolve_effective_language(
     // 3. 最初に見つかった言語
     available_languages.first().cloned()
 }
+
+/// 翻訳から言語リストを取得しソートする
+///
+/// ソート順:
+/// 1. `current_language`（設定されている場合）
+/// 2. `primary_languages`（設定順）
+/// 3. その他（アルファベット順）
+///
+/// # Arguments
+/// * `db` - Salsa データベース
+/// * `translations` - 翻訳データのリスト
+/// * `current_language` - 現在選択されている言語
+/// * `primary_languages` - 優先言語のリスト
+///
+/// # Returns
+/// ソートされた言語リスト
+#[must_use]
+pub fn collect_sorted_languages(
+    db: &dyn crate::db::I18nDatabase,
+    translations: &[crate::input::translation::Translation],
+    current_language: Option<&str>,
+    primary_languages: Option<&[String]>,
+) -> Vec<String> {
+    let languages: std::collections::HashSet<String> =
+        translations.iter().map(|t| t.language(db)).collect();
+    sort_languages(languages, current_language, primary_languages)
+}
+
+/// 言語リストをソートする
+///
+/// ソート順:
+/// 1. `current_language`（設定されている場合）
+/// 2. `primary_languages`（設定順）
+/// 3. その他（アルファベット順）
+fn sort_languages(
+    languages: std::collections::HashSet<String>,
+    current_language: Option<&str>,
+    primary_languages: Option<&[String]>,
+) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut remaining: std::collections::HashSet<_> = languages;
+
+    // 1. current_language を最初に
+    if let Some(current) = current_language
+        && remaining.remove(current)
+    {
+        result.push(current.to_string());
+    }
+
+    // 2. primary_languages を順番に
+    if let Some(primaries) = primary_languages {
+        for primary in primaries {
+            if remaining.remove(primary) {
+                result.push(primary.clone());
+            }
+        }
+    }
+
+    // 3. 残りをアルファベット順
+    let mut others: Vec<_> = remaining.into_iter().collect();
+    others.sort();
+    result.extend(others);
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use rstest::rstest;
+
+    use super::sort_languages;
+
+    /// 期待する言語リストを作成するヘルパー
+    fn langs(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[rstest]
+    fn sort_languages_no_priority() {
+        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+
+        let result = sort_languages(languages, None, None);
+
+        // アルファベット順
+        assert_eq!(result, langs(&["en", "ja", "zh"]));
+    }
+
+    #[rstest]
+    fn sort_languages_with_current_language() {
+        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+
+        let result = sort_languages(languages, Some("ja"), None);
+
+        // ja が最初、残りはアルファベット順
+        assert_eq!(result, langs(&["ja", "en", "zh"]));
+    }
+
+    #[rstest]
+    fn sort_languages_with_primary_languages() {
+        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let primaries = langs(&["zh", "ja"]);
+
+        let result = sort_languages(languages, None, Some(&primaries));
+
+        // zh, ja の順、残りはアルファベット順
+        assert_eq!(result, langs(&["zh", "ja", "en"]));
+    }
+
+    #[rstest]
+    fn sort_languages_current_overrides_primary() {
+        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let primaries = langs(&["zh", "ja"]);
+
+        let result = sort_languages(languages, Some("en"), Some(&primaries));
+
+        // en（current）が最初、次に zh, ja（primary）、残りはアルファベット順
+        assert_eq!(result, langs(&["en", "zh", "ja"]));
+    }
+
+    #[rstest]
+    fn sort_languages_current_in_primary_no_duplicate() {
+        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let primaries = langs(&["ja", "zh"]);
+
+        // current_language が primary にも含まれている場合
+        let result = sort_languages(languages, Some("ja"), Some(&primaries));
+
+        // ja は current として最初に来る、primary の ja はスキップされる
+        assert_eq!(result, langs(&["ja", "zh", "en"]));
+    }
+
+    #[rstest]
+    fn sort_languages_nonexistent_current_ignored() {
+        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+
+        // 存在しない言語を current_language に指定
+        let result = sort_languages(languages, Some("fr"), None);
+
+        // fr は無視され、アルファベット順
+        assert_eq!(result, langs(&["en", "ja", "zh"]));
+    }
+
+    #[rstest]
+    fn sort_languages_nonexistent_primary_ignored() {
+        let languages: HashSet<String> = ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
+        let primaries = langs(&["fr", "de"]);
+
+        // 存在しない言語を primary_languages に指定
+        let result = sort_languages(languages, None, Some(&primaries));
+
+        // fr, de は無視され、アルファベット順
+        assert_eq!(result, langs(&["en", "ja", "zh"]));
+    }
+}
