@@ -12,6 +12,9 @@ pub mod ir;
 pub mod syntax;
 pub mod types;
 
+#[cfg(test)]
+mod test_utils;
+
 // Backend と ServerState を再エクスポート
 pub use ide::backend::Backend;
 pub use ide::state::ServerState;
