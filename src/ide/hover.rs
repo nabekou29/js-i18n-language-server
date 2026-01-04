@@ -14,6 +14,12 @@ const MAX_NESTED_KEYS_DISPLAY: usize = 5;
 
 /// Generate hover content for a translation key
 ///
+/// # ソート順
+/// 言語は以下の順序でソートされます：
+/// 1. `current_language`（設定されている場合）
+/// 2. `primary_languages`（設定順）
+/// 3. その他（アルファベット順）
+///
 /// # 逆方向 prefix マッチ
 /// 完全一致がない場合、子キー（例: `nested.key`）のリストを表示します。
 /// これにより `t('nested')` で `nested.key` がある場合もホバー情報を表示できます。
@@ -22,6 +28,8 @@ pub fn generate_hover_content(
     key: TransKey<'_>,
     translations: &[Translation],
     key_separator: &str,
+    current_language: Option<&str>,
+    primary_languages: Option<&[String]>,
 ) -> Option<String> {
     let key_text = key.text(db);
 
@@ -57,8 +65,8 @@ pub fn generate_hover_content(
     // Format as markdown
     let mut content = format!("**Translation Key:** `{key_text}`\n\n");
 
-    // Sort by language code
-    translations_found.sort_by(|a, b| a.0.cmp(&b.0));
+    // Sort by priority: current_language → primary_languages → alphabetical
+    sort_translations_by_priority(&mut translations_found, current_language, primary_languages);
 
     for (language, value) in translations_found {
         let _ = writeln!(content, "**{language}**: {value}");
@@ -104,6 +112,46 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
+/// 翻訳結果を優先度順にソート
+///
+/// ソート順:
+/// 1. `current_language`（設定されている場合）
+/// 2. `primary_languages`（設定順）
+/// 3. その他（アルファベット順）
+fn sort_translations_by_priority(
+    translations: &mut [(String, String)],
+    current_language: Option<&str>,
+    primary_languages: Option<&[String]>,
+) {
+    translations.sort_by(|a, b| {
+        let priority_a = get_language_priority(&a.0, current_language, primary_languages);
+        let priority_b = get_language_priority(&b.0, current_language, primary_languages);
+        priority_a.cmp(&priority_b)
+    });
+}
+
+/// 言語の優先度を計算（小さいほど高優先度）
+fn get_language_priority(
+    lang: &str,
+    current_language: Option<&str>,
+    primary_languages: Option<&[String]>,
+) -> (usize, String) {
+    // current_language は最高優先度 (0)
+    if current_language.is_some_and(|c| c == lang) {
+        return (0, String::new());
+    }
+
+    // primary_languages は設定順 (1, 2, 3, ...)
+    if let Some(primaries) = primary_languages
+        && let Some(pos) = primaries.iter().position(|p| p == lang)
+    {
+        return (1 + pos, String::new());
+    }
+
+    // その他はアルファベット順（優先度を最大にして、言語コードでソート）
+    (usize::MAX, lang.to_string())
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -114,24 +162,7 @@ mod tests {
 
     use super::*;
     use crate::db::I18nDatabaseImpl;
-
-    /// テスト用の Translation を作成するヘルパー関数
-    fn create_translation(
-        db: &I18nDatabaseImpl,
-        language: &str,
-        file_path: &str,
-        keys: HashMap<String, String>,
-    ) -> Translation {
-        Translation::new(
-            db,
-            language.to_string(),
-            file_path.to_string(),
-            keys,
-            "{}".to_string(), // raw_content (テストでは使用しない)
-            HashMap::new(),   // key_ranges (テストでは使用しない)
-            HashMap::new(),   // value_ranges (テストでは使用しない)
-        )
-    }
+    use crate::test_utils::create_translation;
 
     #[rstest]
     fn generate_hover_content_with_single_translation() {
@@ -147,7 +178,7 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".");
+        let content = generate_hover_content(&db, key, &translations, ".", None, None);
 
         assert_that!(content, some(contains_substring("**Translation Key:** `common.hello`")));
         assert_that!(content.as_ref().unwrap(), contains_substring("**en**: Hello"));
@@ -175,7 +206,8 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations = vec![ja_translation, en_translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".").unwrap();
+        // ソート優先度なしの場合はアルファベット順
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
         // キーが含まれている
         assert_that!(content, contains_substring("**Translation Key:** `common.hello`"));
@@ -205,7 +237,7 @@ mod tests {
         let key = TransKey::new(&db, "nonexistent.key".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".");
+        let content = generate_hover_content(&db, key, &translations, ".", None, None);
 
         assert_that!(content, none());
     }
@@ -217,7 +249,7 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations: Vec<Translation> = vec![];
 
-        let content = generate_hover_content(&db, key, &translations, ".");
+        let content = generate_hover_content(&db, key, &translations, ".", None, None);
 
         assert_that!(content, none());
     }
@@ -244,7 +276,7 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations = vec![en_translation, ja_translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".").unwrap();
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
         // en のみ含まれている
         assert_that!(content, contains_substring("**en**: Hello"));
@@ -269,7 +301,7 @@ mod tests {
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".").unwrap();
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
         // キーが含まれている
         assert_that!(content, contains_substring("**Translation Key:** `nested`"));
@@ -298,7 +330,7 @@ mod tests {
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".").unwrap();
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
         // アルファベット順にソートされている
         let alpha_pos = content.find("`.alpha`").unwrap();
@@ -325,7 +357,7 @@ mod tests {
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".").unwrap();
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
         // 値が切り詰められて "..." が付いている
         assert_that!(content, contains_substring("..."));
@@ -355,7 +387,7 @@ mod tests {
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".").unwrap();
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
         // "... and 1 more" が表示される
         assert_that!(content, contains_substring("... and 1 more"));
@@ -374,5 +406,126 @@ mod tests {
         // ちょうど制限と同じ
         let result3 = truncate_string("hello", 5);
         assert_that!(result3.as_str(), eq("hello"));
+    }
+
+    #[rstest]
+    fn generate_hover_content_with_current_language_priority() {
+        let db = I18nDatabaseImpl::default();
+
+        // 3つの言語（アルファベット順: en, ja, zh）
+        let en_translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([("key".to_string(), "English".to_string())]),
+        );
+        let ja_translation = create_translation(
+            &db,
+            "ja",
+            "/test/locales/ja.json",
+            HashMap::from([("key".to_string(), "日本語".to_string())]),
+        );
+        let zh_translation = create_translation(
+            &db,
+            "zh",
+            "/test/locales/zh.json",
+            HashMap::from([("key".to_string(), "中文".to_string())]),
+        );
+
+        let key = TransKey::new(&db, "key".to_string());
+        let translations = vec![en_translation, ja_translation, zh_translation];
+
+        // current_language = "ja" を指定
+        let content =
+            generate_hover_content(&db, key, &translations, ".", Some("ja"), None).unwrap();
+
+        // ja が最初に表示される
+        let ja_pos = content.find("**ja**").unwrap();
+        let en_pos = content.find("**en**").unwrap();
+        let zh_pos = content.find("**zh**").unwrap();
+        assert_that!(ja_pos, lt(en_pos));
+        assert_that!(ja_pos, lt(zh_pos));
+        // 残りはアルファベット順
+        assert_that!(en_pos, lt(zh_pos));
+    }
+
+    #[rstest]
+    fn generate_hover_content_with_primary_languages() {
+        let db = I18nDatabaseImpl::default();
+
+        let en_translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([("key".to_string(), "English".to_string())]),
+        );
+        let ja_translation = create_translation(
+            &db,
+            "ja",
+            "/test/locales/ja.json",
+            HashMap::from([("key".to_string(), "日本語".to_string())]),
+        );
+        let zh_translation = create_translation(
+            &db,
+            "zh",
+            "/test/locales/zh.json",
+            HashMap::from([("key".to_string(), "中文".to_string())]),
+        );
+
+        let key = TransKey::new(&db, "key".to_string());
+        let translations = vec![en_translation, ja_translation, zh_translation];
+
+        // primary_languages = ["zh", "ja"] を指定
+        let primary = vec!["zh".to_string(), "ja".to_string()];
+        let content =
+            generate_hover_content(&db, key, &translations, ".", None, Some(&primary)).unwrap();
+
+        // zh, ja, en の順で表示される
+        let zh_pos = content.find("**zh**").unwrap();
+        let ja_pos = content.find("**ja**").unwrap();
+        let en_pos = content.find("**en**").unwrap();
+        assert_that!(zh_pos, lt(ja_pos));
+        assert_that!(ja_pos, lt(en_pos));
+    }
+
+    #[rstest]
+    fn generate_hover_content_current_overrides_primary() {
+        let db = I18nDatabaseImpl::default();
+
+        let en_translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([("key".to_string(), "English".to_string())]),
+        );
+        let ja_translation = create_translation(
+            &db,
+            "ja",
+            "/test/locales/ja.json",
+            HashMap::from([("key".to_string(), "日本語".to_string())]),
+        );
+        let zh_translation = create_translation(
+            &db,
+            "zh",
+            "/test/locales/zh.json",
+            HashMap::from([("key".to_string(), "中文".to_string())]),
+        );
+
+        let key = TransKey::new(&db, "key".to_string());
+        let translations = vec![en_translation, ja_translation, zh_translation];
+
+        // current_language = "en", primary_languages = ["zh", "ja"]
+        // current が最優先
+        let primary = vec!["zh".to_string(), "ja".to_string()];
+        let content =
+            generate_hover_content(&db, key, &translations, ".", Some("en"), Some(&primary))
+                .unwrap();
+
+        // en, zh, ja の順で表示される
+        let en_pos = content.find("**en**").unwrap();
+        let zh_pos = content.find("**zh**").unwrap();
+        let ja_pos = content.find("**ja**").unwrap();
+        assert_that!(en_pos, lt(zh_pos));
+        assert_that!(zh_pos, lt(ja_pos));
     }
 }

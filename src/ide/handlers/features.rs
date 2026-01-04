@@ -83,20 +83,16 @@ pub async fn handle_completion(
         if context.partial_key.is_empty() { None } else { Some(context.partial_key.as_str()) };
 
     // 有効な言語を決定（currentLanguage → primaryLanguages → 最初の言語）
-    let available_languages: Vec<String> = translations
-        .iter()
-        .map(|t| t.language(&*db))
-        .collect::<std::collections::HashSet<_>>()
-        .into_iter()
-        .collect();
     let current_language = backend.state.current_language.lock().await.clone();
     let primary_languages =
         backend.config_manager.lock().await.get_settings().primary_languages.clone();
-    let effective_language = crate::ide::backend::resolve_effective_language(
+    let sorted_languages = crate::ide::backend::collect_sorted_languages(
+        &*db,
+        &translations,
         current_language.as_deref(),
         primary_languages.as_deref(),
-        &available_languages,
     );
+    let effective_language = sorted_languages.first().cloned();
 
     let items = crate::ide::completion::generate_completions(
         &*db,
@@ -144,12 +140,24 @@ pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Opti
 
     // 翻訳内容を取得
     let hover_text = {
-        let key_separator =
-            backend.config_manager.lock().await.get_settings().key_separator.clone();
+        let config = backend.config_manager.lock().await;
+        let settings = config.get_settings();
+        let key_separator = settings.key_separator.clone();
+        let primary_languages = settings.primary_languages.clone();
+        drop(config);
+
+        let current_language = backend.state.current_language.lock().await.clone();
         let db = backend.state.db.lock().await;
         let key = crate::interned::TransKey::new(&*db, key_text.clone());
         let translations = backend.state.translations.lock().await;
-        crate::ide::hover::generate_hover_content(&*db, key, &translations, &key_separator)
+        crate::ide::hover::generate_hover_content(
+            &*db,
+            key,
+            &translations,
+            &key_separator,
+            current_language.as_deref(),
+            primary_languages.as_deref(),
+        )
     };
 
     let Some(hover_text) = hover_text else {
