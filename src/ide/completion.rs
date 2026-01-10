@@ -1,5 +1,7 @@
 //! Completion implementation
 
+use std::collections::HashMap;
+
 use tower_lsp::lsp_types::{
     CompletionItem,
     CompletionItemKind,
@@ -74,8 +76,7 @@ pub fn generate_completions(
     key_separator: &str,
 ) -> Vec<CompletionItem> {
     let mut completion_items = Vec::new();
-    let mut key_translations: std::collections::HashMap<String, Vec<(String, String)>> =
-        std::collections::HashMap::new();
+    let mut key_translations: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
     // key_prefix + partial_key で検索するフルパターンを構築
     let full_partial = match (key_prefix, partial_key) {

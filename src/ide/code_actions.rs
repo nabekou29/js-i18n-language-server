@@ -1,6 +1,5 @@
 //! Code Action 生成モジュール
 
-use std::cmp::Ordering;
 use std::collections::HashSet;
 
 use jsonc_parser::ParseOptions;
@@ -92,16 +91,8 @@ pub fn generate_code_actions(
         })
         .collect();
 
-    // ソート: primary > missing > others
-    languages.sort_by(|a, b| match (a.1, b.1) {
-        (true, false) => Ordering::Less,
-        (false, true) => Ordering::Greater,
-        _ => match (a.2, b.2) {
-            (true, false) => Ordering::Less,
-            (false, true) => Ordering::Greater,
-            _ => Ordering::Equal,
-        },
-    });
+    // ソート: primary > missing > others（タプル比較で降順）
+    languages.sort_by(|a, b| (b.1, b.2).cmp(&(a.1, a.2)));
 
     languages
         .into_iter()
