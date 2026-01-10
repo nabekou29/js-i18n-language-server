@@ -149,30 +149,54 @@ fn sort_translations_by_priority(
     translations.sort_by(|a, b| {
         let priority_a = get_language_priority(&a.0, current_language, primary_languages);
         let priority_b = get_language_priority(&b.0, current_language, primary_languages);
-        priority_a.cmp(&priority_b)
+
+        match (priority_a, priority_b) {
+            (LanguagePriority::Current, LanguagePriority::Current) => std::cmp::Ordering::Equal,
+            (LanguagePriority::Current, _) => std::cmp::Ordering::Less,
+            (_, LanguagePriority::Current) => std::cmp::Ordering::Greater,
+            (LanguagePriority::Primary(a_idx), LanguagePriority::Primary(b_idx)) => {
+                a_idx.cmp(&b_idx)
+            }
+            (LanguagePriority::Primary(_), _) => std::cmp::Ordering::Less,
+            (_, LanguagePriority::Primary(_)) => std::cmp::Ordering::Greater,
+            (LanguagePriority::Other(a_lang), LanguagePriority::Other(b_lang)) => {
+                a_lang.cmp(b_lang)
+            }
+        }
     });
 }
 
-/// 言語の優先度を計算（小さいほど高優先度）
-fn get_language_priority(
-    lang: &str,
+/// Language priority for sorting
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LanguagePriority<'a> {
+    /// Current language (highest priority)
+    Current,
+    /// Primary language with its position index
+    Primary(usize),
+    /// Other language (sorted alphabetically)
+    Other(&'a str),
+}
+
+/// 言語の優先度を計算
+fn get_language_priority<'a>(
+    lang: &'a str,
     current_language: Option<&str>,
     primary_languages: Option<&[String]>,
-) -> (usize, String) {
-    // current_language は最高優先度 (0)
+) -> LanguagePriority<'a> {
+    // current_language は最高優先度
     if current_language.is_some_and(|c| c == lang) {
-        return (0, String::new());
+        return LanguagePriority::Current;
     }
 
-    // primary_languages は設定順 (1, 2, 3, ...)
+    // primary_languages は設定順
     if let Some(primaries) = primary_languages
         && let Some(pos) = primaries.iter().position(|p| p == lang)
     {
-        return (1 + pos, String::new());
+        return LanguagePriority::Primary(pos);
     }
 
-    // その他はアルファベット順（優先度を最大にして、言語コードでソート）
-    (usize::MAX, lang.to_string())
+    // その他はアルファベット順
+    LanguagePriority::Other(lang)
 }
 
 #[cfg(test)]
