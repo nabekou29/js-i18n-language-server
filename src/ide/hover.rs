@@ -3,6 +3,7 @@
 use std::fmt::Write as _;
 
 use crate::db::I18nDatabase;
+use crate::ide::plural::find_plural_variants;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
 
@@ -46,6 +47,14 @@ pub fn generate_hover_content(
             continue;
         }
 
+        // plural バリアントをチェック
+        let plural_variants = find_plural_variants(key_text, keys);
+        if !plural_variants.is_empty() {
+            let formatted = format_plural_variants(&plural_variants, key_text);
+            translations_found.push((language, formatted));
+            continue;
+        }
+
         // 逆方向 prefix マッチ：子キーを収集
         let prefix = format!("{key_text}{key_separator}");
         let nested_keys: Vec<_> = keys.iter().filter(|(k, _)| k.starts_with(&prefix)).collect();
@@ -73,6 +82,20 @@ pub fn generate_hover_content(
     }
 
     Some(content)
+}
+
+/// plural バリアントをフォーマットして表示用文字列を生成
+fn format_plural_variants(variants: &[(&str, &str)], base_key: &str) -> String {
+    let mut result = String::from("(plural)\n");
+
+    for (key, value) in variants {
+        // ベースキーを除いた suffix 部分のみ表示
+        let suffix = key.strip_prefix(base_key).unwrap_or(key);
+        let truncated_value = truncate_string(value, MAX_NESTED_VALUE_LENGTH);
+        let _ = writeln!(result, "  `{suffix}`: {truncated_value}");
+    }
+
+    result.trim_end().to_string()
 }
 
 /// 子キーをフォーマットして表示用文字列を生成
@@ -527,5 +550,91 @@ mod tests {
         let ja_pos = content.find("**ja**").unwrap();
         assert_that!(en_pos, lt(zh_pos));
         assert_that!(zh_pos, lt(ja_pos));
+    }
+
+    #[rstest]
+    fn generate_hover_content_with_plural_variants() {
+        let db = I18nDatabaseImpl::default();
+
+        // "items" キーは存在せず、"items_one" と "items_other" が存在
+        let translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([
+                ("items_one".to_string(), "{{count}} item".to_string()),
+                ("items_other".to_string(), "{{count}} items".to_string()),
+            ]),
+        );
+
+        let key = TransKey::new(&db, "items".to_string());
+        let translations = vec![translation];
+
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+
+        // キーが含まれている
+        assert_that!(content, contains_substring("**Translation Key:** `items`"));
+
+        // plural バリアントが表示されている
+        assert_that!(content, contains_substring("(plural)"));
+        assert_that!(content, contains_substring("`_one`: {{count}} item"));
+        assert_that!(content, contains_substring("`_other`: {{count}} items"));
+    }
+
+    #[rstest]
+    fn generate_hover_content_with_ordinal_plural_variants() {
+        let db = I18nDatabaseImpl::default();
+
+        // ordinal suffix のテスト
+        let translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([
+                ("place_ordinal_one".to_string(), "{{count}}st".to_string()),
+                ("place_ordinal_two".to_string(), "{{count}}nd".to_string()),
+                ("place_ordinal_few".to_string(), "{{count}}rd".to_string()),
+                ("place_ordinal_other".to_string(), "{{count}}th".to_string()),
+            ]),
+        );
+
+        let key = TransKey::new(&db, "place".to_string());
+        let translations = vec![translation];
+
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+
+        // plural バリアントが表示されている
+        assert_that!(content, contains_substring("(plural)"));
+        assert_that!(content, contains_substring("`_ordinal_one`: {{count}}st"));
+        assert_that!(content, contains_substring("`_ordinal_two`: {{count}}nd"));
+        assert_that!(content, contains_substring("`_ordinal_few`: {{count}}rd"));
+        assert_that!(content, contains_substring("`_ordinal_other`: {{count}}th"));
+    }
+
+    #[rstest]
+    fn generate_hover_content_exact_match_over_plural() {
+        let db = I18nDatabaseImpl::default();
+
+        // "items" キーが完全一致で存在する場合は plural より優先
+        let translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([
+                ("items".to_string(), "Items (exact)".to_string()),
+                ("items_one".to_string(), "{{count}} item".to_string()),
+                ("items_other".to_string(), "{{count}} items".to_string()),
+            ]),
+        );
+
+        let key = TransKey::new(&db, "items".to_string());
+        let translations = vec![translation];
+
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+
+        // 完全一致の値が表示される
+        assert_that!(content, contains_substring("**en**: Items (exact)"));
+        // plural バリアントは表示されない
+        assert_that!(content, not(contains_substring("(plural)")));
     }
 }

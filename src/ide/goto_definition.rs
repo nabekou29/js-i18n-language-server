@@ -3,6 +3,7 @@
 use tower_lsp::lsp_types::Location;
 
 use crate::db::I18nDatabase;
+use crate::ide::plural::PLURAL_SUFFIXES;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
 
@@ -35,6 +36,23 @@ pub fn find_definitions(
         // Check if this key exists in this translation file
         if let Some(range) = key_ranges.get(key_text.as_str()) {
             // Create URI from file path
+            let file_path = translation.file_path(db);
+            let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) else {
+                tracing::warn!("Failed to create URI from file path: {}", file_path);
+                continue;
+            };
+
+            locations.push(Location { uri, range: (*range).into() });
+            continue;
+        }
+
+        // plural バリアントへのフォールバック
+        let plural_range = PLURAL_SUFFIXES.iter().find_map(|suffix| {
+            let variant_key = format!("{key_text}{suffix}");
+            key_ranges.get(&variant_key)
+        });
+
+        if let Some(range) = plural_range {
             let file_path = translation.file_path(db);
             let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) else {
                 tracing::warn!("Failed to create URI from file path: {}", file_path);
@@ -301,5 +319,153 @@ mod tests {
         assert_that!(lsp_range.start.character, eq(10));
         assert_that!(lsp_range.end.line, eq(5));
         assert_that!(lsp_range.end.character, eq(25));
+    }
+
+    #[rstest]
+    fn find_definitions_fallback_to_plural_variant() {
+        let db = I18nDatabaseImpl::default();
+
+        // "items" キーは存在せず、"items_one" と "items_other" のみ存在
+        let mut key_ranges = HashMap::new();
+        key_ranges.insert(
+            "items_one".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 1, character: 2 },
+                end: SourcePosition { line: 1, character: 13 },
+            },
+        );
+        key_ranges.insert(
+            "items_other".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 2, character: 2 },
+                end: SourcePosition { line: 2, character: 15 },
+            },
+        );
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/locales/en.json".to_string(),
+            HashMap::from([
+                ("items_one".to_string(), "{{count}} item".to_string()),
+                ("items_other".to_string(), "{{count}} items".to_string()),
+            ]),
+            r#"{"items_one": "{{count}} item", "items_other": "{{count}} items"}"#.to_string(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        // "items" で検索すると、最初の plural バリアントの位置にジャンプ
+        let key = TransKey::new(&db, "items".to_string());
+        let translations = vec![translation];
+
+        let locations = find_definitions(&db, key, &translations, ".");
+
+        // plural バリアントの位置が返される（_zero, _one, _two... の順で最初にマッチする _one）
+        assert_that!(locations.len(), eq(1));
+        assert_that!(locations[0].uri.path(), ends_with("en.json"));
+        assert_that!(locations[0].range.start.line, eq(1)); // items_one の行
+    }
+
+    #[rstest]
+    fn find_definitions_fallback_to_ordinal_plural_variant() {
+        let db = I18nDatabaseImpl::default();
+
+        // "place" キーは存在せず、ordinal バリアントのみ存在
+        let mut key_ranges = HashMap::new();
+        key_ranges.insert(
+            "place_ordinal_one".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 1, character: 2 },
+                end: SourcePosition { line: 1, character: 19 },
+            },
+        );
+        key_ranges.insert(
+            "place_ordinal_other".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 2, character: 2 },
+                end: SourcePosition { line: 2, character: 21 },
+            },
+        );
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/locales/en.json".to_string(),
+            HashMap::from([
+                ("place_ordinal_one".to_string(), "{{count}}st".to_string()),
+                ("place_ordinal_other".to_string(), "{{count}}th".to_string()),
+            ]),
+            r#"{"place_ordinal_one": "{{count}}st", "place_ordinal_other": "{{count}}th"}"#
+                .to_string(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        // "place" で検索すると、ordinal plural バリアントの位置にジャンプ
+        let key = TransKey::new(&db, "place".to_string());
+        let translations = vec![translation];
+
+        let locations = find_definitions(&db, key, &translations, ".");
+
+        // ordinal バリアントの位置が返される
+        assert_that!(locations.len(), eq(1));
+        assert_that!(locations[0].uri.path(), ends_with("en.json"));
+        // _ordinal_zero, _ordinal_one... の順で最初にマッチする _ordinal_one
+        assert_that!(locations[0].range.start.line, eq(1));
+    }
+
+    #[rstest]
+    fn find_definitions_exact_match_over_plural() {
+        let db = I18nDatabaseImpl::default();
+
+        // "items" キーと plural バリアントの両方が存在
+        let mut key_ranges = HashMap::new();
+        key_ranges.insert(
+            "items".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 0, character: 2 },
+                end: SourcePosition { line: 0, character: 9 },
+            },
+        );
+        key_ranges.insert(
+            "items_one".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 1, character: 2 },
+                end: SourcePosition { line: 1, character: 13 },
+            },
+        );
+        key_ranges.insert(
+            "items_other".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 2, character: 2 },
+                end: SourcePosition { line: 2, character: 15 },
+            },
+        );
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            "/test/locales/en.json".to_string(),
+            HashMap::from([
+                ("items".to_string(), "Items (exact)".to_string()),
+                ("items_one".to_string(), "{{count}} item".to_string()),
+                ("items_other".to_string(), "{{count}} items".to_string()),
+            ]),
+            r#"{"items": "Items (exact)", "items_one": "{{count}} item"}"#.to_string(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        // "items" で検索すると、完全一致の位置にジャンプ
+        let key = TransKey::new(&db, "items".to_string());
+        let translations = vec![translation];
+
+        let locations = find_definitions(&db, key, &translations, ".");
+
+        // 完全一致の位置が返される
+        assert_that!(locations.len(), eq(1));
+        assert_that!(locations[0].range.start.line, eq(0));
+        assert_that!(locations[0].range.start.character, eq(2));
     }
 }

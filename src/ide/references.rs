@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::Location;
 
 use crate::db::I18nDatabase;
+use crate::ide::plural::get_plural_base_key;
 use crate::input::source::SourceFile;
 use crate::interned::TransKey;
 use crate::syntax::analyze_source;
@@ -18,6 +19,11 @@ use crate::syntax::analyze_source;
 /// * `source_files` - Map of all source files (`PathBuf` -> `SourceFile`)
 /// * `key_separator` - キーの区切り文字
 ///
+/// # plural suffix 対応
+/// キーが plural suffix を持つ場合（例: `items_one`）、ベースキー（`items`）での
+/// 呼び出しも参照として検出します。i18next では `t("items", { count: n })` と
+/// 呼び出すと内部で `items_one` などに解決されるためです。
+///
 /// # Returns
 /// List of locations where the key is used
 pub fn find_references<S: std::hash::BuildHasher>(
@@ -27,6 +33,7 @@ pub fn find_references<S: std::hash::BuildHasher>(
     key_separator: &str,
 ) -> Vec<Location> {
     let key_text = key.text(db);
+    let base_key = get_plural_base_key(key_text);
     let mut locations = Vec::new();
 
     // Iterate through all source files
@@ -37,7 +44,13 @@ pub fn find_references<S: std::hash::BuildHasher>(
         // Filter usages that match the target key
         for usage in usages {
             let usage_key = usage.key(db);
-            if usage_key.text(db) == key_text {
+            let usage_key_text = usage_key.text(db);
+
+            // 完全一致、または plural のベースキーが一致
+            let is_match =
+                usage_key_text == key_text || base_key.is_some_and(|bk| usage_key_text == bk);
+
+            if is_match {
                 // Convert to LSP Location
                 let range = usage.range(db);
                 let uri = source_file.uri(db);
@@ -183,5 +196,83 @@ mod tests {
 
         // 一致なし
         expect_that!(locations, is_empty());
+    }
+
+    #[googletest::test]
+    fn test_find_references_plural_suffix() {
+        let db = I18nDatabaseImpl::default();
+
+        // ソースコードでは t("items") と呼び出し
+        let source_code = r#"
+            const msg1 = t("items");
+            const msg2 = t("items_one");
+        "#;
+        let source_file = SourceFile::new(
+            &db,
+            "file:///test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut source_files = HashMap::new();
+        source_files.insert(PathBuf::from("/test.ts"), source_file);
+
+        // "items_one" キーで参照を検索
+        let key = TransKey::new(&db, "items_one".to_string());
+        let locations = find_references(&db, key, &source_files, ".");
+
+        // t("items") と t("items_one") の両方がヒットする
+        expect_that!(locations.len(), eq(2));
+    }
+
+    #[googletest::test]
+    fn test_find_references_ordinal_plural_suffix() {
+        let db = I18nDatabaseImpl::default();
+
+        // ソースコードでは t("place") と呼び出し
+        let source_code = r#"const msg = t("place");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "file:///test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut source_files = HashMap::new();
+        source_files.insert(PathBuf::from("/test.ts"), source_file);
+
+        // "place_ordinal_one" キーで参照を検索
+        let key = TransKey::new(&db, "place_ordinal_one".to_string());
+        let locations = find_references(&db, key, &source_files, ".");
+
+        // t("place") がヒットする
+        expect_that!(locations.len(), eq(1));
+    }
+
+    #[googletest::test]
+    fn test_find_references_base_key_no_extra_matches() {
+        let db = I18nDatabaseImpl::default();
+
+        // ソースコードでは t("items") と t("other") を呼び出し
+        let source_code = r#"
+            const msg1 = t("items");
+            const msg2 = t("other");
+        "#;
+        let source_file = SourceFile::new(
+            &db,
+            "file:///test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut source_files = HashMap::new();
+        source_files.insert(PathBuf::from("/test.ts"), source_file);
+
+        // "items" キーで参照を検索（plural suffix なし）
+        let key = TransKey::new(&db, "items".to_string());
+        let locations = find_references(&db, key, &source_files, ".");
+
+        // t("items") のみがヒット（t("other") はヒットしない）
+        expect_that!(locations.len(), eq(1));
     }
 }

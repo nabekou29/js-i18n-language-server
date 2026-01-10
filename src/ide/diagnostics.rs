@@ -10,6 +10,10 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::db::I18nDatabase;
+use crate::ide::plural::{
+    get_plural_base_key,
+    has_plural_variants,
+};
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 use crate::syntax::analyze_source;
@@ -201,13 +205,20 @@ pub fn generate_unused_key_diagnostics(
     diagnostics
 }
 
-/// キーが使用されているかチェック（prefix マッチを含む）
+/// キーが使用されているかチェック（prefix マッチと plural suffix を含む）
+///
+/// # マッチ順序
+/// 1. 完全一致
+/// 2. prefix マッチ: `used_keys` の要素が `key` の prefix である場合
+/// 3. plural suffix マッチ: `key` が plural suffix を持ち、ベースキーが使用されている場合
 ///
 /// # Examples
 /// - `key = "hoge.fuga.piyo"`, `used_keys = {"hoge.fuga"}`
 ///   → `"hoge.fuga"` が `"hoge.fuga.piyo"` の prefix なので `true` を返す
 /// - `key = "hoge.fuga"`, `used_keys = {"hoge.fuga"}`
 ///   → 完全一致なので `true` を返す
+/// - `key = "items_one"`, `used_keys = {"items"}`
+///   → `"items"` がベースキーとして使用されているので `true` を返す
 /// - `key = "other.key"`, `used_keys = {"hoge.fuga"}`
 ///   → マッチしないので `false` を返す
 pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &str) -> bool {
@@ -224,6 +235,15 @@ pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &st
         if key.starts_with(&prefix) {
             return true;
         }
+    }
+
+    // plural suffix マッチ: key が plural suffix を持つ場合、ベースキーが使用されているかチェック
+    // 例: key = "items_one", used_keys = {"items"}
+    //     → "items" が使用されているので true
+    if let Some(base_key) = get_plural_base_key(key)
+        && used_keys.contains(base_key)
+    {
+        return true;
     }
 
     false
@@ -243,10 +263,16 @@ fn has_keys_with_prefix(
     available_keys.iter().any(|key| key.starts_with(&prefix))
 }
 
-/// キーが存在するか、または prefix として子キーが存在するかをチェック
+/// キーが存在するか、または prefix として子キーが存在するか、または plural バリアントが存在するかをチェック
 ///
-/// 完全一致を優先し、一致しない場合は逆方向 prefix マッチを行う。
-/// これにより `t('nested')` で `nested.key` がある場合も有効なキーとみなす。
+/// # マッチ順序
+/// 1. 完全一致
+/// 2. plural バリアントが存在する場合（例: `items_one`, `items_other`）
+/// 3. 逆方向 prefix マッチ（例: `nested.key` が存在する場合の `nested`）
+///
+/// これにより以下のケースで有効なキーとみなす：
+/// - `t('items')` で `items_one`, `items_other` がある場合
+/// - `t('nested')` で `nested.key` がある場合
 fn key_exists_or_has_children(
     key: &str,
     available_keys: &HashSet<String>,
@@ -254,6 +280,10 @@ fn key_exists_or_has_children(
 ) -> bool {
     // 完全一致
     if available_keys.contains(key) {
+        return true;
+    }
+    // plural バリアントが存在するかチェック
+    if has_plural_variants(key, available_keys) {
         return true;
     }
     // 逆方向 prefix マッチ
