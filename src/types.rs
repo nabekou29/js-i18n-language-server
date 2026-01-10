@@ -44,7 +44,20 @@ impl From<SourcePosition> for lsp_types::Position {
     }
 }
 
+impl From<tree_sitter::Point> for SourcePosition {
+    #[allow(clippy::cast_possible_truncation)]
+    fn from(point: tree_sitter::Point) -> Self {
+        Self { line: point.row as u32, character: point.column as u32 }
+    }
+}
+
 impl SourceRange {
+    /// tree-sitter のノードから `SourceRange` を作成
+    #[must_use]
+    pub fn from_node(node: &tree_sitter::Node<'_>) -> Self {
+        Self { start: node.start_position().into(), end: node.end_position().into() }
+    }
+
     /// 指定した位置が範囲内にあるかをチェック
     ///
     /// # Arguments
