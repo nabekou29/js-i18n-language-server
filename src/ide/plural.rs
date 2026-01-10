@@ -125,13 +125,7 @@ pub fn is_key_used_with_plural(key: &str, used_keys: &HashSet<String>) -> bool {
     }
 
     // plural バリアントの場合、ベースキーが使用されているかチェック
-    if let Some(base_key) = get_plural_base_key(key)
-        && used_keys.contains(base_key)
-    {
-        return true;
-    }
-
-    false
+    get_plural_base_key(key).is_some_and(|base_key| used_keys.contains(base_key))
 }
 
 /// キーが存在するかチェック（plural suffix を考慮）

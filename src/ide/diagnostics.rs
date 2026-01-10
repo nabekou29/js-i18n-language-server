@@ -228,25 +228,16 @@ pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &st
     }
 
     // prefix マッチ: used_keys のいずれかが key の prefix であるかチェック
-    // 例: key = "hoge.fuga.piyo", used_key = "hoge.fuga"
-    //     → "hoge.fuga.piyo".starts_with("hoge.fuga.")
-    for used_key in used_keys {
+    let is_prefix_match = used_keys.iter().any(|used_key| {
         let prefix = format!("{used_key}{separator}");
-        if key.starts_with(&prefix) {
-            return true;
-        }
-    }
-
-    // plural suffix マッチ: key が plural suffix を持つ場合、ベースキーが使用されているかチェック
-    // 例: key = "items_one", used_keys = {"items"}
-    //     → "items" が使用されているので true
-    if let Some(base_key) = get_plural_base_key(key)
-        && used_keys.contains(base_key)
-    {
+        key.starts_with(&prefix)
+    });
+    if is_prefix_match {
         return true;
     }
 
-    false
+    // plural suffix マッチ: key が plural suffix を持つ場合、ベースキーが使用されているかチェック
+    get_plural_base_key(key).is_some_and(|base_key| used_keys.contains(base_key))
 }
 
 /// 指定したキーが prefix となるキーが存在するかチェック（逆方向 prefix マッチ）

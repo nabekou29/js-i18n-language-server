@@ -34,39 +34,32 @@ pub fn find_references<S: std::hash::BuildHasher>(
 ) -> Vec<Location> {
     let key_text = key.text(db);
     let base_key = get_plural_base_key(key_text);
-    let mut locations = Vec::new();
 
-    // Iterate through all source files
-    for source_file in source_files.values() {
-        // Get key usages for this file (cached by Salsa)
-        let usages = analyze_source(db, *source_file, key_separator.to_string());
+    source_files
+        .values()
+        .flat_map(|source_file| {
+            let usages = analyze_source(db, *source_file, key_separator.to_string());
+            let uri = source_file.uri(db);
 
-        // Filter usages that match the target key
-        for usage in usages {
-            let usage_key = usage.key(db);
-            let usage_key_text = usage_key.text(db);
+            usages.into_iter().filter_map(move |usage| {
+                let usage_key_text = usage.key(db).text(db);
 
-            // 完全一致、または plural のベースキーが一致
-            let is_match =
-                usage_key_text == key_text || base_key.is_some_and(|bk| usage_key_text == bk);
+                // 完全一致、または plural のベースキーが一致
+                let is_match =
+                    usage_key_text == key_text || base_key.is_some_and(|bk| usage_key_text == bk);
 
-            if is_match {
-                // Convert to LSP Location
-                let range = usage.range(db);
-                let uri = source_file.uri(db);
+                if !is_match {
+                    return None;
+                }
 
-                // URI のパースに失敗した場合はスキップ
                 let Ok(parsed_uri) = uri.parse() else {
                     tracing::warn!("Failed to parse URI: {}", uri);
-                    continue;
+                    return None;
                 };
-
-                locations.push(Location { uri: parsed_uri, range: range.into() });
-            }
-        }
-    }
-
-    locations
+                Some(Location { uri: parsed_uri, range: usage.range(db).into() })
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

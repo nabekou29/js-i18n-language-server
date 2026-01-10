@@ -100,6 +100,6 @@ impl<'a> Scopes<'a> {
     /// * `bool` - スコープが存在する場合はtrue
     #[must_use]
     pub fn has_scope(&self, trans_fn_name: &str) -> bool {
-        self.stacks.get(trans_fn_name).map_or_else(|| false, |stack| !stack.is_empty())
+        self.stacks.get(trans_fn_name).is_some_and(|stack| !stack.is_empty())
     }
 }

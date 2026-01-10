@@ -78,24 +78,10 @@ fn get_translation_value(
     key_text: &str,
     language: Option<&str>,
 ) -> Option<String> {
-    if let Some(lang) = language {
-        // 指定された言語の翻訳を検索
-        for translation in translations {
-            if translation.language(db) == lang
-                && let Some(value) = translation.keys(db).get(key_text)
-            {
-                return Some(value.clone());
-            }
-        }
-    } else {
-        // 言語未指定の場合は最初に見つかった翻訳を返す
-        for translation in translations {
-            if let Some(value) = translation.keys(db).get(key_text) {
-                return Some(value.clone());
-            }
-        }
-    }
-    None
+    translations
+        .iter()
+        .filter(|t| language.is_none_or(|lang| t.language(db) == lang))
+        .find_map(|t| t.keys(db).get(key_text).cloned())
 }
 
 /// 翻訳値を切り詰め
