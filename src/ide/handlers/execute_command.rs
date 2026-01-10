@@ -3,6 +3,8 @@
 //! `workspace/executeCommand` リクエストを処理し、
 //! カスタムコマンドを実行します。
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use serde_json::Value;
 use tower_lsp::jsonrpc::Result;
@@ -18,6 +20,39 @@ use tower_lsp::lsp_types::{
 };
 
 use super::super::backend::Backend;
+
+/// Create a `TextEdit` that replaces the entire file content
+#[allow(clippy::cast_possible_truncation)] // File content won't exceed 4 billion lines
+fn create_full_file_text_edit(original_text: &str, new_text: String) -> TextEdit {
+    let line_count = original_text.lines().count();
+    let last_line = original_text.lines().last().unwrap_or("");
+
+    TextEdit {
+        range: Range {
+            start: Position { line: 0, character: 0 },
+            end: Position {
+                line: line_count.saturating_sub(1) as u32,
+                character: last_line.len() as u32,
+            },
+        },
+        new_text,
+    }
+}
+
+/// Apply a workspace edit with a single file change
+async fn apply_single_file_edit(backend: &Backend, uri: Url, text_edit: TextEdit) {
+    let mut changes = HashMap::new();
+    changes.insert(uri, vec![text_edit]);
+
+    let edit_result = backend
+        .client
+        .apply_edit(WorkspaceEdit { changes: Some(changes), ..Default::default() })
+        .await;
+
+    if let Err(e) = edit_result {
+        tracing::error!("Failed to apply workspace edit: {e}");
+    }
+}
 
 /// `workspace/executeCommand` リクエストを処理
 #[allow(clippy::single_match_else)] // 将来的にコマンドが増える可能性を考慮
@@ -119,34 +154,9 @@ async fn handle_edit_translation(
     };
 
     // キーが存在しない場合、ファイル全体を置換
-    #[allow(clippy::cast_possible_truncation)] // 翻訳JSONが42億行を超えることはない
     if let (Some(result), Some(original)) = (insert_result, original_text) {
-        // 元のファイルの終端位置を計算
-        let line_count = original.lines().count();
-        let last_line = original.lines().last().unwrap_or("");
-
-        let text_edit = TextEdit {
-            range: Range {
-                start: Position { line: 0, character: 0 },
-                end: Position {
-                    line: line_count.saturating_sub(1) as u32,
-                    character: last_line.len() as u32,
-                },
-            },
-            new_text: result.new_text,
-        };
-
-        let mut changes = std::collections::HashMap::new();
-        changes.insert(uri.clone(), vec![text_edit]);
-
-        let edit_result = backend
-            .client
-            .apply_edit(WorkspaceEdit { changes: Some(changes), ..Default::default() })
-            .await;
-
-        if let Err(e) = edit_result {
-            tracing::error!("Failed to apply workspace edit: {}", e);
-        }
+        let text_edit = create_full_file_text_edit(&original, result.new_text);
+        apply_single_file_edit(backend, uri.clone(), text_edit).await;
     }
 
     // ファイルを開き、カーソルを移動
@@ -470,35 +480,8 @@ async fn handle_delete_unused_keys(
     tracing::info!(deleted_count = result.deleted_count, "Deleting unused translation keys");
 
     // ファイル全体を置換する WorkspaceEdit を作成
-    #[allow(clippy::cast_possible_truncation)] // 翻訳JSONが42億行を超えることはない
-    let text_edit = {
-        let line_count = json_text.lines().count();
-        let last_line = json_text.lines().last().unwrap_or("");
-
-        TextEdit {
-            range: Range {
-                start: Position { line: 0, character: 0 },
-                end: Position {
-                    line: line_count.saturating_sub(1) as u32,
-                    character: last_line.len() as u32,
-                },
-            },
-            new_text: result.new_text,
-        }
-    };
-
-    let mut changes = std::collections::HashMap::new();
-    changes.insert(uri.clone(), vec![text_edit]);
-
-    let edit_result = backend
-        .client
-        .apply_edit(WorkspaceEdit { changes: Some(changes), ..Default::default() })
-        .await;
-
-    if let Err(e) = edit_result {
-        tracing::error!("Failed to apply workspace edit: {e}");
-        return Ok(None);
-    }
+    let text_edit = create_full_file_text_edit(&json_text, result.new_text.clone());
+    apply_single_file_edit(backend, uri, text_edit).await;
 
     // 翻訳ファイルを再読み込み
     backend.reload_translation_file(Path::new(&file_path)).await;
