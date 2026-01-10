@@ -84,9 +84,7 @@ impl Backend {
     }
 
     /// 設定から診断オプションを作成
-    pub(crate) fn create_diagnostic_options(
-        config: &ConfigManager,
-    ) -> super::diagnostics::DiagnosticOptions {
+    fn create_diagnostic_options(config: &ConfigManager) -> super::diagnostics::DiagnosticOptions {
         let settings = config.get_settings();
         super::diagnostics::DiagnosticOptions {
             required_languages: settings
@@ -98,6 +96,54 @@ impl Backend {
                 .as_ref()
                 .map(|v| v.iter().cloned().collect()),
         }
+    }
+
+    /// 診断生成に必要な設定を取得
+    async fn get_diagnostic_config(&self) -> (super::diagnostics::DiagnosticOptions, String) {
+        let config = self.config_manager.lock().await;
+        (Self::create_diagnostic_options(&config), config.get_settings().key_separator.clone())
+    }
+
+    /// 状態をリセットしてインデックスを初期化
+    async fn reset_state(&self) {
+        // 新しい Salsa データベースを作成（古いキャッシュをクリア）
+        *self.state.db.lock().await = I18nDatabaseImpl::default();
+
+        // source_files と translations をクリア
+        self.state.source_files.lock().await.clear();
+        self.state.translations.lock().await.clear();
+
+        // インデックス状態をリセット
+        self.workspace_indexer.reset_indexing_state();
+    }
+
+    /// プログレス通知を送信（開始）
+    async fn send_progress_begin(&self, token: &NumberOrString, title: &str, message: &str) {
+        self.client
+            .send_notification::<Progress>(ProgressParams {
+                token: token.clone(),
+                value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(
+                    WorkDoneProgressBegin {
+                        title: title.to_string(),
+                        cancellable: Some(false),
+                        message: Some(message.to_string()),
+                        percentage: Some(0),
+                    },
+                )),
+            })
+            .await;
+    }
+
+    /// プログレス通知を送信（完了）
+    async fn send_progress_end(&self, token: &NumberOrString, message: &str) {
+        self.client
+            .send_notification::<Progress>(ProgressParams {
+                token: token.clone(),
+                value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(WorkDoneProgressEnd {
+                    message: Some(message.to_string()),
+                })),
+            })
+            .await;
     }
 
     /// ファイルパスとカーソル位置から翻訳キーのテキストを取得
@@ -174,13 +220,7 @@ impl Backend {
 
             // Diagnostics を生成
             let diagnostics = {
-                let (options, key_separator) = {
-                    let config = self.config_manager.lock().await;
-                    (
-                        Self::create_diagnostic_options(&config),
-                        config.get_settings().key_separator.clone(),
-                    )
-                };
+                let (options, key_separator) = self.get_diagnostic_config().await;
                 let db = self.state.db.lock().await;
                 let translations = self.state.translations.lock().await;
                 crate::ide::diagnostics::generate_diagnostics(
@@ -351,13 +391,7 @@ impl Backend {
 
         // 翻訳インデックス完了後に診断メッセージを生成して送信
         let diagnostics = {
-            let (options, key_separator) = {
-                let config = self.config_manager.lock().await;
-                (
-                    Self::create_diagnostic_options(&config),
-                    config.get_settings().key_separator.clone(),
-                )
-            };
+            let (options, key_separator) = self.get_diagnostic_config().await;
             let db = self.state.db.lock().await;
             let translations = self.state.translations.lock().await;
             crate::ide::diagnostics::generate_diagnostics(
@@ -392,20 +426,11 @@ impl Backend {
     /// 新しい Salsa データベースを作成して、全ファイルを再インデックスします。
     /// これにより、設定変更が反映され、古いキャッシュがクリアされます。
     #[tracing::instrument(skip(self))]
-    #[allow(clippy::too_many_lines)]
     pub(crate) async fn reindex_workspace(&self) {
         tracing::info!("Starting workspace reindex");
 
-        // 新しい Salsa データベースを作成（古いキャッシュをクリア）
-        let new_db = I18nDatabaseImpl::default();
-        *self.state.db.lock().await = new_db;
-
-        // source_files と translations をクリア
-        self.state.source_files.lock().await.clear();
-        self.state.translations.lock().await.clear();
-
-        // インデックス状態をリセット
-        self.workspace_indexer.reset_indexing_state();
+        // 状態をリセット
+        self.reset_state().await;
 
         // ワークスペースを再インデックス
         if let Ok(workspace_folders) = self.get_workspace_folders().await {
@@ -415,21 +440,12 @@ impl Backend {
                     let token = NumberOrString::String("workspace-reindexing".to_string());
 
                     // 進捗開始通知
-                    self.client
-                        .send_notification::<Progress>(ProgressParams {
-                            token: token.clone(),
-                            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(
-                                WorkDoneProgressBegin {
-                                    title: "Reindexing Workspace".to_string(),
-                                    cancellable: Some(false),
-                                    message: Some(
-                                        "Configuration changed, reindexing...".to_string(),
-                                    ),
-                                    percentage: Some(0),
-                                },
-                            )),
-                        })
-                        .await;
+                    self.send_progress_begin(
+                        &token,
+                        "Reindexing Workspace",
+                        "Configuration changed, reindexing...",
+                    )
+                    .await;
 
                     let config_manager = self.config_manager.lock().await;
                     let db = self.state.db.lock().await.clone();
@@ -491,28 +507,11 @@ impl Backend {
                     // 進捗完了通知
                     match index_result {
                         Ok(()) => {
-                            self.client
-                                .send_notification::<Progress>(ProgressParams {
-                                    token: token.clone(),
-                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
-                                        WorkDoneProgressEnd {
-                                            message: Some("Reindexing complete".to_string()),
-                                        },
-                                    )),
-                                })
-                                .await;
+                            self.send_progress_end(&token, "Reindexing complete").await;
                             tracing::info!("Workspace reindex complete");
                         }
                         Err(error) => {
-                            self.client
-                                .send_notification::<Progress>(ProgressParams {
-                                    token: token.clone(),
-                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
-                                        WorkDoneProgressEnd {
-                                            message: Some(format!("Reindexing failed: {error}")),
-                                        },
-                                    )),
-                                })
+                            self.send_progress_end(&token, &format!("Reindexing failed: {error}"))
                                 .await;
                             tracing::error!("Workspace reindex failed: {}", error);
                         }
