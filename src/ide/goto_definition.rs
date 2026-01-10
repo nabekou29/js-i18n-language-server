@@ -1,11 +1,15 @@
 //! Go to Definition implementation
 
-use tower_lsp::lsp_types::Location;
+use tower_lsp::lsp_types::{
+    Location,
+    Url,
+};
 
 use crate::db::I18nDatabase;
 use crate::ide::plural::PLURAL_SUFFIXES;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
+use crate::types::SourceRange;
 
 /// Find translation key definitions
 ///
@@ -33,50 +37,55 @@ pub fn find_definitions(
     for translation in translations {
         let key_ranges = translation.key_ranges(db);
 
-        // Check if this key exists in this translation file
-        if let Some(range) = key_ranges.get(key_text.as_str()) {
-            // Create URI from file path
-            let file_path = translation.file_path(db);
-            let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) else {
-                tracing::warn!("Failed to create URI from file path: {}", file_path);
-                continue;
-            };
+        // Try to find a matching range in priority order:
+        // 1. Exact match
+        // 2. Plural variant fallback
+        // 3. Child key prefix fallback
+        let range = key_ranges
+            .get(key_text.as_str())
+            .or_else(|| find_plural_variant_range(key_text, key_ranges))
+            .or_else(|| find_child_key_range(key_text, key_separator, key_ranges));
 
-            locations.push(Location { uri, range: (*range).into() });
+        let Some(range) = range else {
             continue;
-        }
+        };
 
-        // plural バリアントへのフォールバック
-        let plural_range = PLURAL_SUFFIXES.iter().find_map(|suffix| {
-            let variant_key = format!("{key_text}{suffix}");
-            key_ranges.get(&variant_key)
-        });
-
-        if let Some(range) = plural_range {
-            let file_path = translation.file_path(db);
-            let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) else {
-                tracing::warn!("Failed to create URI from file path: {}", file_path);
-                continue;
-            };
-
-            locations.push(Location { uri, range: (*range).into() });
-            continue;
-        }
-
-        // 逆方向 prefix マッチ：完全一致がない場合、最初の子キーにフォールバック
-        let prefix = format!("{key_text}{key_separator}");
-        if let Some((_, range)) = key_ranges.iter().find(|(k, _)| k.starts_with(&prefix)) {
-            let file_path = translation.file_path(db);
-            let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(file_path) else {
-                tracing::warn!("Failed to create URI from file path: {}", file_path);
-                continue;
-            };
-
-            locations.push(Location { uri, range: (*range).into() });
+        if let Some(location) = create_location(translation.file_path(db), range) {
+            locations.push(location);
         }
     }
 
     locations
+}
+
+/// Find the first plural variant range for the given key
+fn find_plural_variant_range<'a>(
+    key_text: &str,
+    key_ranges: &'a std::collections::HashMap<String, SourceRange>,
+) -> Option<&'a SourceRange> {
+    PLURAL_SUFFIXES.iter().find_map(|suffix| {
+        let variant_key = format!("{key_text}{suffix}");
+        key_ranges.get(&variant_key)
+    })
+}
+
+/// Find the first child key range using prefix matching
+fn find_child_key_range<'a>(
+    key_text: &str,
+    separator: &str,
+    key_ranges: &'a std::collections::HashMap<String, SourceRange>,
+) -> Option<&'a SourceRange> {
+    let prefix = format!("{key_text}{separator}");
+    key_ranges.iter().find(|(k, _)| k.starts_with(&prefix)).map(|(_, range)| range)
+}
+
+/// Create a Location from file path and range
+fn create_location(file_path: &str, range: &SourceRange) -> Option<Location> {
+    let Ok(uri) = Url::from_file_path(file_path) else {
+        tracing::warn!("Failed to create URI from file path: {}", file_path);
+        return None;
+    };
+    Some(Location { uri, range: (*range).into() })
 }
 
 #[cfg(test)]
