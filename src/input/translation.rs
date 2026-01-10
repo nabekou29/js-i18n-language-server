@@ -467,7 +467,6 @@ pub fn extract_key_value_ranges(
 /// * `prefix` - 現在のキープレフィックス（親のキーパス）
 /// * `key_ranges` - キーの位置情報を格納する `HashMap`
 /// * `value_ranges` - 値の位置情報を格納する `HashMap`
-#[allow(clippy::too_many_lines)]
 fn extract_keys_from_node(
     node: tree_sitter::Node<'_>,
     source: &[u8],
@@ -495,180 +494,107 @@ fn extract_keys_from_node(
             }
         }
         "array" => {
-            // 配列の場合、各要素を [index] 形式で探索
-            let mut index = 0;
-            // tree-sitter 0.26+ では child() が u32 を要求するため変換
-            #[allow(clippy::cast_possible_truncation)]
-            for i in 0..(node.child_count() as u32) {
-                if let Some(child) = node.child(i) {
-                    // 配列の区切り文字（カンマ、ブラケット）をスキップ
-                    if child.kind() == "[" || child.kind() == "]" || child.kind() == "," {
-                        continue;
-                    }
-
-                    let full_key =
-                        prefix.map_or_else(|| format!("[{index}]"), |p| format!("{p}[{index}]"));
-
-                    // 要素の位置情報を記録（キーの位置として）
-                    let elem_start_pos = child.start_position();
-                    let elem_end_pos = child.end_position();
-                    #[allow(clippy::cast_possible_truncation)]
-                    let elem_range = SourceRange {
-                        start: SourcePosition {
-                            line: elem_start_pos.row as u32,
-                            character: elem_start_pos.column as u32,
-                        },
-                        end: SourcePosition {
-                            line: elem_end_pos.row as u32,
-                            character: elem_end_pos.column as u32,
-                        },
-                    };
-                    key_ranges.insert(full_key.clone(), elem_range);
-
-                    match child.kind() {
-                        "string" => {
-                            // 文字列要素の場合、値の位置情報も記録
-                            value_ranges.insert(full_key, elem_range);
-                        }
-                        "object" => {
-                            // オブジェクト要素の場合、再帰的に探索
-                            extract_keys_from_node(
-                                child,
-                                source,
-                                separator,
-                                Some(&full_key),
-                                key_ranges,
-                                value_ranges,
-                            );
-                        }
-                        "array" => {
-                            // ネストした配列の場合、再帰的に探索
-                            extract_keys_from_node(
-                                child,
-                                source,
-                                separator,
-                                Some(&full_key),
-                                key_ranges,
-                                value_ranges,
-                            );
-                        }
-                        _ => {
-                            // その他の型（数値、ブール、null）は値の位置情報を記録
-                            value_ranges.insert(full_key, elem_range);
-                        }
-                    }
-
-                    index += 1;
-                }
-            }
+            extract_array_elements(node, source, separator, prefix, key_ranges, value_ranges);
         }
         "pair" => {
-            // pair ノードの場合、キーと値を抽出
-            // pair の構造: { key: value }
-            // 子ノード[0]: キー（string）
-            // 子ノード[1]: コロン ":"
-            // 子ノード[2]: 値（string, object, array など）
-
-            let Some(key_node) = node.child_by_field_name("key") else {
-                return;
-            };
-
-            let Some(value_node) = node.child_by_field_name("value") else {
-                return;
-            };
-
-            // キー文字列を取得（ダブルクォートを削除）
-            let Ok(key_text) = key_node.utf8_text(source) else {
-                tracing::warn!("Failed to get key text from node");
-                return;
-            };
-            let key = key_text.trim_matches('"');
-
-            // 完全なキーパスを構築
-            let full_key =
-                prefix.map_or_else(|| key.to_string(), |p| format!("{p}{separator}{key}"));
-
-            // キーノードの位置情報を SourceRange に変換
-            let key_start_pos = key_node.start_position();
-            let key_end_pos = key_node.end_position();
-            #[allow(clippy::cast_possible_truncation)]
-            // ソースファイルの行・列が42億を超えることはない
-            let key_range = SourceRange {
-                start: SourcePosition {
-                    line: key_start_pos.row as u32,
-                    character: key_start_pos.column as u32,
-                },
-                end: SourcePosition {
-                    line: key_end_pos.row as u32,
-                    character: key_end_pos.column as u32,
-                },
-            };
-
-            // キーの位置情報を追加
-            key_ranges.insert(full_key.clone(), key_range);
-
-            match value_node.kind() {
-                "string" => {
-                    // 値が文字列の場合、値の位置情報も記録
-                    let value_start_pos = value_node.start_position();
-                    let value_end_pos = value_node.end_position();
-                    #[allow(clippy::cast_possible_truncation)]
-                    // ソースファイルの行・列が42億を超えることはない
-                    let value_range = SourceRange {
-                        start: SourcePosition {
-                            line: value_start_pos.row as u32,
-                            character: value_start_pos.column as u32,
-                        },
-                        end: SourcePosition {
-                            line: value_end_pos.row as u32,
-                            character: value_end_pos.column as u32,
-                        },
-                    };
-                    value_ranges.insert(full_key, value_range);
-                }
-                "object" => {
-                    // 値が object の場合は再帰的に探索
-                    extract_keys_from_node(
-                        value_node,
-                        source,
-                        separator,
-                        Some(&full_key),
-                        key_ranges,
-                        value_ranges,
-                    );
-                }
-                "array" => {
-                    // 値が array の場合は再帰的に探索
-                    extract_keys_from_node(
-                        value_node,
-                        source,
-                        separator,
-                        Some(&full_key),
-                        key_ranges,
-                        value_ranges,
-                    );
-                }
-                _ => {
-                    // その他の型（数値、ブール、null）は値の位置情報を記録
-                    let value_start_pos = value_node.start_position();
-                    let value_end_pos = value_node.end_position();
-                    #[allow(clippy::cast_possible_truncation)]
-                    let value_range = SourceRange {
-                        start: SourcePosition {
-                            line: value_start_pos.row as u32,
-                            character: value_start_pos.column as u32,
-                        },
-                        end: SourcePosition {
-                            line: value_end_pos.row as u32,
-                            character: value_end_pos.column as u32,
-                        },
-                    };
-                    value_ranges.insert(full_key, value_range);
-                }
-            }
+            extract_pair(node, source, separator, prefix, key_ranges, value_ranges);
         }
         _ => {
             // その他のノードタイプは無視
+        }
+    }
+}
+
+/// 配列要素を抽出するヘルパー関数
+fn extract_array_elements(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+    separator: &str,
+    prefix: Option<&str>,
+    key_ranges: &mut HashMap<String, SourceRange>,
+    value_ranges: &mut HashMap<String, SourceRange>,
+) {
+    let mut index = 0;
+    // tree-sitter 0.26+ では child() が u32 を要求するため変換
+    #[allow(clippy::cast_possible_truncation)]
+    for i in 0..(node.child_count() as u32) {
+        let Some(child) = node.child(i) else {
+            continue;
+        };
+
+        // 配列の区切り文字（カンマ、ブラケット）をスキップ
+        if matches!(child.kind(), "[" | "]" | ",") {
+            continue;
+        }
+
+        let full_key = prefix.map_or_else(|| format!("[{index}]"), |p| format!("{p}[{index}]"));
+        let elem_range = SourceRange::from_node(&child);
+        key_ranges.insert(full_key.clone(), elem_range);
+
+        match child.kind() {
+            "object" | "array" => {
+                extract_keys_from_node(
+                    child,
+                    source,
+                    separator,
+                    Some(&full_key),
+                    key_ranges,
+                    value_ranges,
+                );
+            }
+            _ => {
+                // string, number, boolean, null などは値の位置情報を記録
+                value_ranges.insert(full_key, elem_range);
+            }
+        }
+
+        index += 1;
+    }
+}
+
+/// pair ノードからキーと値を抽出するヘルパー関数
+fn extract_pair(
+    node: tree_sitter::Node<'_>,
+    source: &[u8],
+    separator: &str,
+    prefix: Option<&str>,
+    key_ranges: &mut HashMap<String, SourceRange>,
+    value_ranges: &mut HashMap<String, SourceRange>,
+) {
+    let Some(key_node) = node.child_by_field_name("key") else {
+        return;
+    };
+    let Some(value_node) = node.child_by_field_name("value") else {
+        return;
+    };
+
+    // キー文字列を取得（ダブルクォートを削除）
+    let Ok(key_text) = key_node.utf8_text(source) else {
+        tracing::warn!("Failed to get key text from node");
+        return;
+    };
+    let key = key_text.trim_matches('"');
+
+    // 完全なキーパスを構築
+    let full_key = prefix.map_or_else(|| key.to_string(), |p| format!("{p}{separator}{key}"));
+
+    // キーの位置情報を追加
+    key_ranges.insert(full_key.clone(), SourceRange::from_node(&key_node));
+
+    match value_node.kind() {
+        "object" | "array" => {
+            extract_keys_from_node(
+                value_node,
+                source,
+                separator,
+                Some(&full_key),
+                key_ranges,
+                value_ranges,
+            );
+        }
+        _ => {
+            // string, number, boolean, null などは値の位置情報を記録
+            value_ranges.insert(full_key, SourceRange::from_node(&value_node));
         }
     }
 }
