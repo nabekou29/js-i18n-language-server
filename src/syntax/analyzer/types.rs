@@ -104,8 +104,6 @@ pub struct CallTransFnDetail<'a> {
     pub key_node: Node<'a>,
     /// 翻訳キー引数のノード（引用符を含む）
     pub arg_key_node: Node<'a>,
-    /// デフォルトのスコープを使用するか（Trans コンポーネントで t 属性がない場合）
-    pub use_default_scope: bool,
 }
 
 /// Details about a `trans_fn`

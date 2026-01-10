@@ -32,18 +32,76 @@ fn extract_node_text(node: Node<'_>, source_bytes: &[u8]) -> Option<String> {
     node.utf8_text(source_bytes).ok().map(ToString::to_string)
 }
 
-/// Extracts the base function name from a node
+/// Extracts the function name from a node
 ///
-/// For member expressions like `t.rich("key")`, this returns "t".
+/// For member expressions like `i18next.t("key")`, this returns "i18next.t".
 /// For identifiers, this returns the identifier text.
-fn extract_base_function_name(node: Node<'_>, source_bytes: &[u8]) -> Option<String> {
+fn extract_function_name(node: Node<'_>, source_bytes: &[u8]) -> Option<String> {
     match node.kind() {
-        "identifier" => extract_node_text(node, source_bytes),
-        "member_expression" => node
-            .child_by_field_name("object")
-            .and_then(|obj| extract_base_function_name(obj, source_bytes)),
+        "identifier" | "member_expression" => extract_node_text(node, source_bytes),
         _ => None,
     }
+}
+
+/// 既知のグローバル翻訳関数のリスト
+const KNOWN_GLOBAL_TRANS_FNS: &[&str] = &["i18next.t", "i18n.t"];
+
+/// 翻訳関数のメソッド呼び出しとして許可されるメソッド名
+const ALLOWED_TRANS_FN_METHODS: &[&str] = &["rich", "markup", "raw"];
+
+/// 翻訳関数かどうかを判定
+///
+/// - `t` は常に許可
+/// - スコープに登録されている関数は許可
+/// - `i18next.t` などの既知のグローバル関数は許可
+/// - `t.rich` などのメソッド呼び出しはベース名でスコープを確認
+fn is_trans_fn(trans_fn_name: &str, scopes: &Scopes<'_>) -> bool {
+    // "t" は常に許可
+    if trans_fn_name == "t" {
+        return true;
+    }
+
+    // スコープに登録されている関数は許可
+    if scopes.has_scope(trans_fn_name) {
+        return true;
+    }
+
+    // 既知のグローバル翻訳関数は許可
+    if KNOWN_GLOBAL_TRANS_FNS.contains(&trans_fn_name) {
+        return true;
+    }
+
+    // member_expression の場合（例: t.rich, myT.markup）
+    if let Some((base, method)) = trans_fn_name.split_once('.') {
+        // 許可されたメソッドの場合、ベース名でスコープを確認
+        if ALLOWED_TRANS_FN_METHODS.contains(&method) {
+            return base == "t" || scopes.has_scope(base);
+        }
+    }
+
+    false
+}
+
+/// スコープ検索用に関数名を前処理
+///
+/// - `t.rich` → `t` のようにベース名に変換
+/// - 既知のグローバル関数やスコープに登録されている関数はそのまま
+fn preprocess_trans_fn_name_for_scope<'a>(trans_fn_name: &'a str, scopes: &Scopes<'_>) -> &'a str {
+    // スコープに直接登録されている場合はそのまま
+    if scopes.has_scope(trans_fn_name) {
+        return trans_fn_name;
+    }
+
+    // member_expression の場合、ベース名を試す
+    if let Some((base, method)) = trans_fn_name.split_once('.')
+        && ALLOWED_TRANS_FN_METHODS.contains(&method)
+        && (base == "t" || scopes.has_scope(base))
+    {
+        return base;
+    }
+
+    // 既知のグローバル関数や "t" の場合はそのまま（スコープなしで動作）
+    trans_fn_name
 }
 
 /// Finds the closest ancestor node of a given type
@@ -176,34 +234,31 @@ pub fn analyze_trans_fn_calls(
                     continue;
                 };
 
-                // 現在のスコープに存在しない翻訳関数は無視
-                if !scopes.has_scope(&call_trans_fn.trans_fn_name) {
+                // 翻訳関数かどうかを判定
+                if !is_trans_fn(&call_trans_fn.trans_fn_name, &scopes) {
                     continue;
                 }
 
-                cleanup_out_of_scopes(&mut scopes, &call_trans_fn.trans_fn_name, node);
+                // スコープ検索用に関数名を前処理（t.rich → t など）
+                let scope_name =
+                    preprocess_trans_fn_name_for_scope(&call_trans_fn.trans_fn_name, &scopes);
 
-                // スコープ情報を取得
-                // Trans コンポーネントで t 属性がない場合はデフォルトのスコープを使用
-                let scope_info = if call_trans_fn.use_default_scope {
-                    scopes.default_scope(&call_trans_fn.trans_fn_name)
-                } else {
-                    scopes.current_scope(&call_trans_fn.trans_fn_name)
-                };
-                let Some(scope_info) = scope_info else {
-                    continue;
-                };
+                cleanup_out_of_scopes(&mut scopes, scope_name, node);
+
+                // スコープ情報を取得（グローバル関数の場合はスコープがない）
+                let key_prefix =
+                    scopes.current_scope(scope_name).and_then(|s| s.trans_fn.key_prefix.clone());
 
                 let arg_key_node = call_trans_fn.arg_key_node;
 
                 calls.push(TransFnCall {
-                    key: scope_info.trans_fn.key_prefix.as_ref().map_or_else(
+                    key: key_prefix.as_ref().map_or_else(
                         || call_trans_fn.key.clone(),
                         |prefix| format!("{}{}{}", prefix, key_separator, &call_trans_fn.key),
                     ),
                     arg_key: call_trans_fn.key.clone(),
                     arg_key_node: get_node_range(arg_key_node),
-                    key_prefix: scope_info.trans_fn.key_prefix.clone(),
+                    key_prefix,
                 });
             }
             _ => {}
@@ -384,8 +439,8 @@ fn parse_call_trans_fn_captures<'a>(
                     key_arg_node = Some(capture.node);
                 }
                 CaptureName::CallTransFnName => {
-                    // member_expression の場合、base 関数名を抽出 (e.g., t.rich -> t)
-                    trans_fn_name = extract_base_function_name(capture.node, source_bytes);
+                    // 関数名を抽出 (e.g., t, t.rich, i18next.t)
+                    trans_fn_name = extract_function_name(capture.node, source_bytes);
                 }
                 CaptureName::TransArgs => {
                     trans_args_node = Some(capture.node);
@@ -413,15 +468,11 @@ fn parse_call_trans_fn_captures<'a>(
         return Err(AnalyzerError::ParseFailed);
     };
 
-    // Trans コンポーネントで t 属性がない場合、デフォルトのスコープの "t" を使用
-    let use_default_scope = trans_fn_name.is_none();
-
     Ok(CallTransFnDetail {
         trans_fn_name: trans_fn_name.unwrap_or_else(|| "t".to_string()),
         key: key.unwrap_or_default(),
         key_node: key_node.unwrap_or(arg_key_node),
         arg_key_node,
-        use_default_scope,
     })
 }
 
@@ -1024,5 +1075,92 @@ mod tests {
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
+    }
+
+    // ===== グローバル翻訳関数テスト =====
+
+    #[rstest]
+    fn test_i18next_t_global(queries: Vec<Query>, js_lang: Language) {
+        // スコープ設定なしで i18next.t を直接呼び出し
+        let code = r#"
+            const message = i18next.t("global.key");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("global.key")),
+                field!(TransFnCall.key_prefix, none())
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_i18n_t_global(queries: Vec<Query>, js_lang: Language) {
+        // i18n.t も許可
+        let code = r#"
+            const message = i18n.t("another.key");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("another.key"))]);
+    }
+
+    #[rstest]
+    fn test_bare_t_without_scope(queries: Vec<Query>, js_lang: Language) {
+        // スコープなしの t() は許可（デフォルト翻訳関数として）
+        let code = r#"
+            const message = t("bare.key");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("bare.key")),
+                field!(TransFnCall.key_prefix, none())
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_t_rich_without_scope(queries: Vec<Query>, js_lang: Language) {
+        // スコープなしの t.rich() も許可
+        let code = r#"
+            const message = t.rich("rich.key", { strong: (chunks) => chunks });
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("rich.key"))]);
+    }
+
+    #[rstest]
+    fn test_scoped_t_rich(queries: Vec<Query>, js_lang: Language) {
+        // スコープ付きの t.rich()
+        let code = r#"
+            const t = useTranslations("namespace");
+            const message = t.rich("scoped.key", { strong: (chunks) => chunks });
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("namespace.scoped.key"))]);
+    }
+
+    #[rstest]
+    fn test_unknown_member_expression_ignored(queries: Vec<Query>, js_lang: Language) {
+        // 未知の関数呼び出しは無視される
+        let code = r#"
+            const message = foo.bar("ignored.key");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, is_empty());
     }
 }
