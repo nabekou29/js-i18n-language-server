@@ -1,6 +1,8 @@
-# IDE Module Rules
+---
+paths: "src/ide/**"
+---
 
-Applies to: `src/ide/**`
+# IDE Module Rules
 
 ## Structure
 

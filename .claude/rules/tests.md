@@ -1,6 +1,8 @@
-# Testing Rules
+---
+paths: "src/**/*.rs"
+---
 
-Applies to: `src/**/*.rs`
+# Testing Rules
 
 ## Test Framework
 

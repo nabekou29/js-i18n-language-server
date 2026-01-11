@@ -1,6 +1,8 @@
-# Input Module Rules
+---
+paths: "src/input/**"
+---
 
-Applies to: `src/input/**`
+# Input Module Rules
 
 ## Structure
 

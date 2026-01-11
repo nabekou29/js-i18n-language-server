@@ -1,6 +1,8 @@
-# Syntax Module Rules
+---
+paths: "src/syntax/**"
+---
 
-Applies to: `src/syntax/**`
+# Syntax Module Rules
 
 ## Structure
 
