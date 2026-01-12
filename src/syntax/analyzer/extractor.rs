@@ -246,8 +246,19 @@ pub fn analyze_trans_fn_calls(
                 cleanup_out_of_scopes(&mut scopes, scope_name, node);
 
                 // スコープ情報を取得（グローバル関数の場合はスコープがない）
-                let key_prefix =
-                    scopes.current_scope(scope_name).and_then(|s| s.trans_fn.key_prefix.clone());
+                let current_scope = scopes.current_scope(scope_name);
+                let key_prefix = current_scope.and_then(|s| s.trans_fn.key_prefix.clone());
+
+                // namespace の優先度:
+                // 1. explicit_namespace (t("key", { ns: "common" }))
+                // 2. スコープの namespace (useTranslation("ns"))
+                let namespace = call_trans_fn
+                    .explicit_namespace
+                    .clone()
+                    .or_else(|| current_scope.and_then(|s| s.trans_fn.namespace.clone()));
+
+                // 配列形式の namespaces はスコープから取得
+                let namespaces = current_scope.and_then(|s| s.trans_fn.namespaces.clone());
 
                 let arg_key_node = call_trans_fn.arg_key_node;
 
@@ -259,6 +270,8 @@ pub fn analyze_trans_fn_calls(
                     arg_key: call_trans_fn.key.clone(),
                     arg_key_node: get_node_range(arg_key_node),
                     key_prefix,
+                    namespace,
+                    namespaces,
                 });
             }
             _ => {}
@@ -275,6 +288,32 @@ fn cleanup_out_of_scopes(scopes: &mut Scopes<'_>, trans_fn_name: &str, current_n
     {
         scopes.pop_scope(trans_fn_name);
     }
+}
+
+/// namespace separator を使ってキーから namespace を解析する
+///
+/// # Examples
+/// - `parse_key_with_namespace("common:hello", Some(":"))` → `(Some("common"), "hello")`
+/// - `parse_key_with_namespace("hello", Some(":"))` → `(None, "hello")`
+/// - `parse_key_with_namespace("common:hello", None)` → `(None, "common:hello")`
+#[must_use]
+pub fn parse_key_with_namespace(
+    key: &str,
+    namespace_separator: Option<&str>,
+) -> (Option<String>, String) {
+    let Some(separator) = namespace_separator else {
+        return (None, key.to_string());
+    };
+
+    // separator で分割（最初の separator のみ）
+    key.find(separator).map_or_else(
+        || (None, key.to_string()),
+        |pos| {
+            let namespace = &key[..pos];
+            let key_part = &key[pos + separator.len()..];
+            (Some(namespace.to_string()), key_part.to_string())
+        },
+    )
 }
 
 /// Extracts string arguments from an arguments node
@@ -320,6 +359,7 @@ fn parse_get_trans_fn_captures(
 ) -> Result<GetTransFnDetail, AnalyzerError> {
     let mut trans_fn_name: Option<String> = None;
     let mut namespace = None;
+    let mut namespace_items: Vec<String> = Vec::new();
     let mut key_prefix = None;
     let mut args_node: Option<Node<'_>> = None;
     let mut func_name: Option<String> = None;
@@ -347,6 +387,12 @@ fn parse_get_trans_fn_captures(
                 }
                 CaptureName::Namespace => {
                     namespace = extract_node_text(capture.node, source_bytes);
+                }
+                CaptureName::NamespaceItem => {
+                    // 配列形式の namespace の個別要素
+                    if let Some(ns_item) = extract_node_text(capture.node, source_bytes) {
+                        namespace_items.push(ns_item);
+                    }
                 }
                 CaptureName::KeyPrefix => {
                     key_prefix = extract_node_text(capture.node, source_bytes);
@@ -388,6 +434,9 @@ fn parse_get_trans_fn_captures(
     if let Some(ns) = namespace {
         detail = detail.with_namespace(ns);
     }
+    if !namespace_items.is_empty() {
+        detail = detail.with_namespaces(namespace_items);
+    }
     if let Some(prefix) = key_prefix {
         detail = detail.with_key_prefix(prefix);
     }
@@ -416,6 +465,7 @@ fn parse_call_trans_fn_captures<'a>(
     let mut key_node: Option<Node<'a>> = None;
     let mut key_arg_node: Option<Node<'a>> = None;
     let mut trans_args_node: Option<Node<'a>> = None;
+    let mut explicit_namespace: Option<String> = None;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, capture_node, source_bytes);
@@ -445,6 +495,10 @@ fn parse_call_trans_fn_captures<'a>(
                 CaptureName::TransArgs => {
                     trans_args_node = Some(capture.node);
                 }
+                CaptureName::ExplicitNamespace => {
+                    // t("key", { ns: "common" }) の ns 値
+                    explicit_namespace = extract_node_text(capture.node, source_bytes);
+                }
                 _ => {}
             }
         }
@@ -473,6 +527,7 @@ fn parse_call_trans_fn_captures<'a>(
         key: key.unwrap_or_default(),
         key_node: key_node.unwrap_or(arg_key_node),
         arg_key_node,
+        explicit_namespace,
     })
 }
 
@@ -1162,5 +1217,115 @@ mod tests {
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
         assert_that!(calls, is_empty());
+    }
+
+    // ===== namespace separator テスト =====
+
+    #[rstest]
+    #[case("common:hello", Some(":"), Some("common"), "hello")]
+    #[case("errors:notFound", Some(":"), Some("errors"), "notFound")]
+    #[case("hello", Some(":"), None, "hello")]
+    #[case("common:nested:key", Some(":"), Some("common"), "nested:key")]
+    #[case("common:hello", None, None, "common:hello")]
+    #[case("ns/key", Some("/"), Some("ns"), "key")]
+    fn test_parse_key_with_namespace(
+        #[case] key: &str,
+        #[case] separator: Option<&str>,
+        #[case] expected_ns: Option<&str>,
+        #[case] expected_key: &str,
+    ) {
+        let (ns, parsed_key) = parse_key_with_namespace(key, separator);
+        assert_that!(ns.as_deref(), eq(expected_ns));
+        assert_that!(parsed_key.as_str(), eq(expected_key));
+    }
+
+    // ===== 配列 namespace テスト =====
+
+    #[rstest]
+    fn test_array_namespace(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation(['common', 'errors']);
+            const message = t("hello");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, len(eq(1)));
+        assert_that!(calls[0].key.as_str(), eq("hello"));
+        assert_that!(
+            calls[0].namespaces.as_ref().unwrap(),
+            eq(&vec!["common".to_string(), "errors".to_string()])
+        );
+    }
+
+    #[rstest]
+    fn test_array_namespace_single_item(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation(['common']);
+            const message = t("hello");
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, len(eq(1)));
+        assert_that!(calls[0].key.as_str(), eq("hello"));
+        assert_that!(calls[0].namespaces.as_ref().unwrap(), eq(&vec!["common".to_string()]));
+    }
+
+    // ===== explicit namespace (ns option) テスト =====
+
+    #[rstest]
+    fn test_explicit_namespace_ns_option(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation('common');
+            const message = t("hello", { ns: "errors" });
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        // explicit_namespace が namespace を上書きする
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("hello")),
+                field!(TransFnCall.namespace, some(eq("errors")))
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_explicit_namespace_without_declared_namespace(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation();
+            const message = t("hello", { ns: "common" });
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("hello")),
+                field!(TransFnCall.namespace, some(eq("common")))
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_explicit_namespace_with_other_options(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation('common');
+            const message = t("hello", { count: 5, ns: "errors" });
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("hello")),
+                field!(TransFnCall.namespace, some(eq("errors")))
+            ]]
+        );
     }
 }

@@ -15,7 +15,7 @@
       arguments: (arguments
         [
           (string (string_fragment) @i18n.namespace)
-          (array)
+          (array (string (string_fragment) @i18n.namespace_item))
           (undefined)
         ]?
         (object
@@ -38,5 +38,11 @@
       (string
         (string_fragment)? @i18n.trans_key
       )? @i18n.trans_key_arg
+      (object
+        (pair
+          key: (property_identifier) @ns_key (#eq? @ns_key "ns")
+          value: (string (string_fragment) @i18n.explicit_namespace)
+        )?
+      )?
     ) @i18n.trans_args
 ) @i18n.call_trans_fn
