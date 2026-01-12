@@ -1,0 +1,10 @@
+{
+  "includePatterns": ["**/*.tsx"],
+  "translationFiles": {
+    "filePattern": "locales/**/*.json"
+  },
+  "keySeparator": ".",
+  "namespaceSeparator": ":",
+  "defaultNamespace": "translation",
+  "primaryLanguages": ["en", "ja"]
+}

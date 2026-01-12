@@ -1,0 +1,11 @@
+{
+  "greeting": {
+    "hello": "こんにちは",
+    "goodbye": "さようなら"
+  },
+  "button": {
+    "save": "保存",
+    "cancel": "キャンセル",
+    "delete": "削除"
+  }
+}

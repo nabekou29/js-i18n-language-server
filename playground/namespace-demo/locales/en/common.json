@@ -1,0 +1,11 @@
+{
+  "greeting": {
+    "hello": "Hello",
+    "goodbye": "Goodbye"
+  },
+  "button": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete"
+  }
+}

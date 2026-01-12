@@ -1,0 +1,8 @@
+{
+  "notFound": "Page not found",
+  "serverError": "Internal server error",
+  "validation": {
+    "required": "This field is required",
+    "email": "Invalid email address"
+  }
+}
