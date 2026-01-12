@@ -18,11 +18,12 @@ Query files are in `queries/`:
 - `call_trans_fn.scm` - Match t(), i18next.t() calls
 
 ### Query Capture Names
-Defined in `CaptureName` enum:
-- `@get_trans_fn_name` - Translation function variable name
-- `@call_trans_fn_name` - Called function name
-- `@trans_key` - Translation key string
-- `@namespace`, `@key_prefix` - Scope context
+Defined in `CaptureName` enum (see `queries.md` for full list):
+- `@i18n.get_trans_fn_name` - Translation function variable name
+- `@i18n.call_trans_fn_name` - Called function name
+- `@i18n.trans_key` - Translation key string
+- `@i18n.namespace`, `@i18n.namespace_item` - Namespace context
+- `@i18n.explicit_namespace` - `ns` option in `t()` calls
 
 ## Position Conversion
 
