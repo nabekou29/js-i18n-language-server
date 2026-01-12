@@ -69,6 +69,11 @@ pub struct I18nSettings {
     pub key_separator: String,
     /// ネームスペースの区切り文字
     pub namespace_separator: Option<String>,
+    /// デフォルトのネームスペース
+    ///
+    /// 明示的な namespace 指定がない場合に使用される。
+    /// 設定されていない場合は、全翻訳ファイルを検索する（後方互換性）。
+    pub default_namespace: Option<String>,
 
     /// インデックス設定
     pub indexing: IndexingConfig,
@@ -241,6 +246,7 @@ impl Default for I18nSettings {
             exclude_patterns: vec!["node_modules/**".to_string()],
             key_separator: ".".to_string(),
             namespace_separator: None,
+            default_namespace: None,
             indexing: IndexingConfig::default(),
             required_languages: None,
             optional_languages: None,
