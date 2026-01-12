@@ -24,9 +24,22 @@ pub(crate) fn create_translation(
     file_path: &str,
     keys: HashMap<String, String>,
 ) -> Translation {
+    create_translation_with_namespace(db, language, None, file_path, keys)
+}
+
+/// テスト用の Translation を namespace 指定で作成する
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) fn create_translation_with_namespace(
+    db: &I18nDatabaseImpl,
+    language: &str,
+    namespace: Option<&str>,
+    file_path: &str,
+    keys: HashMap<String, String>,
+) -> Translation {
     Translation::new(
         db,
         language.to_string(),
+        namespace.map(String::from),
         file_path.to_string(),
         keys,
         "{}".to_string(),

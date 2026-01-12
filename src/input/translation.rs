@@ -296,11 +296,58 @@ fn detect_language_from_path(file_path: &Path) -> String {
     "unknown".to_string()
 }
 
+/// ファイルパスから namespace を推定する
+///
+/// ファイル名またはディレクトリ名から namespace を抽出します。
+/// 言語コード（en, ja など）は namespace として扱いません。
+///
+/// # Examples
+/// - `locales/en/common.json` → Some("common") (ファイル名が namespace)
+/// - `locales/common/en.json` → Some("common") (ディレクトリ名が namespace)
+/// - `locales/en.json` → None (単一ファイル)
+/// - `locales/en/translation.json` → Some("translation")
+fn detect_namespace_from_path(file_path: &Path) -> Option<String> {
+    // ファイル名（拡張子なし）を取得
+    let file_stem = file_path.file_stem()?.to_string_lossy().to_string();
+    let file_stem_normalized = normalize_language_code(&file_stem);
+
+    // 親ディレクトリ名を取得
+    let parent = file_path.parent()?;
+    let parent_name = parent.file_name()?.to_string_lossy().to_string();
+    let parent_name_normalized = normalize_language_code(&parent_name);
+
+    // ファイル名が言語コードでない場合 → ファイル名が namespace
+    if !LANGUAGE_CODES.contains(&file_stem_normalized) && !LANGUAGE_CODES.contains(&file_stem) {
+        return Some(file_stem);
+    }
+
+    // 親ディレクトリが言語コードでない場合 → 親ディレクトリ名が namespace
+    // ただし、"locales", "messages", "translations" などの一般的な親は除外
+    let common_parents = ["locales", "messages", "translations", "i18n", "lang", "langs"];
+    if !LANGUAGE_CODES.contains(&parent_name_normalized)
+        && !LANGUAGE_CODES.contains(&parent_name)
+        && !common_parents.contains(&parent_name.to_lowercase().as_str())
+    {
+        return Some(parent_name);
+    }
+
+    None
+}
+
 /// 翻訳データを表す Salsa Input
 #[salsa::input]
 pub struct Translation {
     /// 言語コード（例: "en", "ja"）
     pub language: String,
+
+    /// ネームスペース（例: "common", "errors"）
+    ///
+    /// ファイルパスから推定される。
+    /// - `locales/en/common.json` → Some("common")
+    /// - `locales/common/en.json` → Some("common")
+    /// - `locales/en.json` → None
+    #[returns(ref)]
+    pub namespace: Option<String>,
 
     /// ファイルパス
     #[returns(ref)]
@@ -670,12 +717,14 @@ pub fn load_translation_file(
     // キーと値の位置情報のマッピングを抽出
     let (key_ranges, value_ranges) = extract_key_value_ranges(&content, separator);
 
-    // ファイルパスから言語コードを検出
+    // ファイルパスから言語コードと namespace を検出
     let language = detect_language_from_path(file_path);
+    let namespace = detect_namespace_from_path(file_path);
 
     Ok(Translation::new(
         db,
         language,
+        namespace,
         file_path.to_string_lossy().to_string(),
         keys,
         content,
@@ -792,6 +841,25 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    #[rstest]
+    // ファイル名が namespace の場合 (locales/en/common.json → "common")
+    #[case("/path/to/locales/en/common.json", Some("common"))]
+    #[case("/path/to/locales/ja/errors.json", Some("errors"))]
+    #[case("/path/to/locales/en/translation.json", Some("translation"))]
+    // ディレクトリ名が namespace の場合 (locales/common/en.json → "common")
+    #[case("/path/to/locales/common/en.json", Some("common"))]
+    #[case("/path/to/locales/errors/ja.json", Some("errors"))]
+    // 単一ファイルの場合 → None
+    #[case("/path/to/locales/en.json", None)]
+    #[case("/path/to/messages/ja.json", None)]
+    // 一般的な親ディレクトリは除外
+    #[case("/path/to/i18n/en.json", None)]
+    #[case("/path/to/translations/en.json", None)]
+    fn test_detect_namespace_from_path(#[case] path: &str, #[case] expected: Option<&str>) {
+        let result = detect_namespace_from_path(Path::new(path));
+        assert_eq!(result.as_deref(), expected);
+    }
+
     #[googletest::test]
     fn test_extract_key_value_ranges_simple() {
         let json_text = r#"{
@@ -901,6 +969,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test.json".to_string(),
             keys,
             json_text.to_string(),
