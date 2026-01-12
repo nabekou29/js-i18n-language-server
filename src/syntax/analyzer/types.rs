@@ -134,7 +134,7 @@ pub struct GetTransFnDetail {
 }
 
 impl GetTransFnDetail {
-    /// 新しい `GetTransFnDetail` を作成
+    /// 新しい `GetTransFnDetail` を作成（デフォルト値で初期化）
     #[must_use]
     pub fn new(trans_fn_name: impl Into<String>) -> Self {
         Self {
@@ -143,27 +143,6 @@ impl GetTransFnDetail {
             namespaces: None,
             key_prefix: None,
         }
-    }
-
-    /// namespace を設定（ビルダーパターン風）
-    #[must_use]
-    pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
-        self.namespace = Some(namespace.into());
-        self
-    }
-
-    /// 配列形式の namespaces を設定（ビルダーパターン風）
-    #[must_use]
-    pub fn with_namespaces(mut self, namespaces: Vec<String>) -> Self {
-        self.namespaces = Some(namespaces);
-        self
-    }
-
-    /// `key_prefix` を設定（ビルダーパターン風）
-    #[must_use]
-    pub fn with_key_prefix(mut self, key_prefix: impl Into<String>) -> Self {
-        self.key_prefix = Some(key_prefix.into());
-        self
     }
 }
 

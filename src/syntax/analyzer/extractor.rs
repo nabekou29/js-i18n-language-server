@@ -301,18 +301,9 @@ pub fn parse_key_with_namespace(
     key: &str,
     namespace_separator: Option<&str>,
 ) -> (Option<String>, String) {
-    let Some(separator) = namespace_separator else {
-        return (None, key.to_string());
-    };
-
-    // separator で分割（最初の separator のみ）
-    key.find(separator).map_or_else(
+    namespace_separator.and_then(|sep| key.split_once(sep)).map_or_else(
         || (None, key.to_string()),
-        |pos| {
-            let namespace = &key[..pos];
-            let key_part = &key[pos + separator.len()..];
-            (Some(namespace.to_string()), key_part.to_string())
-        },
+        |(ns, key_part)| (Some(ns.to_string()), key_part.to_string()),
     )
 }
 
@@ -429,19 +420,11 @@ fn parse_get_trans_fn_captures(
         }
     }
 
-    let mut detail = GetTransFnDetail::new(trans_fn_name.ok_or(AnalyzerError::ParseFailed)?);
+    let trans_fn_name = trans_fn_name.ok_or(AnalyzerError::ParseFailed)?;
 
-    if let Some(ns) = namespace {
-        detail = detail.with_namespace(ns);
-    }
-    if !namespace_items.is_empty() {
-        detail = detail.with_namespaces(namespace_items);
-    }
-    if let Some(prefix) = key_prefix {
-        detail = detail.with_key_prefix(prefix);
-    }
+    let namespaces = if namespace_items.is_empty() { None } else { Some(namespace_items) };
 
-    Ok(detail)
+    Ok(GetTransFnDetail { trans_fn_name, namespace, namespaces, key_prefix })
 }
 
 /// Parses call translation function captures from a tree-sitter node

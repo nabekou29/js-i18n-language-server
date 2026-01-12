@@ -64,36 +64,16 @@ pub fn filter_translations_by_namespace<'a>(
 /// 4. `default_namespace`
 /// 5. None
 #[must_use]
-pub const fn resolve_namespace<'a>(
+pub fn resolve_namespace<'a>(
     explicit_namespace: Option<&'a str>,
     declared_namespace: Option<&'a str>,
     declared_namespaces: Option<&'a [String]>,
     default_namespace: Option<&'a str>,
 ) -> Option<&'a str> {
-    // 1. 明示的 namespace（キーから解析）
-    if let Some(ns) = explicit_namespace {
-        return Some(ns);
-    }
-
-    // 2. 宣言された複数 namespace の最初
-    if let Some(namespaces) = declared_namespaces
-        && let Some(first) = namespaces.first()
-    {
-        return Some(first.as_str());
-    }
-
-    // 3. 宣言された単一 namespace
-    if let Some(ns) = declared_namespace {
-        return Some(ns);
-    }
-
-    // 4. デフォルト namespace
-    if let Some(ns) = default_namespace {
-        return Some(ns);
-    }
-
-    // 5. 解決できない場合は None
-    None
+    explicit_namespace
+        .or_else(|| declared_namespaces.and_then(|ns| ns.first().map(String::as_str)))
+        .or(declared_namespace)
+        .or(default_namespace)
 }
 
 #[cfg(test)]
