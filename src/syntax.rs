@@ -35,7 +35,7 @@ pub fn analyze_source(
         .map(|call| {
             let key = TransKey::new(db, call.key);
             let range: SourceRange = call.arg_key_node.into();
-            KeyUsage::new(db, key, range)
+            KeyUsage::new(db, key, range, call.namespace, call.namespaces)
         })
         .collect()
 }
