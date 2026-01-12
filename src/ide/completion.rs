@@ -322,6 +322,7 @@ mod tests {
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([
                 ("common.hello".to_string(), "Hello".to_string()),
@@ -354,6 +355,7 @@ mod tests {
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([
                 ("common.hello".to_string(), "Hello".to_string()),
@@ -394,6 +396,7 @@ mod tests {
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             "{}".to_string(),
@@ -404,6 +407,7 @@ mod tests {
         let ja_translation = Translation::new(
             &db,
             "ja".to_string(),
+            None,
             "/test/ja.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Konnichiwa".to_string())]),
             "{}".to_string(),
@@ -439,6 +443,7 @@ mod tests {
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             "{}".to_string(),
@@ -684,6 +689,7 @@ const msg = foo();
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([
                 ("common.hello".to_string(), "Hello".to_string()),
@@ -727,6 +733,7 @@ const msg = foo();
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([
                 ("common.hello".to_string(), "Hello".to_string()),
@@ -766,6 +773,7 @@ const msg = foo();
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([
                 ("common.hello".to_string(), "Hello".to_string()),
@@ -808,6 +816,7 @@ const msg = foo();
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([("hello".to_string(), "Hello".to_string())]),
             "{}".to_string(),
@@ -817,6 +826,7 @@ const msg = foo();
         let ja_translation = Translation::new(
             &db,
             "ja".to_string(),
+            None,
             "/test/ja.json".to_string(),
             HashMap::from([("hello".to_string(), "こんにちは".to_string())]),
             "{}".to_string(),
@@ -845,6 +855,7 @@ const msg = foo();
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([("hello".to_string(), "Hello".to_string())]),
             "{}".to_string(),
@@ -877,6 +888,7 @@ const msg = foo();
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([("hello".to_string(), "Hello World".to_string())]),
             "{}".to_string(),
@@ -923,6 +935,7 @@ const msg = foo();
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([("hello".to_string(), "Hello".to_string())]),
             "{}".to_string(),
@@ -954,6 +967,7 @@ const msg = foo();
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/en.json".to_string(),
             HashMap::from([("hello".to_string(), "Hello".to_string())]),
             "{}".to_string(),

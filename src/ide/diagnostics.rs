@@ -326,6 +326,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "en.json".to_string(),
             keys,
             String::new(),
@@ -381,6 +382,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "en.json".to_string(),
             keys,
             String::new(),
@@ -422,6 +424,7 @@ mod tests {
         let translation_en = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "en.json".to_string(),
             keys_en,
             String::new(),
@@ -431,6 +434,7 @@ mod tests {
         let translation_ja = Translation::new(
             &db,
             "ja".to_string(),
+            None,
             "ja.json".to_string(),
             keys_ja,
             String::new(),
@@ -572,6 +576,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "en.json".to_string(),
             keys,
             String::new(),
@@ -642,6 +647,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "en.json".to_string(),
             keys,
             String::new(),
@@ -714,6 +720,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "en.json".to_string(),
             keys,
             String::new(),
@@ -749,6 +756,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "en.json".to_string(),
             keys,
             String::new(),

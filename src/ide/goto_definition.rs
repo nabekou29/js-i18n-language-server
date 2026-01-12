@@ -121,6 +121,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/locales/en.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             r#"{"common": {"hello": "Hello"}}"#.to_string(),
@@ -156,6 +157,7 @@ mod tests {
         let en_translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/locales/en.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             r#"{"common": {"hello": "Hello"}}"#.to_string(),
@@ -176,6 +178,7 @@ mod tests {
         let ja_translation = Translation::new(
             &db,
             "ja".to_string(),
+            None,
             "/test/locales/ja.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Hello in Japanese".to_string())]),
             r#"{"common": {"hello": "Hello in Japanese"}}"#.to_string(),
@@ -205,6 +208,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/locales/en.json".to_string(),
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
             r#"{"common": {"hello": "Hello"}}"#.to_string(),
@@ -245,6 +249,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/locales/en.json".to_string(),
             HashMap::from([
                 ("nested.key".to_string(), "Key Value".to_string()),
@@ -293,6 +298,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/locales/en.json".to_string(),
             HashMap::from([
                 ("nested".to_string(), "Parent Value".to_string()),
@@ -354,6 +360,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/locales/en.json".to_string(),
             HashMap::from([
                 ("items_one".to_string(), "{{count}} item".to_string()),
@@ -400,6 +407,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/locales/en.json".to_string(),
             HashMap::from([
                 ("place_ordinal_one".to_string(), "{{count}}st".to_string()),
@@ -455,6 +463,7 @@ mod tests {
         let translation = Translation::new(
             &db,
             "en".to_string(),
+            None,
             "/test/locales/en.json".to_string(),
             HashMap::from([
                 ("items".to_string(), "Items (exact)".to_string()),
