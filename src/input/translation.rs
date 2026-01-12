@@ -1,4 +1,4 @@
-//! 翻訳ファイル入力定義
+//! Translation file input definitions
 
 use std::collections::{
     HashMap,
@@ -296,33 +296,30 @@ fn detect_language_from_path(file_path: &Path) -> String {
     "unknown".to_string()
 }
 
-/// ファイルパスから namespace を推定する
+/// Detect namespace from file path.
 ///
-/// ファイル名またはディレクトリ名から namespace を抽出します。
-/// 言語コード（en, ja など）は namespace として扱いません。
+/// Extracts namespace from file name or directory name.
+/// Language codes (en, ja, etc.) are not treated as namespaces.
 ///
 /// # Examples
-/// - `locales/en/common.json` → Some("common") (ファイル名が namespace)
-/// - `locales/common/en.json` → Some("common") (ディレクトリ名が namespace)
-/// - `locales/en.json` → None (単一ファイル)
-/// - `locales/en/translation.json` → Some("translation")
+/// - `locales/en/common.json` -> Some("common") (file name is namespace)
+/// - `locales/common/en.json` -> Some("common") (directory name is namespace)
+/// - `locales/en.json` -> None (single file)
+/// - `locales/en/translation.json` -> Some("translation")
 fn detect_namespace_from_path(file_path: &Path) -> Option<String> {
-    // ファイル名（拡張子なし）を取得
     let file_stem = file_path.file_stem()?.to_string_lossy().to_string();
     let file_stem_normalized = normalize_language_code(&file_stem);
 
-    // 親ディレクトリ名を取得
     let parent = file_path.parent()?;
     let parent_name = parent.file_name()?.to_string_lossy().to_string();
     let parent_name_normalized = normalize_language_code(&parent_name);
 
-    // ファイル名が言語コードでない場合 → ファイル名が namespace
+    // File name is namespace if not a language code
     if !LANGUAGE_CODES.contains(&file_stem_normalized) && !LANGUAGE_CODES.contains(&file_stem) {
         return Some(file_stem);
     }
 
-    // 親ディレクトリが言語コードでない場合 → 親ディレクトリ名が namespace
-    // ただし、"locales", "messages", "translations" などの一般的な親は除外
+    // Parent directory is namespace if not a language code or common parent
     let common_parents = ["locales", "messages", "translations", "i18n", "lang", "langs"];
     if !LANGUAGE_CODES.contains(&parent_name_normalized)
         && !LANGUAGE_CODES.contains(&parent_name)
@@ -334,56 +331,35 @@ fn detect_namespace_from_path(file_path: &Path) -> Option<String> {
     None
 }
 
-/// 翻訳データを表す Salsa Input
+/// Salsa input representing translation data.
 #[salsa::input]
 pub struct Translation {
-    /// 言語コード（例: "en", "ja"）
     pub language: String,
 
-    /// ネームスペース（例: "common", "errors"）
-    ///
-    /// ファイルパスから推定される。
-    /// - `locales/en/common.json` → Some("common")
-    /// - `locales/common/en.json` → Some("common")
-    /// - `locales/en.json` → None
+    /// Namespace inferred from file path (e.g., "common", "errors").
     #[returns(ref)]
     pub namespace: Option<String>,
 
-    /// ファイルパス
     #[returns(ref)]
     pub file_path: String,
 
-    /// フラット化された翻訳キーマップ
-    /// 例: { "common.hello": "Hello", "common.goodbye": "Goodbye" }
+    /// Flattened translation key map (e.g., "common.hello" -> "Hello").
     #[returns(ref)]
     pub keys: HashMap<String, String>,
 
-    /// JSON ファイルの元テキスト
     #[returns(ref)]
     pub json_text: String,
 
-    /// キーと位置情報のマッピング
-    /// 例: { "common.hello": SourceRange { start: (2, 5), end: (2, 17) } }
+    /// Key to source range mapping for go-to-definition.
     #[returns(ref)]
     pub key_ranges: HashMap<String, SourceRange>,
 
-    /// 値と位置情報のマッピング
-    /// 例: { "common.hello": SourceRange { start: (2, 14), end: (2, 21) } }
+    /// Value to source range mapping for editing.
     #[returns(ref)]
     pub value_ranges: HashMap<String, SourceRange>,
 }
 
-/// JSON をフラット化する
-///
-/// ネストされたJSONオブジェクトを、ドット区切りのキーを持つフラットなマップに変換します。
-///
-/// # Arguments
-/// * `json` - JSON Value
-/// * `separator` - キー区切り文字（通常は "." または "_"）
-/// * `prefix` - プレフィックス（再帰用、通常は None で呼び出す）
-///
-/// # Returns
-/// フラット化されたキーマップ
+/// Flatten nested JSON object into dot-separated key map.
 ///
 /// # Examples
 /// ```
@@ -412,7 +388,6 @@ pub fn flatten_json(
     result
 }
 
-/// JSON 値を再帰的にフラット化するヘルパー関数
 fn flatten_json_value(
     json: &Value,
     separator: &str,
@@ -429,7 +404,6 @@ fn flatten_json_value(
         }
         Value::Array(arr) => {
             for (index, value) in arr.iter().enumerate() {
-                // 配列のインデックスは [index] 形式を使用
                 let full_key =
                     prefix.map_or_else(|| format!("[{index}]"), |p| format!("{p}[{index}]"));
                 flatten_json_value(value, separator, Some(&full_key), result);
@@ -441,7 +415,6 @@ fn flatten_json_value(
             }
         }
         _ => {
-            // その他の型は文字列に変換
             if let Some(key) = prefix {
                 result.insert(key.to_string(), json.to_string());
             }
@@ -449,27 +422,7 @@ fn flatten_json_value(
     }
 }
 
-/// JSON ファイルからキーと値の位置情報のマッピングを抽出
-///
-/// tree-sitter-json を使って JSON をパースし、各キーと値の位置情報を取得します。
-///
-/// # Arguments
-/// * `json_text` - JSON ファイルの元テキスト
-/// * `separator` - キー区切り文字（通常は "." または "_"）
-///
-/// # Returns
-/// (キーと位置情報のマッピング, 値と位置情報のマッピング) のタプル
-///
-/// # Examples
-/// ```json
-/// {
-///   "common": {
-///     "hello": "Hello"
-///   }
-/// }
-/// ```
-/// 上記の JSON の場合、キーの位置情報（`"hello"` の位置）と値の位置情報（`"Hello"` の位置）が
-/// それぞれマッピングされます。
+/// Extract key and value source ranges from JSON text using tree-sitter.
 #[must_use]
 pub fn extract_key_value_ranges(
     json_text: &str,
@@ -478,7 +431,6 @@ pub fn extract_key_value_ranges(
     let mut key_ranges = HashMap::new();
     let mut value_ranges = HashMap::new();
 
-    // tree-sitter でパース
     let mut parser = tree_sitter::Parser::new();
     let Ok(()) = parser.set_language(&tree_sitter_json::LANGUAGE.into()) else {
         tracing::warn!("Failed to set tree-sitter-json language");
@@ -492,7 +444,6 @@ pub fn extract_key_value_ranges(
 
     let root_node = tree.root_node();
 
-    // 再帰的にキーと値の位置情報を抽出
     extract_keys_from_node(
         root_node,
         json_text.as_bytes(),
@@ -505,15 +456,6 @@ pub fn extract_key_value_ranges(
     (key_ranges, value_ranges)
 }
 
-/// ノードから再帰的にキーと値の位置情報を抽出するヘルパー関数
-///
-/// # Arguments
-/// * `node` - 現在のノード
-/// * `source` - JSON ソーステキストのバイト列
-/// * `separator` - キー区切り文字
-/// * `prefix` - 現在のキープレフィックス（親のキーパス）
-/// * `key_ranges` - キーの位置情報を格納する `HashMap`
-/// * `value_ranges` - 値の位置情報を格納する `HashMap`
 fn extract_keys_from_node(
     node: tree_sitter::Node<'_>,
     source: &[u8],
@@ -524,8 +466,7 @@ fn extract_keys_from_node(
 ) {
     match node.kind() {
         "document" | "object" => {
-            // object の場合、子ノードを探索
-            // tree-sitter 0.26+ では child() が u32 を要求するため変換
+            // tree-sitter 0.26+ requires u32 for child()
             #[allow(clippy::cast_possible_truncation)]
             for i in 0..(node.child_count() as u32) {
                 if let Some(child) = node.child(i) {
@@ -546,13 +487,10 @@ fn extract_keys_from_node(
         "pair" => {
             extract_pair(node, source, separator, prefix, key_ranges, value_ranges);
         }
-        _ => {
-            // その他のノードタイプは無視
-        }
+        _ => {}
     }
 }
 
-/// 配列要素を抽出するヘルパー関数
 fn extract_array_elements(
     node: tree_sitter::Node<'_>,
     source: &[u8],
@@ -562,14 +500,13 @@ fn extract_array_elements(
     value_ranges: &mut HashMap<String, SourceRange>,
 ) {
     let mut index = 0;
-    // tree-sitter 0.26+ では child() が u32 を要求するため変換
+    // tree-sitter 0.26+ requires u32 for child()
     #[allow(clippy::cast_possible_truncation)]
     for i in 0..(node.child_count() as u32) {
         let Some(child) = node.child(i) else {
             continue;
         };
 
-        // 配列の区切り文字（カンマ、ブラケット）をスキップ
         if matches!(child.kind(), "[" | "]" | ",") {
             continue;
         }
@@ -590,7 +527,6 @@ fn extract_array_elements(
                 );
             }
             _ => {
-                // string, number, boolean, null などは値の位置情報を記録
                 value_ranges.insert(full_key, elem_range);
             }
         }
@@ -599,7 +535,6 @@ fn extract_array_elements(
     }
 }
 
-/// pair ノードからキーと値を抽出するヘルパー関数
 fn extract_pair(
     node: tree_sitter::Node<'_>,
     source: &[u8],
@@ -615,17 +550,14 @@ fn extract_pair(
         return;
     };
 
-    // キー文字列を取得（ダブルクォートを削除）
     let Ok(key_text) = key_node.utf8_text(source) else {
         tracing::warn!("Failed to get key text from node");
         return;
     };
     let key = key_text.trim_matches('"');
 
-    // 完全なキーパスを構築
     let full_key = prefix.map_or_else(|| key.to_string(), |p| format!("{p}{separator}{key}"));
 
-    // キーの位置情報を追加
     key_ranges.insert(full_key.clone(), SourceRange::from_node(&key_node));
 
     match value_node.kind() {
@@ -640,29 +572,20 @@ fn extract_pair(
             );
         }
         _ => {
-            // string, number, boolean, null などは値の位置情報を記録
             value_ranges.insert(full_key, SourceRange::from_node(&value_node));
         }
     }
 }
 
 impl Translation {
-    /// カーソル位置から翻訳キーを取得
+    /// Get translation key at cursor position.
     ///
-    /// キーまたは値の位置にカーソルがある場合、対応するキーを返します。
-    ///
-    /// # Arguments
-    /// * `db` - Salsa データベース
-    /// * `position` - カーソル位置
-    ///
-    /// # Returns
-    /// カーソル位置にあるキー、見つからない場合は None
+    /// Returns the key if cursor is on a key or value position.
     pub fn key_at_position(
         self,
         db: &dyn crate::db::I18nDatabase,
         position: SourcePosition,
     ) -> Option<crate::interned::TransKey<'_>> {
-        // まずキーの範囲をチェック
         let key_ranges = self.key_ranges(db);
         for (key, range) in key_ranges {
             if range.contains(position) {
@@ -670,7 +593,6 @@ impl Translation {
             }
         }
 
-        // 次に値の範囲をチェック
         let value_ranges = self.value_ranges(db);
         for (key, range) in value_ranges {
             if range.contains(position) {
@@ -682,42 +604,23 @@ impl Translation {
     }
 }
 
-/// 翻訳ファイルを読み込む
-///
-/// JSONファイルをパースして、Translation Input を作成します。
-///
-/// # Arguments
-/// * `db` - Salsa データベース
-/// * `file_path` - 翻訳ファイルのパス
-/// * `separator` - キー区切り文字
-///
-/// # Returns
-/// * `Ok(Translation)` - 成功時
-/// * `Err(String)` - エラー時（ファイル読み込みまたはJSONパースエラー）
+/// Load translation file and create a Translation input.
 ///
 /// # Errors
-/// - ファイルの読み込みに失敗した場合
-/// - JSONのパースに失敗した場合
+/// Returns error if file read or JSON parse fails.
 pub fn load_translation_file(
     db: &dyn crate::db::I18nDatabase,
     file_path: &Path,
     separator: &str,
 ) -> Result<Translation, String> {
-    // ファイルを読み込み
     let content = std::fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read translation file: {e}"))?;
 
-    // JSON をパース
     let json: Value =
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
-    // フラット化
     let keys = flatten_json(&json, separator, None);
-
-    // キーと値の位置情報のマッピングを抽出
     let (key_ranges, value_ranges) = extract_key_value_ranges(&content, separator);
-
-    // ファイルパスから言語コードと namespace を検出
     let language = detect_language_from_path(file_path);
     let namespace = detect_namespace_from_path(file_path);
 
@@ -842,17 +745,17 @@ mod tests {
     }
 
     #[rstest]
-    // ファイル名が namespace の場合 (locales/en/common.json → "common")
+    // File name is namespace
     #[case("/path/to/locales/en/common.json", Some("common"))]
     #[case("/path/to/locales/ja/errors.json", Some("errors"))]
     #[case("/path/to/locales/en/translation.json", Some("translation"))]
-    // ディレクトリ名が namespace の場合 (locales/common/en.json → "common")
+    // Directory name is namespace
     #[case("/path/to/locales/common/en.json", Some("common"))]
     #[case("/path/to/locales/errors/ja.json", Some("errors"))]
-    // 単一ファイルの場合 → None
+    // Single file -> None
     #[case("/path/to/locales/en.json", None)]
     #[case("/path/to/messages/ja.json", None)]
-    // 一般的な親ディレクトリは除外
+    // Common parent directories are excluded
     #[case("/path/to/i18n/en.json", None)]
     #[case("/path/to/translations/en.json", None)]
     fn test_detect_namespace_from_path(#[case] path: &str, #[case] expected: Option<&str>) {
@@ -869,30 +772,26 @@ mod tests {
 
         let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        // キーの位置情報を確認
         expect_that!(key_ranges.len(), eq(2));
         expect_that!(key_ranges.contains_key("hello"), eq(true));
         expect_that!(key_ranges.contains_key("goodbye"), eq(true));
 
-        // "hello" キーの位置情報を確認（2行目、2文字目から）
         let hello_range = key_ranges.get("hello");
         expect_that!(hello_range, some(anything()));
         if let Some(range) = hello_range {
-            expect_that!(range.start.line, eq(1)); // 0-indexed
+            expect_that!(range.start.line, eq(1));
             expect_that!(range.start.character, eq(2));
         }
 
-        // 値の位置情報を確認
         expect_that!(value_ranges.len(), eq(2));
         expect_that!(value_ranges.contains_key("hello"), eq(true));
         expect_that!(value_ranges.contains_key("goodbye"), eq(true));
 
-        // "hello" の値 "Hello" の位置情報を確認
         let hello_value_range = value_ranges.get("hello");
         expect_that!(hello_value_range, some(anything()));
         if let Some(range) = hello_value_range {
-            expect_that!(range.start.line, eq(1)); // 0-indexed
-            expect_that!(range.start.character, eq(11)); // "hello": の後
+            expect_that!(range.start.line, eq(1));
+            expect_that!(range.start.character, eq(11));
         }
     }
 
@@ -907,22 +806,21 @@ mod tests {
 
         let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        // キーの位置情報を確認
-        expect_that!(key_ranges.len(), eq(3)); // "common", "common.hello", "common.goodbye"
+        expect_that!(key_ranges.len(), eq(3));
         expect_that!(key_ranges.contains_key("common"), eq(true));
         expect_that!(key_ranges.contains_key("common.hello"), eq(true));
         expect_that!(key_ranges.contains_key("common.goodbye"), eq(true));
 
-        // 値の位置情報を確認（オブジェクト値の "common" は含まれない）
-        expect_that!(value_ranges.len(), eq(2)); // "common.hello", "common.goodbye" のみ
-        expect_that!(value_ranges.contains_key("common"), eq(false)); // オブジェクト値は含まれない
+        // Object values don't have value ranges, only leaf values do
+        expect_that!(value_ranges.len(), eq(2));
+        expect_that!(value_ranges.contains_key("common"), eq(false));
         expect_that!(value_ranges.contains_key("common.hello"), eq(true));
         expect_that!(value_ranges.contains_key("common.goodbye"), eq(true));
     }
 
     #[googletest::test]
     fn test_extract_key_value_ranges_with_dots_in_keys() {
-        // ユーザーが指摘したケース: キー自体に `.` が含まれている場合
+        // Keys containing dots are not split but concatenated with the separator
         let json_text = r#"{
   "hoge.fuga": {
     "piyo": "Hello"
@@ -934,15 +832,12 @@ mod tests {
 
         let (key_ranges, _value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        // "hoge.fuga" と "piyo" を分割せず、"hoge.fuga" というキーとして認識
         expect_that!(key_ranges.contains_key("hoge.fuga"), eq(true));
         expect_that!(key_ranges.contains_key("hoge.fuga.piyo"), eq(true));
 
-        // "hoge" の下の "foo.bar" も同様
         expect_that!(key_ranges.contains_key("hoge"), eq(true));
         expect_that!(key_ranges.contains_key("hoge.foo.bar"), eq(true));
 
-        // 間違った分割結果がないことを確認
         expect_that!(key_ranges.contains_key("hoge.foo"), eq(false));
         expect_that!(key_ranges.contains_key("foo.bar"), eq(false));
     }
@@ -977,41 +872,25 @@ mod tests {
             value_ranges,
         );
 
-        // "hello" キーの位置（1行目、2文字目）にカーソルがある場合
         let position = SourcePosition { line: 1, character: 3 };
         let key = translation.key_at_position(&db, position);
+        assert!(key.is_some());
+        assert_eq!(key.unwrap().text(&db), &"hello".to_string());
 
-        assert!(key.is_some(), "Expected key to be Some, but got None");
-        if let Some(k) = key {
-            assert_eq!(k.text(&db), &"hello".to_string());
-        }
-
-        // "nested.key" の "key" の位置（3行目）にカーソルがある場合
         let position = SourcePosition { line: 3, character: 5 };
         let key = translation.key_at_position(&db, position);
+        assert!(key.is_some());
+        assert_eq!(key.unwrap().text(&db), &"nested.key".to_string());
 
-        assert!(key.is_some(), "Expected key to be Some, but got None");
-        if let Some(k) = key {
-            assert_eq!(k.text(&db), &"nested.key".to_string());
-        }
-
-        // "hello" の値 "Hello" の位置にカーソルがある場合もキーを取得できる
-        let position = SourcePosition { line: 1, character: 12 }; // "Hello" の位置
+        let position = SourcePosition { line: 1, character: 12 };
         let key = translation.key_at_position(&db, position);
+        assert!(key.is_some());
+        assert_eq!(key.unwrap().text(&db), &"hello".to_string());
 
-        assert!(key.is_some(), "Expected key from value position to be Some, but got None");
-        if let Some(k) = key {
-            assert_eq!(k.text(&db), &"hello".to_string());
-        }
-
-        // "nested.key" の値 "Value" の位置にカーソルがある場合もキーを取得できる
-        let position = SourcePosition { line: 3, character: 12 }; // "Value" の位置
+        let position = SourcePosition { line: 3, character: 12 };
         let key = translation.key_at_position(&db, position);
-
-        assert!(key.is_some(), "Expected key from value position to be Some, but got None");
-        if let Some(k) = key {
-            assert_eq!(k.text(&db), &"nested.key".to_string());
-        }
+        assert!(key.is_some());
+        assert_eq!(key.unwrap().text(&db), &"nested.key".to_string());
     }
 
     #[googletest::test]
@@ -1022,7 +901,6 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        // 配列は [index] 形式でフラット化される
         expect_that!(result.get("items[0]"), some(eq(&"apple".to_string())));
         expect_that!(result.get("items[1]"), some(eq(&"banana".to_string())));
         expect_that!(result.get("items[2]"), some(eq(&"cherry".to_string())));
@@ -1083,12 +961,10 @@ mod tests {
 
         let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        // キーの位置情報を確認
         expect_that!(key_ranges.contains_key("items"), eq(true));
         expect_that!(key_ranges.contains_key("items[0]"), eq(true));
         expect_that!(key_ranges.contains_key("items[1]"), eq(true));
 
-        // 値の位置情報を確認（配列要素も値として記録される）
         expect_that!(value_ranges.contains_key("items[0]"), eq(true));
         expect_that!(value_ranges.contains_key("items[1]"), eq(true));
     }
@@ -1104,14 +980,12 @@ mod tests {
 
         let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        // キーの位置情報を確認
         expect_that!(key_ranges.contains_key("users"), eq(true));
         expect_that!(key_ranges.contains_key("users[0]"), eq(true));
         expect_that!(key_ranges.contains_key("users[0].name"), eq(true));
         expect_that!(key_ranges.contains_key("users[1]"), eq(true));
         expect_that!(key_ranges.contains_key("users[1].name"), eq(true));
 
-        // 値の位置情報を確認
         expect_that!(value_ranges.contains_key("users[0].name"), eq(true));
         expect_that!(value_ranges.contains_key("users[1].name"), eq(true));
     }

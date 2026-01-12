@@ -19,9 +19,7 @@ use crate::types::SourceRange;
 /// * `translations` - All translation data
 /// * `key_separator` - Key separator (e.g., ".")
 ///
-/// # 逆方向 prefix マッチ
-/// 完全一致がない場合、最初の子キー（例: `nested.key`）の位置にフォールバックします。
-/// これにより `t('nested')` で `nested.key` がある場合もジャンプできます。
+/// For parent keys (e.g., `nested`), falls back to the first child key (`nested.key`) if no exact match.
 ///
 /// # Returns
 /// All locations where the translation key is defined (returns all if exists in multiple language files)
@@ -229,7 +227,7 @@ mod tests {
     fn find_definitions_fallback_to_child_key() {
         let db = I18nDatabaseImpl::default();
 
-        // 親キー "nested" は存在せず、子キー "nested.key" と "nested.foo" のみ存在
+        // Parent key "nested" doesn't exist, only child keys "nested.key" and "nested.foo"
         let mut key_ranges = HashMap::new();
         key_ranges.insert(
             "nested.key".to_string(),
@@ -260,16 +258,15 @@ mod tests {
             HashMap::new(),
         );
 
-        // "nested" で検索すると、最初の子キー "nested.foo"（アルファベット順）の位置にジャンプ
+        // Searching "nested" jumps to the first child key position
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
         let locations = find_definitions(&db, key, &translations, ".");
 
-        // 子キーの位置が返される
         assert_that!(locations.len(), eq(1));
         assert_that!(locations[0].uri.path(), ends_with("en.json"));
-        // HashMap のイテレーション順序は不定なので、どちらかの位置が返される
+        // HashMap iteration order is unspecified
         let line = locations[0].range.start.line;
         assert_that!(line, any![eq(1), eq(2)]);
     }
@@ -278,7 +275,7 @@ mod tests {
     fn find_definitions_exact_match_takes_priority() {
         let db = I18nDatabaseImpl::default();
 
-        // 親キー "nested" と子キー "nested.key" の両方が存在
+        // Both parent key "nested" and child key "nested.key" exist
         let mut key_ranges = HashMap::new();
         key_ranges.insert(
             "nested".to_string(),
@@ -309,13 +306,12 @@ mod tests {
             HashMap::new(),
         );
 
-        // "nested" で検索すると、完全一致の "nested" の位置にジャンプ（子キーにはフォールバックしない）
+        // Searching "nested" jumps to exact match (no fallback to child)
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
         let locations = find_definitions(&db, key, &translations, ".");
 
-        // 完全一致の位置が返される
         assert_that!(locations.len(), eq(1));
         assert_that!(locations[0].range.start.line, eq(0));
         assert_that!(locations[0].range.start.character, eq(2));
@@ -340,7 +336,7 @@ mod tests {
     fn find_definitions_fallback_to_plural_variant() {
         let db = I18nDatabaseImpl::default();
 
-        // "items" キーは存在せず、"items_one" と "items_other" のみ存在
+        // "items" key doesn't exist, only plural variants "items_one" and "items_other"
         let mut key_ranges = HashMap::new();
         key_ranges.insert(
             "items_one".to_string(),
@@ -371,23 +367,23 @@ mod tests {
             HashMap::new(),
         );
 
-        // "items" で検索すると、最初の plural バリアントの位置にジャンプ
+        // Searching "items" jumps to the first plural variant
         let key = TransKey::new(&db, "items".to_string());
         let translations = vec![translation];
 
         let locations = find_definitions(&db, key, &translations, ".");
 
-        // plural バリアントの位置が返される（_zero, _one, _two... の順で最初にマッチする _one）
+        // First matching plural variant (_one matches before _other in PLURAL_SUFFIXES order)
         assert_that!(locations.len(), eq(1));
         assert_that!(locations[0].uri.path(), ends_with("en.json"));
-        assert_that!(locations[0].range.start.line, eq(1)); // items_one の行
+        assert_that!(locations[0].range.start.line, eq(1));
     }
 
     #[rstest]
     fn find_definitions_fallback_to_ordinal_plural_variant() {
         let db = I18nDatabaseImpl::default();
 
-        // "place" キーは存在せず、ordinal バリアントのみ存在
+        // "place" key doesn't exist, only ordinal variants
         let mut key_ranges = HashMap::new();
         key_ranges.insert(
             "place_ordinal_one".to_string(),
@@ -419,16 +415,15 @@ mod tests {
             HashMap::new(),
         );
 
-        // "place" で検索すると、ordinal plural バリアントの位置にジャンプ
+        // Searching "place" jumps to ordinal plural variant
         let key = TransKey::new(&db, "place".to_string());
         let translations = vec![translation];
 
         let locations = find_definitions(&db, key, &translations, ".");
 
-        // ordinal バリアントの位置が返される
         assert_that!(locations.len(), eq(1));
         assert_that!(locations[0].uri.path(), ends_with("en.json"));
-        // _ordinal_zero, _ordinal_one... の順で最初にマッチする _ordinal_one
+        // _ordinal_one matches first in PLURAL_SUFFIXES order
         assert_that!(locations[0].range.start.line, eq(1));
     }
 
@@ -436,7 +431,7 @@ mod tests {
     fn find_definitions_exact_match_over_plural() {
         let db = I18nDatabaseImpl::default();
 
-        // "items" キーと plural バリアントの両方が存在
+        // Both "items" key and plural variants exist
         let mut key_ranges = HashMap::new();
         key_ranges.insert(
             "items".to_string(),
@@ -475,13 +470,12 @@ mod tests {
             HashMap::new(),
         );
 
-        // "items" で検索すると、完全一致の位置にジャンプ
+        // Searching "items" jumps to exact match
         let key = TransKey::new(&db, "items".to_string());
         let translations = vec![translation];
 
         let locations = find_definitions(&db, key, &translations, ".");
 
-        // 完全一致の位置が返される
         assert_that!(locations.len(), eq(1));
         assert_that!(locations[0].range.start.line, eq(0));
         assert_that!(locations[0].range.start.character, eq(2));

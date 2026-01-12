@@ -1,4 +1,4 @@
-//! LSP Backend 実装
+//! LSP Backend implementation
 
 use std::path::{
     Path,
@@ -7,7 +7,7 @@ use std::path::{
 use std::sync::Arc;
 use std::time::Duration;
 
-/// 翻訳インデックス完了を待機する際のタイムアウト
+/// Timeout for waiting translation index completion.
 pub(crate) const TRANSLATIONS_INDEX_TIMEOUT: Duration = Duration::from_millis(500);
 
 use tokio::sync::Mutex;
@@ -44,13 +44,10 @@ use crate::indexer::workspace::WorkspaceIndexer;
 /// LSP Backend
 #[derive(Clone)]
 pub struct Backend {
-    /// LSP クライアント
     pub client: Client,
-    /// 設定管理
     pub config_manager: Arc<Mutex<ConfigManager>>,
-    /// ワークスペースインデクサー
     pub workspace_indexer: Arc<WorkspaceIndexer>,
-    /// 共有状態（`db`, `source_files`, `translations`, `opened_files`）
+    /// Shared state: `db`, `source_files`, `translations`, `opened_files`
     pub state: ServerState,
 }
 
@@ -65,9 +62,7 @@ impl std::fmt::Debug for Backend {
 }
 
 impl Backend {
-    /// URI をファイルパスに変換
-    ///
-    /// 変換に失敗した場合はログを出力して `None` を返します。
+    /// Converts URI to file path. Returns `None` with warning log on failure.
     pub(crate) fn uri_to_path(uri: &tower_lsp::lsp_types::Url) -> Option<PathBuf> {
         uri.to_file_path().ok().or_else(|| {
             tracing::warn!("Failed to convert URI to file path: {}", uri);
@@ -75,15 +70,11 @@ impl Backend {
         })
     }
 
-    /// 翻訳インデックスの完了を待機
-    ///
-    /// タイムアウト付きで翻訳データのインデックスが完了するまで待機します。
-    /// 完了した場合は `true`、タイムアウトした場合は `false` を返します。
+    /// Waits for translation index completion with timeout.
     pub(crate) async fn wait_for_translations(&self) -> bool {
         self.workspace_indexer.wait_for_translations_indexed(TRANSLATIONS_INDEX_TIMEOUT).await
     }
 
-    /// 設定から診断オプションを作成
     fn create_diagnostic_options(config: &ConfigManager) -> super::diagnostics::DiagnosticOptions {
         let settings = config.get_settings();
         super::diagnostics::DiagnosticOptions {
@@ -98,26 +89,19 @@ impl Backend {
         }
     }
 
-    /// 診断生成に必要な設定を取得
     async fn get_diagnostic_config(&self) -> (super::diagnostics::DiagnosticOptions, String) {
         let config = self.config_manager.lock().await;
         (Self::create_diagnostic_options(&config), config.get_settings().key_separator.clone())
     }
 
-    /// 状態をリセットしてインデックスを初期化
+    /// Resets state and initializes index. Creates new Salsa database to clear old cache.
     async fn reset_state(&self) {
-        // 新しい Salsa データベースを作成（古いキャッシュをクリア）
         *self.state.db.lock().await = I18nDatabaseImpl::default();
-
-        // source_files と translations をクリア
         self.state.source_files.lock().await.clear();
         self.state.translations.lock().await.clear();
-
-        // インデックス状態をリセット
         self.workspace_indexer.reset_indexing_state();
     }
 
-    /// プログレス通知を送信（開始）
     async fn send_progress_begin(&self, token: &NumberOrString, title: &str, message: &str) {
         self.client
             .send_notification::<Progress>(ProgressParams {
@@ -134,7 +118,6 @@ impl Backend {
             .await;
     }
 
-    /// プログレス通知を送信（完了）
     async fn send_progress_end(&self, token: &NumberOrString, message: &str) {
         self.client
             .send_notification::<Progress>(ProgressParams {
@@ -146,16 +129,12 @@ impl Backend {
             .await;
     }
 
-    /// ファイルパスとカーソル位置から翻訳キーのテキストを取得
-    ///
-    /// `SourceFile` または `Translation` のどちらからも取得を試みます。
-    /// キーが見つかった場合は `Some(key_text)` を、見つからない場合は `None` を返します。
+    /// Gets translation key text at cursor position from `SourceFile` or `Translation`.
     pub(crate) async fn get_key_at_position(
         &self,
         file_path: &Path,
         position: crate::types::SourcePosition,
     ) -> Option<String> {
-        // まず SourceFile から試す
         let source_file = {
             let source_files = self.state.source_files.lock().await;
             source_files.get(file_path).copied()
@@ -165,17 +144,14 @@ impl Backend {
         let db = self.state.db.lock().await;
 
         if let Some(source_file) = source_file {
-            // SourceFile からカーソル位置の翻訳キーを取得
             crate::syntax::key_at_position(&*db, source_file, position, key_separator)
                 .map(|key| key.text(&*db).clone())
         } else {
-            // SourceFile が見つからない場合、Translation から試す
             tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
 
             let translations = self.state.translations.lock().await;
             let file_path_str = file_path.to_string_lossy();
 
-            // ファイルパスが一致する Translation を検索
             let result = translations
                 .iter()
                 .find(|t| t.file_path(&*db) == file_path_str.as_ref())
@@ -185,7 +161,7 @@ impl Backend {
         }
     }
 
-    /// 開いているすべてのファイルに diagnostics を送信
+    /// Sends diagnostics to all opened files.
     #[tracing::instrument(skip(self))]
     pub(crate) async fn send_diagnostics_to_opened_files(&self) {
         use crate::input::source::ProgrammingLanguage;
@@ -196,18 +172,15 @@ impl Backend {
         tracing::info!(file_count, "Sending diagnostics to opened files");
 
         for uri in opened_files.iter() {
-            // ファイルパスを取得
             let Some(file_path) = Self::uri_to_path(uri) else {
                 continue;
             };
 
-            // 言語を判定（サポート対象外ならスキップ）
             if ProgrammingLanguage::from_uri(uri.as_str()).is_none() {
                 tracing::debug!("Skipping diagnostics for unsupported file type: {}", uri);
                 continue;
             }
 
-            // SourceFile を取得
             let source_file = {
                 let source_files = self.state.source_files.lock().await;
                 source_files.get(&file_path).copied()
@@ -218,7 +191,6 @@ impl Backend {
                 continue;
             };
 
-            // Diagnostics を生成
             let diagnostics = {
                 let (options, key_separator) = self.get_diagnostic_config().await;
                 let db = self.state.db.lock().await;
@@ -232,21 +204,16 @@ impl Backend {
                 )
             };
 
-            // Diagnostics を送信
             self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
             tracing::debug!(uri = %uri, "Diagnostics sent");
         }
     }
 
-    /// 翻訳ファイルに未使用キー診断を送信
-    ///
-    /// すべてのソースファイルで使用されていないキーに対して、
-    /// 翻訳ファイル上で診断メッセージを表示します。
+    /// Sends unused key diagnostics to translation files.
     #[tracing::instrument(skip(self))]
     pub(crate) async fn send_unused_key_diagnostics(&self) {
         let settings = self.config_manager.lock().await.get_settings().clone();
 
-        // 機能が無効の場合はスキップ
         if !settings.diagnostics.unused_keys {
             tracing::debug!("Unused key diagnostics disabled, skipping");
             return;
@@ -254,7 +221,7 @@ impl Backend {
 
         let key_separator = &settings.key_separator;
 
-        // ロックを短時間で解放するため、必要なデータを先に収集
+        // Collect data before releasing lock
         let source_file_vec: Vec<crate::input::source::SourceFile> =
             self.state.source_files.lock().await.values().copied().collect();
 
@@ -283,7 +250,6 @@ impl Backend {
                 .collect()
         };
 
-        // ロック解放後に診断を送信
         for (file_path, diagnostics) in diagnostics_to_send {
             if let Ok(uri) = tower_lsp::lsp_types::Url::from_file_path(&file_path) {
                 self.client.publish_diagnostics(uri, diagnostics, None).await;
@@ -294,12 +260,10 @@ impl Backend {
         }
     }
 
-    /// ソースファイルを更新または作成し、診断メッセージを生成・送信
+    /// Updates or creates source file and generates diagnostics.
     ///
     /// # Arguments
-    /// * `uri` - ファイルのURI
-    /// * `text` - ファイルの内容
-    /// * `force_create` - 既存の `SourceFile` を無視して新規作成するかどうか
+    /// * `force_create` - If true, ignores existing `SourceFile` and creates new one
     #[tracing::instrument(skip(self, text), fields(uri = %uri))]
     pub(crate) async fn update_and_diagnose(
         &self,
@@ -316,19 +280,15 @@ impl Backend {
 
         tracing::info!(uri = %uri, force_create, "Updating source file and diagnosing");
 
-        // ファイルパスを取得
         let Some(file_path) = Self::uri_to_path(&uri) else {
             return;
         };
 
-        // 言語を判定
         let Some(language) = ProgrammingLanguage::from_uri(uri.as_str()) else {
-            // サポート対象外のファイル（JSON など）は SourceFile として扱わない
             tracing::debug!("Skipping SourceFile creation for unsupported file type: {}", uri);
             return;
         };
 
-        // includePatterns/excludePatterns をチェック
         if !self.is_source_file(&file_path).await {
             tracing::debug!(
                 "Skipping SourceFile creation for file not matching includePatterns: {}",
@@ -337,22 +297,19 @@ impl Backend {
             return;
         }
 
-        // インデックス中は Salsa 操作をスキップして保留キューに追加
-        // NOTE: インデックス中に Salsa セッター（set_text）を呼ぶと、
-        // spawn_blocking 内の Salsa クエリと競合してデッドロックが発生する。
-        // インデックス完了後に process_pending_updates で処理される。
+        // Queue update during indexing to avoid Salsa deadlock.
+        // Salsa setters (set_text) conflict with queries in spawn_blocking.
+        // Processed by process_pending_updates after indexing completes.
         if !self.workspace_indexer.is_indexing_completed() {
             tracing::debug!(
                 uri = %uri,
                 "Queueing SourceFile update during indexing to avoid Salsa lock contention"
             );
-            // 保留キューに追加
             self.state.pending_updates.lock().await.push((uri, text, force_create));
             return;
         }
 
-        // SourceFile を更新
-        // NOTE: デッドロック回避のため、source_files ロックを保持しながら Salsa 操作を行わない
+        // Update SourceFile without holding source_files lock during Salsa operations
         let source_file = {
             let existing = if force_create {
                 None
@@ -362,12 +319,10 @@ impl Backend {
             };
 
             if let Some(existing) = existing {
-                // 既存の SourceFile を更新
                 let mut db = self.state.db.lock().await;
                 existing.set_text(&mut *db).to(text);
                 existing
             } else {
-                // 新規作成
                 let db = self.state.db.lock().await;
                 let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
                 drop(db);
@@ -380,8 +335,6 @@ impl Backend {
 
         tracing::debug!(uri = %uri, "Source file updated");
 
-        // 翻訳データが必要なため、インデックス完了を待つ
-        // タイムアウトした場合は diagnostics をスキップ
         if !self.wait_for_translations().await {
             tracing::debug!(uri = %uri, "Skipping diagnostics - translations not indexed yet");
             return;
@@ -389,7 +342,6 @@ impl Backend {
 
         tracing::debug!(uri = %uri, "Generating diagnostics");
 
-        // 翻訳インデックス完了後に診断メッセージを生成して送信
         let diagnostics = {
             let (options, key_separator) = self.get_diagnostic_config().await;
             let db = self.state.db.lock().await;
@@ -406,40 +358,29 @@ impl Backend {
         self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
         tracing::debug!(uri = %uri, "Diagnostics generated and sent");
 
-        // ソースファイル変更時に翻訳ファイルの未使用キー診断も更新
         self.send_unused_key_diagnostics().await;
     }
 
-    /// ワークスペースフォルダを取得
-    ///
-    /// クライアントからワークスペースフォルダのリストを取得します。
-    /// フォルダが設定されていない場合は空のVecを返します。
+    /// Gets workspace folders from client.
     ///
     /// # Errors
-    /// クライアントとの通信に失敗した場合
+    /// Returns error on client communication failure.
     pub(crate) async fn get_workspace_folders(&self) -> Result<Vec<WorkspaceFolder>> {
         self.client.workspace_folders().await.map(Option::unwrap_or_default)
     }
 
-    /// ワークスペースを再インデックス
-    ///
-    /// 新しい Salsa データベースを作成して、全ファイルを再インデックスします。
-    /// これにより、設定変更が反映され、古いキャッシュがクリアされます。
+    /// Reindexes workspace with new Salsa database and clears old cache.
     #[tracing::instrument(skip(self))]
     pub(crate) async fn reindex_workspace(&self) {
         tracing::info!("Starting workspace reindex");
 
-        // 状態をリセット
         self.reset_state().await;
 
-        // ワークスペースを再インデックス
         if let Ok(workspace_folders) = self.get_workspace_folders().await {
             for folder in workspace_folders {
                 if let Ok(workspace_path) = folder.uri.to_file_path() {
-                    // 進捗トークン
                     let token = NumberOrString::String("workspace-reindexing".to_string());
 
-                    // 進捗開始通知
                     self.send_progress_begin(
                         &token,
                         "Reindexing Workspace",
@@ -451,11 +392,9 @@ impl Backend {
                     let db = self.state.db.lock().await.clone();
                     let source_files = self.state.source_files.clone();
 
-                    // 進捗報告用チャネル
                     let (progress_tx, mut progress_rx) =
                         tokio::sync::mpsc::channel::<(u32, u32)>(100);
 
-                    // Progress Report 送信タスク
                     let progress_task = {
                         let client = self.client.clone();
                         let token = token.clone();
@@ -481,7 +420,6 @@ impl Backend {
                         })
                     };
 
-                    // 進捗報告コールバック
                     let progress_callback = move |current: u32, total: u32| {
                         let _ = progress_tx.try_send((current, total));
                     };
@@ -498,13 +436,10 @@ impl Backend {
                         )
                         .await;
 
-                    // config_manager のロックを解放
                     drop(config_manager);
 
-                    // Progress 送信完了を待つ
                     let _ = progress_task.await;
 
-                    // 進捗完了通知
                     match index_result {
                         Ok(()) => {
                             self.send_progress_end(&token, "Reindexing complete").await;
@@ -521,9 +456,7 @@ impl Backend {
         }
     }
 
-    /// 翻訳ファイルを再読み込み
-    ///
-    /// 指定されたJSONファイルを再読み込みし、translations を更新します。
+    /// Reloads translation file and updates translations.
     #[tracing::instrument(skip(self), fields(file_path = %file_path.display()))]
     pub(crate) async fn reload_translation_file(&self, file_path: &Path) {
         let config_manager = self.config_manager.lock().await;
@@ -536,11 +469,9 @@ impl Backend {
             Ok(new_translation) => {
                 let mut translations = self.state.translations.lock().await;
 
-                // 既存のエントリを削除
                 let file_path_str = file_path.to_string_lossy().to_string();
                 translations.retain(|t| t.file_path(&*db) != &file_path_str);
 
-                // 新しいエントリを追加
                 translations.push(new_translation);
                 drop(translations);
 
@@ -552,9 +483,7 @@ impl Backend {
         }
     }
 
-    /// 翻訳ファイルを削除
-    ///
-    /// 指定されたファイルに対応する翻訳エントリを translations から削除します。
+    /// Removes translation entry for the specified file.
     #[tracing::instrument(skip(self), fields(file_path = %file_path.display()))]
     pub(crate) async fn remove_translation_file(&self, file_path: &Path) {
         let db = self.state.db.lock().await;
@@ -569,11 +498,8 @@ impl Backend {
         }
     }
 
-    /// ファイルウォッチを登録
-    ///
-    /// 設定ファイルと翻訳ファイルの変更を監視するためのファイルウォッチを登録します。
+    /// Registers file watchers for config and translation files.
     pub(crate) async fn register_file_watchers(&self) {
-        // 設定から翻訳ファイルのパターンを取得
         let translation_pattern = {
             let config_manager = self.config_manager.lock().await;
             config_manager.get_settings().translation_files.file_pattern.clone()
@@ -581,12 +507,10 @@ impl Backend {
 
         let Ok(register_options) = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
             watchers: vec![
-                // 設定ファイル (.js-i18n.json)
                 FileSystemWatcher {
                     glob_pattern: GlobPattern::String("**/.js-i18n.json".to_string()),
                     kind: Some(WatchKind::all()),
                 },
-                // 翻訳ファイル
                 FileSystemWatcher {
                     glob_pattern: GlobPattern::String(translation_pattern.clone()),
                     kind: Some(WatchKind::all()),
@@ -612,12 +536,10 @@ impl Backend {
         }
     }
 
-    /// 設定ファイルかどうかを判定
     pub(crate) fn is_config_file(file_path: &Path) -> bool {
         file_path.file_name().is_some_and(|name| name == ".js-i18n.json")
     }
 
-    /// 翻訳ファイルかどうかを判定
     pub(crate) async fn is_translation_file(&self, file_path: &Path) -> bool {
         let file_pattern = {
             let config_manager = self.config_manager.lock().await;
@@ -628,24 +550,15 @@ impl Backend {
             .is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
     }
 
-    /// ソースファイルとして処理対象かどうかを判定
-    ///
-    /// `includePatterns` にマッチし、かつ `excludePatterns` にマッチしないファイルを対象とする。
-    /// パターンマッチングはワークスペースルートからの相対パスで行われる。
+    /// Checks if file matches `includePatterns` and not `excludePatterns`.
     pub(crate) async fn is_source_file(&self, file_path: &Path) -> bool {
         let config_manager = self.config_manager.lock().await;
-
-        // FileMatcher があればそれを使用、なければ false
         config_manager.file_matcher().is_some_and(|matcher| matcher.is_source_file(file_path))
     }
 
-    /// 保留キューに溜まった更新を処理
-    ///
-    /// インデックス完了後に呼び出され、インデックス中にスキップされた
-    /// ファイル更新を順次処理します。
+    /// Processes pending updates queued during indexing.
     #[tracing::instrument(skip(self))]
     pub(crate) async fn process_pending_updates(&self) {
-        // 保留キューを取得してクリア
         let pending_updates = {
             let mut pending = self.state.pending_updates.lock().await;
             std::mem::take(&mut *pending)
@@ -660,22 +573,18 @@ impl Backend {
 
         for (uri, text, force_create) in pending_updates {
             tracing::debug!(uri = %uri, "Processing pending update");
-            // update_and_diagnose を再帰呼び出し
-            // インデックスは完了しているので、今度は通常通り処理される
             self.update_and_diagnose(uri, text, force_create).await;
         }
 
         tracing::info!("Pending updates processed");
     }
 
-    /// 設定ファイルの変更を処理
+    /// Handles config file changes (create/modify/delete).
     ///
-    /// 設定ファイルが作成、変更、または削除された場合に呼び出され、
-    /// 以下の処理を行う:
-    /// 1. 設定の再読み込み（またはデフォルトへのリセット）
-    /// 2. ファイルウォッチャーの再登録（パターンが変わった場合）
-    /// 3. ワークスペースの再インデックス
-    /// 4. 診断の更新
+    /// 1. Reloads config (or resets to default on delete)
+    /// 2. Re-registers file watchers if pattern changed
+    /// 3. Reindexes workspace
+    /// 4. Updates diagnostics
     pub(crate) async fn handle_config_file_change(
         &self,
         file_path: &Path,
@@ -683,19 +592,15 @@ impl Backend {
     ) {
         tracing::info!("Config file changed: {:?}, type: {:?}", file_path, change_type);
 
-        // 設定ファイルの親ディレクトリからワークスペースルートを取得
         let workspace_root = file_path.parent().map(Path::to_path_buf);
 
-        // 変更前のパターンを保存（ウォッチャー再登録判定用）
         let old_pattern = {
             let config_manager = self.config_manager.lock().await;
             config_manager.get_settings().translation_files.file_pattern.clone()
         };
 
-        // 変更タイプに応じた処理
         match change_type {
             FileChangeType::CREATED | FileChangeType::CHANGED => {
-                // 設定ファイルを再読み込み
                 let mut config_manager = self.config_manager.lock().await;
                 match config_manager.load_settings(workspace_root) {
                     Ok(()) => {
@@ -712,12 +617,11 @@ impl Backend {
                             )
                             .await;
                         tracing::error!("Failed to reload configuration: {}", error);
-                        return; // エラー時は処理を中断（古い設定を維持）
+                        return;
                     }
                 }
             }
             FileChangeType::DELETED => {
-                // 設定ファイルが削除された場合はデフォルト設定にリセット
                 let mut config_manager = self.config_manager.lock().await;
                 match config_manager.update_settings(crate::config::I18nSettings::default()) {
                     Ok(()) => {
@@ -742,19 +646,16 @@ impl Backend {
                 }
             }
             _ => {
-                // 未知の変更タイプは無視
                 tracing::warn!("Unknown file change type: {:?}", change_type);
                 return;
             }
         }
 
-        // 新しいパターンを取得
         let new_pattern = {
             let config_manager = self.config_manager.lock().await;
             config_manager.get_settings().translation_files.file_pattern.clone()
         };
 
-        // パターンが変わった場合はウォッチャーを再登録
         if old_pattern != new_pattern {
             tracing::info!(
                 "Translation file pattern changed: '{}' -> '{}', re-registering watchers",
@@ -764,19 +665,17 @@ impl Backend {
             self.register_file_watchers().await;
         }
 
-        // ワークスペースを再インデックス
         self.reindex_workspace().await;
 
-        // 診断を更新
         self.send_diagnostics_to_opened_files().await;
         self.send_unused_key_diagnostics().await;
     }
 }
 
 // =============================================================================
-// LanguageServer Trait 実装
+// LanguageServer Trait Implementation
 // =============================================================================
-// 各メソッドは handlers モジュールの対応する関数に委譲します。
+// Each method delegates to corresponding handler function.
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
@@ -891,32 +790,22 @@ impl LanguageServer for Backend {
     }
 }
 
-/// 有効な言語を決定する
+/// Resolves effective language.
 ///
-/// 優先順位:
-/// 1. `current_language`（ランタイム状態）
-/// 2. `primary_languages` の順序でワークスペースの言語を検索
-/// 3. ワークスペースの最初の言語
-///
-/// # Arguments
-/// * `current_language` - 現在選択されている言語（コマンドで設定）
-/// * `primary_languages` - 優先言語のリスト（設定ファイル）
-/// * `available_languages` - ワークスペースで利用可能な言語
-///
-/// # Returns
-/// 有効な言語。利用可能な言語がない場合は `None`
+/// Priority:
+/// 1. `current_language` (runtime state)
+/// 2. First match in `primary_languages`
+/// 3. First available language
 #[must_use]
 pub fn resolve_effective_language(
     current_language: Option<&str>,
     primary_languages: Option<&[String]>,
     available_languages: &[String],
 ) -> Option<String> {
-    // 1. current_language が設定されていればそれを使用
     if let Some(current) = current_language {
         return Some(current.to_string());
     }
 
-    // 2. primary_languages の順序で available_languages を検索
     if let Some(primaries) = primary_languages {
         for primary in primaries {
             if available_languages.contains(primary) {
@@ -925,25 +814,15 @@ pub fn resolve_effective_language(
         }
     }
 
-    // 3. 最初に見つかった言語
     available_languages.first().cloned()
 }
 
-/// 翻訳から言語リストを取得しソートする
+/// Collects and sorts languages from translations.
 ///
-/// ソート順:
-/// 1. `current_language`（設定されている場合）
-/// 2. `primary_languages`（設定順）
-/// 3. その他（アルファベット順）
-///
-/// # Arguments
-/// * `db` - Salsa データベース
-/// * `translations` - 翻訳データのリスト
-/// * `current_language` - 現在選択されている言語
-/// * `primary_languages` - 優先言語のリスト
-///
-/// # Returns
-/// ソートされた言語リスト
+/// Sort order:
+/// 1. `current_language`
+/// 2. `primary_languages` (config order)
+/// 3. Others (alphabetical)
 #[must_use]
 pub fn collect_sorted_languages(
     db: &dyn crate::db::I18nDatabase,
@@ -956,12 +835,6 @@ pub fn collect_sorted_languages(
     sort_languages(languages, current_language, primary_languages)
 }
 
-/// 言語リストをソートする
-///
-/// ソート順:
-/// 1. `current_language`（設定されている場合）
-/// 2. `primary_languages`（設定順）
-/// 3. その他（アルファベット順）
 fn sort_languages(
     languages: std::collections::HashSet<String>,
     current_language: Option<&str>,
@@ -970,14 +843,12 @@ fn sort_languages(
     let mut result = Vec::new();
     let mut remaining: std::collections::HashSet<_> = languages;
 
-    // 1. current_language を最初に
     if let Some(current) = current_language
         && remaining.remove(current)
     {
         result.push(current.to_string());
     }
 
-    // 2. primary_languages を順番に
     if let Some(primaries) = primary_languages {
         for primary in primaries {
             if remaining.remove(primary) {
@@ -986,7 +857,6 @@ fn sort_languages(
         }
     }
 
-    // 3. 残りをアルファベット順
     let mut others: Vec<_> = remaining.into_iter().collect();
     others.sort();
     result.extend(others);
@@ -1002,12 +872,10 @@ mod tests {
 
     use super::sort_languages;
 
-    /// 期待する言語リストを作成するヘルパー
     fn langs(list: &[&str]) -> Vec<String> {
         list.iter().copied().map(String::from).collect()
     }
 
-    /// テスト用の言語セットを作成するヘルパー
     fn lang_set(list: &[&str]) -> HashSet<String> {
         list.iter().copied().map(String::from).collect()
     }
@@ -1015,20 +883,14 @@ mod tests {
     #[rstest]
     fn sort_languages_no_priority() {
         let languages = lang_set(&["en", "ja", "zh"]);
-
         let result = sort_languages(languages, None, None);
-
-        // アルファベット順
         assert_eq!(result, langs(&["en", "ja", "zh"]));
     }
 
     #[rstest]
     fn sort_languages_with_current_language() {
         let languages = lang_set(&["en", "ja", "zh"]);
-
         let result = sort_languages(languages, Some("ja"), None);
-
-        // ja が最初、残りはアルファベット順
         assert_eq!(result, langs(&["ja", "en", "zh"]));
     }
 
@@ -1036,10 +898,7 @@ mod tests {
     fn sort_languages_with_primary_languages() {
         let languages = lang_set(&["en", "ja", "zh"]);
         let primaries = langs(&["zh", "ja"]);
-
         let result = sort_languages(languages, None, Some(&primaries));
-
-        // zh, ja の順、残りはアルファベット順
         assert_eq!(result, langs(&["zh", "ja", "en"]));
     }
 
@@ -1047,10 +906,7 @@ mod tests {
     fn sort_languages_current_overrides_primary() {
         let languages = lang_set(&["en", "ja", "zh"]);
         let primaries = langs(&["zh", "ja"]);
-
         let result = sort_languages(languages, Some("en"), Some(&primaries));
-
-        // en（current）が最初、次に zh, ja（primary）、残りはアルファベット順
         assert_eq!(result, langs(&["en", "zh", "ja"]));
     }
 
@@ -1058,22 +914,14 @@ mod tests {
     fn sort_languages_current_in_primary_no_duplicate() {
         let languages = lang_set(&["en", "ja", "zh"]);
         let primaries = langs(&["ja", "zh"]);
-
-        // current_language が primary にも含まれている場合
         let result = sort_languages(languages, Some("ja"), Some(&primaries));
-
-        // ja は current として最初に来る、primary の ja はスキップされる
         assert_eq!(result, langs(&["ja", "zh", "en"]));
     }
 
     #[rstest]
     fn sort_languages_nonexistent_current_ignored() {
         let languages = lang_set(&["en", "ja", "zh"]);
-
-        // 存在しない言語を current_language に指定
         let result = sort_languages(languages, Some("fr"), None);
-
-        // fr は無視され、アルファベット順
         assert_eq!(result, langs(&["en", "ja", "zh"]));
     }
 
@@ -1081,11 +929,7 @@ mod tests {
     fn sort_languages_nonexistent_primary_ignored() {
         let languages = lang_set(&["en", "ja", "zh"]);
         let primaries = langs(&["fr", "de"]);
-
-        // 存在しない言語を primary_languages に指定
         let result = sort_languages(languages, None, Some(&primaries));
-
-        // fr, de は無視され、アルファベット順
         assert_eq!(result, langs(&["en", "ja", "zh"]));
     }
 }

@@ -1,23 +1,19 @@
-//! ソースファイル入力定義
+//! Source file input definitions.
 
 use std::path::Path;
 
-/// ソースファイルの内容
 #[salsa::input]
 pub struct SourceFile {
-    /// ファイルのURI
     #[returns(ref)]
     pub uri: String,
 
-    /// ファイルの内容
     #[returns(ref)]
     pub text: String,
 
-    /// 言語
     pub language: ProgrammingLanguage,
 }
 
-/// サポートされるプログラミング言語
+/// Supported programming languages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProgrammingLanguage {
     JavaScript,
@@ -27,10 +23,7 @@ pub enum ProgrammingLanguage {
 }
 
 impl ProgrammingLanguage {
-    /// ファイル URI から言語を推論
-    ///
-    /// # Returns
-    /// 対応する言語、またはサポート対象外の場合は `None`
+    /// Infers the programming language from file extension.
     #[must_use]
     pub fn from_uri(uri: &str) -> Option<Self> {
         let file_path = Path::new(uri);
@@ -43,7 +36,6 @@ impl ProgrammingLanguage {
         }
     }
 
-    /// Tree-sitter の Language を取得
     #[must_use]
     pub fn tree_sitter_language(&self) -> tree_sitter::Language {
         match self {

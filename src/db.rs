@@ -1,14 +1,11 @@
-//! Salsa データベース定義
+//! Salsa database definitions.
 
-/// I18n LSP のデータベーストレイト
 #[salsa::db]
 pub trait I18nDatabase: salsa::Database + Send {}
 
-/// I18n データベースの実装
 #[salsa::db]
 #[derive(Clone, Default)]
 pub struct I18nDatabaseImpl {
-    /// Salsa のストレージ
     storage: salsa::Storage<Self>,
 }
 

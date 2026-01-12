@@ -43,56 +43,50 @@ fn extract_function_name(node: Node<'_>, source_bytes: &[u8]) -> Option<String> 
     }
 }
 
-/// 既知のグローバル翻訳関数のリスト
+/// Known global translation functions (e.g., `i18next.t`, `i18n.t`)
 const KNOWN_GLOBAL_TRANS_FNS: &[&str] = &["i18next.t", "i18n.t"];
 
-/// 翻訳関数のメソッド呼び出しとして許可されるメソッド名
+/// Allowed method names for translation function method calls (e.g., `t.rich()`)
 const ALLOWED_TRANS_FN_METHODS: &[&str] = &["rich", "markup", "raw"];
 
-/// 翻訳関数かどうかを判定
+/// Determines whether a function name represents a translation function.
 ///
-/// - `t` は常に許可
-/// - スコープに登録されている関数は許可
-/// - `i18next.t` などの既知のグローバル関数は許可
-/// - `t.rich` などのメソッド呼び出しはベース名でスコープを確認
+/// Returns true if:
+/// - The name is `t` (always allowed)
+/// - The name is registered in the current scope
+/// - The name is a known global function (`i18next.t`, `i18n.t`)
+/// - The name is a method call on `t` or a scoped function (e.g., `t.rich`, `myT.markup`)
 fn is_trans_fn(trans_fn_name: &str, scopes: &Scopes<'_>) -> bool {
-    // "t" は常に許可
     if trans_fn_name == "t" {
         return true;
     }
 
-    // スコープに登録されている関数は許可
     if scopes.has_scope(trans_fn_name) {
         return true;
     }
 
-    // 既知のグローバル翻訳関数は許可
     if KNOWN_GLOBAL_TRANS_FNS.contains(&trans_fn_name) {
         return true;
     }
 
-    // member_expression の場合（例: t.rich, myT.markup）
-    if let Some((base, method)) = trans_fn_name.split_once('.') {
-        // 許可されたメソッドの場合、ベース名でスコープを確認
-        if ALLOWED_TRANS_FN_METHODS.contains(&method) {
-            return base == "t" || scopes.has_scope(base);
-        }
+    if let Some((base, method)) = trans_fn_name.split_once('.')
+        && ALLOWED_TRANS_FN_METHODS.contains(&method)
+    {
+        return base == "t" || scopes.has_scope(base);
     }
 
     false
 }
 
-/// スコープ検索用に関数名を前処理
+/// Preprocesses a function name for scope lookup.
 ///
-/// - `t.rich` → `t` のようにベース名に変換
-/// - 既知のグローバル関数やスコープに登録されている関数はそのまま
+/// Converts method calls like `t.rich` to their base name `t` for scope resolution.
+/// Returns the original name if it's directly registered in scope or is a known global function.
 fn preprocess_trans_fn_name_for_scope<'a>(trans_fn_name: &'a str, scopes: &Scopes<'_>) -> &'a str {
-    // スコープに直接登録されている場合はそのまま
     if scopes.has_scope(trans_fn_name) {
         return trans_fn_name;
     }
 
-    // member_expression の場合、ベース名を試す
     if let Some((base, method)) = trans_fn_name.split_once('.')
         && ALLOWED_TRANS_FN_METHODS.contains(&method)
         && (base == "t" || scopes.has_scope(base))
@@ -100,7 +94,6 @@ fn preprocess_trans_fn_name_for_scope<'a>(trans_fn_name: &'a str, scopes: &Scope
         return base;
     }
 
-    // 既知のグローバル関数や "t" の場合はそのまま（スコープなしで動作）
     trans_fn_name
 }
 
@@ -119,7 +112,7 @@ fn get_closest_node<'a>(node: Node<'a>, target_types: &[&str]) -> Option<Node<'a
 }
 
 /// Gets the range of a tree-sitter node
-#[allow(clippy::cast_possible_truncation)] // ソースファイルの行・列が42億を超えることはない
+#[allow(clippy::cast_possible_truncation)] // Source file lines/columns will never exceed 4 billion
 fn get_node_range(node: Node<'_>) -> Range {
     let start_pos = node.start_position();
     let end_pos = node.end_position();
@@ -153,14 +146,13 @@ pub fn analyze_trans_fn_calls(
 
     let mut scopes = Scopes::new();
 
-    // デフォルトのスコープを追加
+    // Add default scope for bare `t` function
     scopes.push_scope("t".to_string(), ScopeInfo::new(root_node, GetTransFnDetail::new("t")));
 
-    // 複数のクエリからのマッチを収集し、ソースコードの位置順で処理する。
-    // これにより、i18next.scm と react-i18next.scm など別々のクエリファイルでも、
-    // 翻訳関数の定義が関数呼び出しより前に処理されることが保証される。
-
-    // 全てのクエリからキャプチャを収集
+    // Collect matches from all queries and process them in source position order.
+    // This ensures that translation function definitions (e.g., useTranslation) are
+    // processed before their call sites, even when defined in separate query files
+    // (e.g., i18next.scm and react-i18next.scm).
     let mut all_captures: Vec<(usize, CaptureName, Node<'_>, usize)> = Vec::new();
 
     for (query_idx, query) in queries.iter().enumerate() {
@@ -179,7 +171,6 @@ pub fn analyze_trans_fn_calls(
                     continue;
                 };
 
-                // GetTransFn と CallTransFn のみを収集
                 if matches!(capture_name, CaptureName::GetTransFn | CaptureName::CallTransFn) {
                     all_captures.push((
                         query_idx,
@@ -192,19 +183,15 @@ pub fn analyze_trans_fn_calls(
         }
     }
 
-    // ソースコードの位置順でソート（開始位置が同じ場合は GetTransFn を先に）
+    // Sort by source position; when positions are equal, process GetTransFn before CallTransFn
     all_captures.sort_by(|a, b| {
-        a.3.cmp(&b.3).then_with(|| {
-            // GetTransFn を CallTransFn より先に処理する
-            match (&a.1, &b.1) {
-                (CaptureName::GetTransFn, CaptureName::CallTransFn) => std::cmp::Ordering::Less,
-                (CaptureName::CallTransFn, CaptureName::GetTransFn) => std::cmp::Ordering::Greater,
-                _ => std::cmp::Ordering::Equal,
-            }
+        a.3.cmp(&b.3).then_with(|| match (&a.1, &b.1) {
+            (CaptureName::GetTransFn, CaptureName::CallTransFn) => std::cmp::Ordering::Less,
+            (CaptureName::CallTransFn, CaptureName::GetTransFn) => std::cmp::Ordering::Greater,
+            _ => std::cmp::Ordering::Equal,
         })
     });
 
-    // 位置順で処理
     for (query_idx, capture_name, node, _) in all_captures {
         let Some(query) = queries.get(query_idx) else {
             continue;
@@ -234,30 +221,27 @@ pub fn analyze_trans_fn_calls(
                     continue;
                 };
 
-                // 翻訳関数かどうかを判定
                 if !is_trans_fn(&call_trans_fn.trans_fn_name, &scopes) {
                     continue;
                 }
 
-                // スコープ検索用に関数名を前処理（t.rich → t など）
+                // Preprocess function name for scope lookup (e.g., t.rich -> t)
                 let scope_name =
                     preprocess_trans_fn_name_for_scope(&call_trans_fn.trans_fn_name, &scopes);
 
                 cleanup_out_of_scopes(&mut scopes, scope_name, node);
 
-                // スコープ情報を取得（グローバル関数の場合はスコープがない）
                 let current_scope = scopes.current_scope(scope_name);
                 let key_prefix = current_scope.and_then(|s| s.trans_fn.key_prefix.clone());
 
-                // namespace の優先度:
-                // 1. explicit_namespace (t("key", { ns: "common" }))
-                // 2. スコープの namespace (useTranslation("ns"))
+                // Namespace priority:
+                // 1. explicit_namespace: t("key", { ns: "common" })
+                // 2. scope namespace: useTranslation("ns")
                 let namespace = call_trans_fn
                     .explicit_namespace
                     .clone()
                     .or_else(|| current_scope.and_then(|s| s.trans_fn.namespace.clone()));
 
-                // 配列形式の namespaces はスコープから取得
                 let namespaces = current_scope.and_then(|s| s.trans_fn.namespaces.clone());
 
                 let arg_key_node = call_trans_fn.arg_key_node;
@@ -281,7 +265,7 @@ pub fn analyze_trans_fn_calls(
     Ok(calls)
 }
 
-/// スコープから外れた場合に自動的にポップする
+/// Pops scopes that the current node has exited from
 fn cleanup_out_of_scopes(scopes: &mut Scopes<'_>, trans_fn_name: &str, current_node: Node<'_>) {
     while scopes.current_scope(trans_fn_name).is_some()
         && !scopes.is_node_in_current_scope(trans_fn_name, current_node)
@@ -290,12 +274,12 @@ fn cleanup_out_of_scopes(scopes: &mut Scopes<'_>, trans_fn_name: &str, current_n
     }
 }
 
-/// namespace separator を使ってキーから namespace を解析する
+/// Parses a namespace from a translation key using the namespace separator.
 ///
 /// # Examples
-/// - `parse_key_with_namespace("common:hello", Some(":"))` → `(Some("common"), "hello")`
-/// - `parse_key_with_namespace("hello", Some(":"))` → `(None, "hello")`
-/// - `parse_key_with_namespace("common:hello", None)` → `(None, "common:hello")`
+/// - `parse_key_with_namespace("common:hello", Some(":"))` -> `(Some("common"), "hello")`
+/// - `parse_key_with_namespace("hello", Some(":"))` -> `(None, "hello")`
+/// - `parse_key_with_namespace("common:hello", None)` -> `(None, "common:hello")`
 #[must_use]
 pub fn parse_key_with_namespace(
     key: &str,
@@ -315,7 +299,7 @@ fn extract_string_arguments(args_node: Node<'_>, source_bytes: &[u8]) -> Vec<Opt
     let mut strings = Vec::new();
 
     for i in 0..args_node.named_child_count() {
-        #[allow(clippy::cast_possible_truncation)] // 引数の数が 42 億を超えることはない
+        #[allow(clippy::cast_possible_truncation)] // Argument count will never exceed 4 billion
         if let Some(child) = args_node.named_child(i as u32) {
             if child.kind() == "string"
                 && let Some(fragment) = child.named_child(0)
@@ -380,7 +364,6 @@ fn parse_get_trans_fn_captures(
                     namespace = extract_node_text(capture.node, source_bytes);
                 }
                 CaptureName::NamespaceItem => {
-                    // 配列形式の namespace の個別要素
                     if let Some(ns_item) = extract_node_text(capture.node, source_bytes) {
                         namespace_items.push(ns_item);
                     }
@@ -456,7 +439,7 @@ fn parse_call_trans_fn_captures<'a>(
     while let Some(match_) = matches.next_mut() {
         for capture in match_.captures {
             let Some(cap_name) = cap_names.get(capture.index as usize) else {
-                continue; // 無効なインデックスの場合はスキップ
+                continue;
             };
 
             let Ok(capture_name) = cap_name.parse::<CaptureName>() else {
@@ -472,14 +455,14 @@ fn parse_call_trans_fn_captures<'a>(
                     key_arg_node = Some(capture.node);
                 }
                 CaptureName::CallTransFnName => {
-                    // 関数名を抽出 (e.g., t, t.rich, i18next.t)
+                    // Extract function name (e.g., t, t.rich, i18next.t)
                     trans_fn_name = extract_function_name(capture.node, source_bytes);
                 }
                 CaptureName::TransArgs => {
                     trans_args_node = Some(capture.node);
                 }
                 CaptureName::ExplicitNamespace => {
-                    // t("key", { ns: "common" }) の ns 値
+                    // The ns value from t("key", { ns: "common" })
                     explicit_namespace = extract_node_text(capture.node, source_bytes);
                 }
                 _ => {}
@@ -487,7 +470,7 @@ fn parse_call_trans_fn_captures<'a>(
         }
     }
 
-    // 引数ノードの決定: 文字列引数があればそれを使用、なければ空の引数かチェック
+    // Determine the argument node: use string argument if available, otherwise check for empty args
     let arg_key_node = if let Some(node) = key_arg_node {
         node
     } else if let Some(args_node) = trans_args_node {
@@ -498,7 +481,7 @@ fn parse_call_trans_fn_captures<'a>(
         if inner.is_empty() {
             args_node
         } else {
-            // t(someVar) など文字列以外の引数は無効
+            // Non-string arguments like t(someVar) are invalid
             return Err(AnalyzerError::ParseFailed);
         }
     } else {
@@ -527,13 +510,11 @@ mod tests {
 
     use super::*;
 
-    /// JavaScript 言語パーサー
     #[fixture]
     fn js_lang() -> Language {
         tree_sitter_javascript::LANGUAGE.into()
     }
 
-    /// Tree-sitter クエリ（すべてのライブラリ対応）
     #[fixture]
     fn queries(js_lang: Language) -> Vec<Query> {
         let query_files = [
@@ -718,7 +699,7 @@ mod tests {
         );
     }
 
-    // 3. key_prefix機能テスト
+    // key_prefix tests
 
     #[rstest]
     fn test_key_prefix_application(queries: Vec<Query>, js_lang: Language) {
@@ -729,7 +710,6 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
-        // プレフィックスが適用されたkeyと、元のarg_keyをチェック
         assert_that!(
             calls,
             elements_are![all![
@@ -785,7 +765,7 @@ mod tests {
         );
     }
 
-    // 4. エッジケーステスト
+    // Edge case tests
 
     #[rstest]
     fn test_empty_code(queries: Vec<Query>, js_lang: Language) {
@@ -793,19 +773,19 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
-        assert_that!(calls, is_empty()); // 空チェックに最適
+        assert_that!(calls, is_empty());
     }
 
     #[rstest]
     fn test_undefined_trans_fn(queries: Vec<Query>, js_lang: Language) {
         let code = r#"
-            // 翻訳関数が定義されていない状態で呼び出し
+            // Call without explicit useTranslation declaration
             const message = t("undefined.key");
             "#;
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
-        // デフォルトスコープ "t" が存在するため、呼び出しは検出される
+        // Default scope "t" exists, so the call is detected
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("undefined.key"))]);
     }
 
@@ -814,39 +794,35 @@ mod tests {
         let code = r#"
             const { t } = useTranslation();
 
-            // 有効な呼び出し
+            // Valid call
             t("valid.key");
 
-            // 無効な呼び出し（数値引数）
+            // Invalid: numeric argument
             t(123);
 
-            // 無効な呼び出し（変数引数）
+            // Invalid: variable argument
             const key = "variable.key";
             t(key);
 
-            // 無効な呼び出し（テンプレート文字列）
+            // Invalid: template string
             t(`template.${key}`);
             "#;
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
-        // 文字列リテラルのみが有効
+        // Only string literals are valid
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("valid.key"))]);
     }
 
-    // 4.5. テーブルドリブンテスト - 引数パターン
+    // Table-driven tests for argument patterns
 
-    /// 様々な引数パターンのテスト
     #[rstest]
-    // 引用符のパターン
     #[case::double_quotes(r#"t("double.quotes")"#, "double.quotes")]
     #[case::single_quotes(r"t('single.quotes')", "single.quotes")]
-    // 空白のパターン
     #[case::no_spaces(r#"t("no.spaces")"#, "no.spaces")]
     #[case::spaces_around(r#"t( "spaces.around" )"#, "spaces.around")]
     #[case::multiple_spaces(r#"t(  "multiple.spaces"  )"#, "multiple.spaces")]
     #[case::newlines("t(\n  \"newlines\"\n)", "newlines")]
-    // 複雑なキー名
     #[case::dots_in_key(r#"t("section.subsection.item")"#, "section.subsection.item")]
     #[case::underscores(r#"t("snake_case_key")"#, "snake_case_key")]
     #[case::numbers(r#"t("item123.section456")"#, "item123.section456")]
@@ -867,7 +843,6 @@ mod tests {
         let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
-        // keyとarg_keyの両方をチェック
         assert_that!(
             calls,
             elements_are![all![
@@ -877,7 +852,6 @@ mod tests {
         );
     }
 
-    /// 複数引数を持つ翻訳関数呼び出しのテスト
     #[rstest]
     #[case::with_object(r#"t("key.with.object", { count: 1 })"#)]
     #[case::with_number(r#"t("key.with.number", 42)"#)]
@@ -898,11 +872,9 @@ mod tests {
         let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
-        // 期待される検出数と、最初のキーが"key."で始まることを確認
         assert_that!(calls, elements_are![field!(TransFnCall.key, starts_with("key."))]);
     }
 
-    /// 無効な引数パターンのテスト
     #[rstest]
     #[case::template_literal(r"t(`template.${variable}`)")]
     #[case::variable(r"t(someVariable)")]
@@ -926,8 +898,7 @@ mod tests {
         let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
             .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
-        // 無効な引数パターンは検出されない
-        assert_that!(calls, is_empty()); // 空チェック
+        assert_that!(calls, is_empty());
     }
 
     #[rstest]
@@ -966,23 +937,23 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
-        // 実際の解析順序（関数定義が先に解析される）
+        // Actual parse order: function definitions are parsed first
         assert_that!(
             calls,
             elements_are![
-                field!(TransFnCall.key, eq("header.navigation.home")), /* ヘッダースコープ（keyPrefixあり） */
-                field!(TransFnCall.key, eq("header.navigation.about")), //
-                field!(TransFnCall.key, eq("home.welcome")), // コンテンツスコープ（keyPrefixなし）
-                field!(TransFnCall.key, eq("home.section.features.title")), /* ネストしたスコープ（keyPrefixあり） */
+                field!(TransFnCall.key, eq("header.navigation.home")), /* Header scope (with keyPrefix) */
+                field!(TransFnCall.key, eq("header.navigation.about")),
+                field!(TransFnCall.key, eq("home.welcome")), // Content scope (no keyPrefix)
+                field!(TransFnCall.key, eq("home.section.features.title")), /* Nested scope (with keyPrefix) */
                 field!(TransFnCall.key, eq("home.section.features.description")),
-                field!(TransFnCall.key, eq("home.footer")), // コンテンツスコープに戻る
-                field!(TransFnCall.key, eq("global.loading")), // メイン実行部分のグローバルスコープ
+                field!(TransFnCall.key, eq("home.footer")), // Back to Content scope
+                field!(TransFnCall.key, eq("global.loading")), // Main execution global scope
                 field!(TransFnCall.key, eq("global.error"))
             ]
         );
     }
 
-    // ===== i18next テスト =====
+    // ===== i18next tests =====
 
     #[rstest]
     fn test_i18next_get_fixed_t(queries: Vec<Query>, js_lang: Language) {
@@ -1008,7 +979,7 @@ mod tests {
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("buttons.save"))]);
     }
 
-    // ===== next-intl テスト =====
+    // ===== next-intl tests =====
 
     #[rstest]
     fn test_next_intl_use_translations(queries: Vec<Query>, js_lang: Language) {
@@ -1046,7 +1017,7 @@ mod tests {
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
     }
 
-    // ===== react-i18next Trans/Translation コンポーネントテスト =====
+    // ===== react-i18next Trans/Translation component tests =====
 
     #[rstest]
     fn test_trans_component_self_closing(queries: Vec<Query>, js_lang: Language) {
@@ -1069,7 +1040,7 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
-        // t 属性がなくても、スコープ内の "t" を使用してマッチする
+        // Even without t attribute, matches using "t" in scope
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("welcome"))]);
     }
 
@@ -1115,11 +1086,11 @@ mod tests {
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
     }
 
-    // ===== グローバル翻訳関数テスト =====
+    // ===== Global translation function tests =====
 
     #[rstest]
     fn test_i18next_t_global(queries: Vec<Query>, js_lang: Language) {
-        // スコープ設定なしで i18next.t を直接呼び出し
+        // Direct i18next.t call without scope setup
         let code = r#"
             const message = i18next.t("global.key");
         "#;
@@ -1137,7 +1108,7 @@ mod tests {
 
     #[rstest]
     fn test_i18n_t_global(queries: Vec<Query>, js_lang: Language) {
-        // i18n.t も許可
+        // i18n.t is also allowed
         let code = r#"
             const message = i18n.t("another.key");
         "#;
@@ -1149,7 +1120,7 @@ mod tests {
 
     #[rstest]
     fn test_bare_t_without_scope(queries: Vec<Query>, js_lang: Language) {
-        // スコープなしの t() は許可（デフォルト翻訳関数として）
+        // Bare t() without scope is allowed (as default translation function)
         let code = r#"
             const message = t("bare.key");
         "#;
@@ -1167,7 +1138,7 @@ mod tests {
 
     #[rstest]
     fn test_t_rich_without_scope(queries: Vec<Query>, js_lang: Language) {
-        // スコープなしの t.rich() も許可
+        // Bare t.rich() without scope is also allowed
         let code = r#"
             const message = t.rich("rich.key", { strong: (chunks) => chunks });
         "#;
@@ -1179,7 +1150,7 @@ mod tests {
 
     #[rstest]
     fn test_scoped_t_rich(queries: Vec<Query>, js_lang: Language) {
-        // スコープ付きの t.rich()
+        // Scoped t.rich()
         let code = r#"
             const t = useTranslations("namespace");
             const message = t.rich("scoped.key", { strong: (chunks) => chunks });
@@ -1192,7 +1163,7 @@ mod tests {
 
     #[rstest]
     fn test_unknown_member_expression_ignored(queries: Vec<Query>, js_lang: Language) {
-        // 未知の関数呼び出しは無視される
+        // Unknown function calls are ignored
         let code = r#"
             const message = foo.bar("ignored.key");
         "#;
@@ -1202,7 +1173,7 @@ mod tests {
         assert_that!(calls, is_empty());
     }
 
-    // ===== namespace separator テスト =====
+    // ===== Namespace separator tests =====
 
     #[rstest]
     #[case("common:hello", Some(":"), Some("common"), "hello")]
@@ -1222,7 +1193,7 @@ mod tests {
         assert_that!(parsed_key.as_str(), eq(expected_key));
     }
 
-    // ===== 配列 namespace テスト =====
+    // ===== Array namespace tests =====
 
     #[rstest]
     fn test_array_namespace(queries: Vec<Query>, js_lang: Language) {
@@ -1255,7 +1226,7 @@ mod tests {
         assert_that!(calls[0].namespaces.as_ref().unwrap(), eq(&vec!["common".to_string()]));
     }
 
-    // ===== explicit namespace (ns option) テスト =====
+    // ===== Explicit namespace (ns option) tests =====
 
     #[rstest]
     fn test_explicit_namespace_ns_option(queries: Vec<Query>, js_lang: Language) {
@@ -1266,7 +1237,7 @@ mod tests {
 
         let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
 
-        // explicit_namespace が namespace を上書きする
+        // explicit_namespace overrides the scope namespace
         assert_that!(
             calls,
             elements_are![all![

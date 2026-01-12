@@ -1,6 +1,6 @@
 //! js-i18n-language-server
 //!
-//! JavaScript/TypeScript プロジェクト向けの i18n Language Server Protocol (LSP) 実装
+//! i18n Language Server Protocol (LSP) implementation for JavaScript/TypeScript.
 
 pub mod config;
 pub mod db;
@@ -15,6 +15,5 @@ pub mod types;
 #[cfg(test)]
 mod test_utils;
 
-// Backend と ServerState を再エクスポート
 pub use ide::backend::Backend;
 pub use ide::state::ServerState;

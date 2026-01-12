@@ -1,4 +1,4 @@
-/// インターン化された翻訳キー
+/// Interned translation key.
 #[salsa::interned]
 pub struct TransKey {
     #[returns(ref)]

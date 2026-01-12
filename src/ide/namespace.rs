@@ -1,30 +1,14 @@
-//! Namespace フィルタリングモジュール
-//!
-//! 翻訳キーの使用箇所から適切な翻訳ファイルを特定するための
-//! namespace 解決ロジックを提供します。
+//! Namespace filtering for translation lookups.
 
 use crate::db::I18nDatabase;
 use crate::input::translation::Translation;
 
-/// Namespace 解決の優先度に従って翻訳をフィルタリングする
-///
-/// # Namespace 解決優先度
-/// 1. `explicit_namespace` - t("ns:key") または t("key", {ns: "ns"}) から
-/// 2. `declared_namespaces` の最初 - `useTranslation(["ns1", "ns2"])` から
-/// 3. `declared_namespace` - useTranslation("ns") から
-/// 4. `default_namespace` - 設定から
-/// 5. None → 全翻訳を返す（後方互換性）
-///
-/// # Arguments
-/// * `db` - Salsa データベース
-/// * `translations` - フィルタリング対象の翻訳リスト
-/// * `explicit_namespace` - キーから解析された明示的 namespace
-/// * `declared_namespace` - useTranslation から宣言された単一 namespace
-/// * `declared_namespaces` - useTranslation から宣言された複数 namespace
-/// * `default_namespace` - 設定からのデフォルト namespace
-///
-/// # Returns
-/// フィルタリングされた翻訳のリスト
+/// Filters translations by namespace based on priority:
+/// 1. `explicit_namespace` - from `t("ns:key")` or `t("key", {ns: "ns"})`
+/// 2. `declared_namespaces[0]` - from `useTranslation(["ns1", "ns2"])`
+/// 3. `declared_namespace` - from `useTranslation("ns")`
+/// 4. `default_namespace` - from settings
+/// 5. `None` - returns all translations (backward compatibility)
 #[must_use]
 pub fn filter_translations_by_namespace<'a>(
     db: &dyn I18nDatabase,
@@ -34,7 +18,6 @@ pub fn filter_translations_by_namespace<'a>(
     declared_namespaces: Option<&[String]>,
     default_namespace: Option<&str>,
 ) -> Vec<&'a Translation> {
-    // namespace 解決
     let resolved_namespace = resolve_namespace(
         explicit_namespace,
         declared_namespace,
@@ -42,8 +25,6 @@ pub fn filter_translations_by_namespace<'a>(
         default_namespace,
     );
 
-    // namespace が解決された場合、その namespace に一致する翻訳のみを返す
-    // 解決されなかった場合、全翻訳を返す（後方互換性）
     resolved_namespace.map_or_else(
         || translations.iter().collect(),
         |ns| {
@@ -55,14 +36,6 @@ pub fn filter_translations_by_namespace<'a>(
     )
 }
 
-/// Namespace を優先度に従って解決する
-///
-/// # 優先度
-/// 1. `explicit_namespace`
-/// 2. `declared_namespaces` の最初
-/// 3. `declared_namespace`
-/// 4. `default_namespace`
-/// 5. None
 #[must_use]
 pub fn resolve_namespace<'a>(
     explicit_namespace: Option<&'a str>,
@@ -92,8 +65,6 @@ mod tests {
     fn db() -> I18nDatabaseImpl {
         I18nDatabaseImpl::default()
     }
-
-    // ===== resolve_namespace テスト =====
 
     #[rstest]
     fn resolve_namespace_explicit_first() {
@@ -131,8 +102,6 @@ mod tests {
         let result = resolve_namespace(None, None, None, None);
         assert_that!(result, none());
     }
-
-    // ===== filter_translations_by_namespace テスト =====
 
     #[rstest]
     fn filter_by_explicit_namespace(db: I18nDatabaseImpl) {
@@ -185,7 +154,6 @@ mod tests {
 
         let filtered = filter_translations_by_namespace(&db, &translations, None, None, None, None);
 
-        // namespace 指定なし → 全翻訳を返す
         assert_that!(filtered.len(), eq(2));
     }
 

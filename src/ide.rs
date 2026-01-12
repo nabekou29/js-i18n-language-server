@@ -1,4 +1,4 @@
-//! IDE 機能を提供するモジュール
+//! IDE features module.
 
 pub mod backend;
 pub mod code_actions;

@@ -7,23 +7,23 @@ use crate::ide::plural::find_plural_variants;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
 
-/// 子キーの表示で値を切り詰める最大長
+/// Maximum length for values displayed in child key listings
 const MAX_NESTED_VALUE_LENGTH: usize = 30;
 
-/// 子キーを表示する最大数
+/// Maximum number of child keys to display
 const MAX_NESTED_KEYS_DISPLAY: usize = 5;
 
 /// Generate hover content for a translation key
 ///
-/// # ソート順
-/// 言語は以下の順序でソートされます：
-/// 1. `current_language`（設定されている場合）
-/// 2. `primary_languages`（設定順）
-/// 3. その他（アルファベット順）
+/// # Sort Order
+/// Languages are sorted in the following order:
+/// 1. `current_language` (if set)
+/// 2. `primary_languages` (in configuration order)
+/// 3. Others (alphabetical order)
 ///
-/// # 逆方向 prefix マッチ
-/// 完全一致がない場合、子キー（例: `nested.key`）のリストを表示します。
-/// これにより `t('nested')` で `nested.key` がある場合もホバー情報を表示できます。
+/// # Reverse Prefix Matching
+/// When no exact match exists, displays a list of child keys (e.g., `nested.key`).
+/// This enables hover information for cases like `t('nested')` when `nested.key` exists.
 pub fn generate_hover_content(
     db: &dyn I18nDatabase,
     key: TransKey<'_>,
@@ -41,13 +41,13 @@ pub fn generate_hover_content(
         let keys = translation.keys(db);
         let language = translation.language(db);
 
-        // 完全一致
+        // Exact match
         if let Some(value) = keys.get(key_text) {
             translations_found.push((language, value.clone()));
             continue;
         }
 
-        // plural バリアントをチェック
+        // Check plural variants
         let plural_variants = find_plural_variants(key_text, keys);
         if !plural_variants.is_empty() {
             let formatted = format_plural_variants(&plural_variants, key_text);
@@ -55,12 +55,11 @@ pub fn generate_hover_content(
             continue;
         }
 
-        // 逆方向 prefix マッチ：子キーを収集
+        // Reverse prefix match: collect child keys
         let prefix = format!("{key_text}{key_separator}");
         let nested_keys: Vec<_> = keys.iter().filter(|(k, _)| k.starts_with(&prefix)).collect();
 
         if !nested_keys.is_empty() {
-            // 子キーをフォーマットして表示
             let nested_display = format_nested_keys(&nested_keys, &prefix);
             translations_found.push((language, nested_display));
         }
@@ -74,7 +73,7 @@ pub fn generate_hover_content(
     // Format as markdown
     let mut content = format!("**Translation Key:** `{key_text}`\n\n");
 
-    // Sort by priority: current_language → primary_languages → alphabetical
+    // Sort by priority: current_language -> primary_languages -> alphabetical
     sort_translations_by_priority(&mut translations_found, current_language, primary_languages);
 
     for (language, value) in translations_found {
@@ -84,12 +83,12 @@ pub fn generate_hover_content(
     Some(content)
 }
 
-/// plural バリアントをフォーマットして表示用文字列を生成
+/// Format plural variants into a display string
 fn format_plural_variants(variants: &[(&str, &str)], base_key: &str) -> String {
     let mut result = String::from("(plural)\n");
 
     for (key, value) in variants {
-        // ベースキーを除いた suffix 部分のみ表示
+        // Display only the suffix part after stripping the base key
         let suffix = key.strip_prefix(base_key).unwrap_or(key);
         let truncated_value = truncate_string(value, MAX_NESTED_VALUE_LENGTH);
         let _ = writeln!(result, "  `{suffix}`: {truncated_value}");
@@ -98,7 +97,7 @@ fn format_plural_variants(variants: &[(&str, &str)], base_key: &str) -> String {
     result.trim_end().to_string()
 }
 
-/// 子キーをフォーマットして表示用文字列を生成
+/// Format nested child keys into a display string
 fn format_nested_keys(nested_keys: &[(&String, &String)], prefix: &str) -> String {
     let mut sorted_keys: Vec<_> = nested_keys.iter().collect();
     sorted_keys.sort_by(|(a, _), (b, _)| a.cmp(b));
@@ -107,10 +106,10 @@ fn format_nested_keys(nested_keys: &[(&String, &String)], prefix: &str) -> Strin
         .iter()
         .take(MAX_NESTED_KEYS_DISPLAY)
         .map(|(k, v)| {
-            // prefix を除いた相対キー名
+            // Relative key name after stripping the prefix
             let relative_key = k.strip_prefix(prefix).unwrap_or(k);
             let truncated_value = truncate_string(v, MAX_NESTED_VALUE_LENGTH);
-            // キー名をバッククォートで囲む（Markdown 特殊文字のエスケープ）
+            // Wrap key name in backticks (escapes Markdown special characters)
             format!("  `.{relative_key}`: {truncated_value}")
         })
         .collect();
@@ -125,7 +124,7 @@ fn format_nested_keys(nested_keys: &[(&String, &String)], prefix: &str) -> Strin
     result
 }
 
-/// 文字列を指定した長さに切り詰める
+/// Truncate string to specified length
 fn truncate_string(s: &str, max_len: usize) -> String {
     if s.chars().count() <= max_len {
         s.to_string()
@@ -135,12 +134,12 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
-/// 翻訳結果を優先度順にソート
+/// Sort translations by priority
 ///
-/// ソート順:
-/// 1. `current_language`（設定されている場合）
-/// 2. `primary_languages`（設定順）
-/// 3. その他（アルファベット順）
+/// Sort order:
+/// 1. `current_language` (if set)
+/// 2. `primary_languages` (in configuration order)
+/// 3. Others (alphabetical order)
 fn sort_translations_by_priority(
     translations: &mut [(String, String)],
     current_language: Option<&str>,
@@ -177,25 +176,25 @@ enum LanguagePriority<'a> {
     Other(&'a str),
 }
 
-/// 言語の優先度を計算
+/// Calculate language priority for sorting
 fn get_language_priority<'a>(
     lang: &'a str,
     current_language: Option<&str>,
     primary_languages: Option<&[String]>,
 ) -> LanguagePriority<'a> {
-    // current_language は最高優先度
+    // current_language has highest priority
     if current_language.is_some_and(|c| c == lang) {
         return LanguagePriority::Current;
     }
 
-    // primary_languages は設定順
+    // primary_languages are sorted by configuration order
     if let Some(primaries) = primary_languages
         && let Some(pos) = primaries.iter().position(|p| p == lang)
     {
         return LanguagePriority::Primary(pos);
     }
 
-    // その他はアルファベット順
+    // Others are sorted alphabetically
     LanguagePriority::Other(lang)
 }
 
@@ -235,7 +234,7 @@ mod tests {
     fn generate_hover_content_with_multiple_languages() {
         let db = I18nDatabaseImpl::default();
 
-        // 意図的にソート順と異なる順序で追加（ja → en）
+        // Intentionally added in order different from sort order (ja -> en)
         let ja_translation = create_translation(
             &db,
             "ja",
@@ -253,17 +252,17 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations = vec![ja_translation, en_translation];
 
-        // ソート優先度なしの場合はアルファベット順
+        // Without sort priority, alphabetical order is used
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // キーが含まれている
+        // Key is included
         assert_that!(content, contains_substring("**Translation Key:** `common.hello`"));
 
-        // 両方の言語が含まれている
+        // Both languages are included
         assert_that!(content, contains_substring("**en**: Hello"));
         assert_that!(content, contains_substring("**ja**: こんにちは"));
 
-        // 言語コード順にソートされている（en が ja より先）
+        // Sorted by language code (en comes before ja)
         let en_pos = content.find("**en**").unwrap();
         let ja_pos = content.find("**ja**").unwrap();
         assert_that!(en_pos, lt(ja_pos));
@@ -280,7 +279,7 @@ mod tests {
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
         );
 
-        // 存在しないキーを検索
+        // Search for non-existent key
         let key = TransKey::new(&db, "nonexistent.key".to_string());
         let translations = vec![translation];
 
@@ -305,7 +304,7 @@ mod tests {
     fn generate_hover_content_with_partial_translations() {
         let db = I18nDatabaseImpl::default();
 
-        // en にはキーがあるが、ja にはない
+        // en has the key, but ja does not
         let en_translation = create_translation(
             &db,
             "en",
@@ -325,7 +324,7 @@ mod tests {
 
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // en のみ含まれている
+        // Only en is included
         assert_that!(content, contains_substring("**en**: Hello"));
         assert_that!(content, not(contains_substring("**ja**")));
     }
@@ -334,7 +333,7 @@ mod tests {
     fn generate_hover_content_with_nested_children() {
         let db = I18nDatabaseImpl::default();
 
-        // "nested" キーは存在せず、"nested.key" と "nested.foo" が存在
+        // "nested" key does not exist, but "nested.key" and "nested.foo" exist
         let translation = create_translation(
             &db,
             "en",
@@ -350,10 +349,10 @@ mod tests {
 
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // キーが含まれている
+        // Key is included
         assert_that!(content, contains_substring("**Translation Key:** `nested`"));
 
-        // 子キーがリスト表示されている（バッククォートで囲まれている）
+        // Child keys are displayed as list (wrapped in backticks)
         assert_that!(content, contains_substring("{...}"));
         assert_that!(content, contains_substring("`.foo`: Foo Value"));
         assert_that!(content, contains_substring("`.key`: Key Value"));
@@ -379,7 +378,7 @@ mod tests {
 
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // アルファベット順にソートされている
+        // Sorted alphabetically
         let alpha_pos = content.find("`.alpha`").unwrap();
         let beta_pos = content.find("`.beta`").unwrap();
         let zebra_pos = content.find("`.zebra`").unwrap();
@@ -391,7 +390,7 @@ mod tests {
     fn generate_hover_content_nested_keys_truncated_value() {
         let db = I18nDatabaseImpl::default();
 
-        // 30文字を超える長い値
+        // Long value exceeding 30 characters
         let long_value = "This is a very long translation value that exceeds the limit";
 
         let translation = create_translation(
@@ -406,9 +405,9 @@ mod tests {
 
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // 値が切り詰められて "..." が付いている
+        // Value is truncated with "..."
         assert_that!(content, contains_substring("..."));
-        // 完全な値は含まれていない
+        // Full value is not included
         assert_that!(content, not(contains_substring(long_value)));
     }
 
@@ -416,7 +415,7 @@ mod tests {
     fn generate_hover_content_nested_keys_max_display() {
         let db = I18nDatabaseImpl::default();
 
-        // 6個の子キーを作成（最大表示数は5）
+        // Create 6 child keys (max display is 5)
         let translation = create_translation(
             &db,
             "en",
@@ -436,21 +435,21 @@ mod tests {
 
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // "... and 1 more" が表示される
+        // "... and 1 more" is displayed
         assert_that!(content, contains_substring("... and 1 more"));
     }
 
     #[rstest]
     fn test_truncate_string() {
-        // 短い文字列はそのまま
+        // Short string remains unchanged
         let result1 = truncate_string("hello", 10);
         assert_that!(result1.as_str(), eq("hello"));
 
-        // 制限を超える文字列は切り詰められる
+        // String exceeding limit is truncated
         let result2 = truncate_string("hello world", 8);
         assert_that!(result2.as_str(), eq("hello..."));
 
-        // ちょうど制限と同じ
+        // String exactly at limit
         let result3 = truncate_string("hello", 5);
         assert_that!(result3.as_str(), eq("hello"));
     }
@@ -459,7 +458,7 @@ mod tests {
     fn generate_hover_content_with_current_language_priority() {
         let db = I18nDatabaseImpl::default();
 
-        // 3つの言語（アルファベット順: en, ja, zh）
+        // Three languages (alphabetical order: en, ja, zh)
         let en_translation = create_translation(
             &db,
             "en",
@@ -482,17 +481,17 @@ mod tests {
         let key = TransKey::new(&db, "key".to_string());
         let translations = vec![en_translation, ja_translation, zh_translation];
 
-        // current_language = "ja" を指定
+        // Specify current_language = "ja"
         let content =
             generate_hover_content(&db, key, &translations, ".", Some("ja"), None).unwrap();
 
-        // ja が最初に表示される
+        // ja is displayed first
         let ja_pos = content.find("**ja**").unwrap();
         let en_pos = content.find("**en**").unwrap();
         let zh_pos = content.find("**zh**").unwrap();
         assert_that!(ja_pos, lt(en_pos));
         assert_that!(ja_pos, lt(zh_pos));
-        // 残りはアルファベット順
+        // Remaining are in alphabetical order
         assert_that!(en_pos, lt(zh_pos));
     }
 
@@ -522,12 +521,12 @@ mod tests {
         let key = TransKey::new(&db, "key".to_string());
         let translations = vec![en_translation, ja_translation, zh_translation];
 
-        // primary_languages = ["zh", "ja"] を指定
+        // Specify primary_languages = ["zh", "ja"]
         let primary = vec!["zh".to_string(), "ja".to_string()];
         let content =
             generate_hover_content(&db, key, &translations, ".", None, Some(&primary)).unwrap();
 
-        // zh, ja, en の順で表示される
+        // Displayed in order: zh, ja, en
         let zh_pos = content.find("**zh**").unwrap();
         let ja_pos = content.find("**ja**").unwrap();
         let en_pos = content.find("**en**").unwrap();
@@ -562,13 +561,13 @@ mod tests {
         let translations = vec![en_translation, ja_translation, zh_translation];
 
         // current_language = "en", primary_languages = ["zh", "ja"]
-        // current が最優先
+        // current has highest priority
         let primary = vec!["zh".to_string(), "ja".to_string()];
         let content =
             generate_hover_content(&db, key, &translations, ".", Some("en"), Some(&primary))
                 .unwrap();
 
-        // en, zh, ja の順で表示される
+        // Displayed in order: en, zh, ja
         let en_pos = content.find("**en**").unwrap();
         let zh_pos = content.find("**zh**").unwrap();
         let ja_pos = content.find("**ja**").unwrap();
@@ -580,7 +579,7 @@ mod tests {
     fn generate_hover_content_with_plural_variants() {
         let db = I18nDatabaseImpl::default();
 
-        // "items" キーは存在せず、"items_one" と "items_other" が存在
+        // "items" key does not exist, but "items_one" and "items_other" exist
         let translation = create_translation(
             &db,
             "en",
@@ -596,10 +595,10 @@ mod tests {
 
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // キーが含まれている
+        // Key is included
         assert_that!(content, contains_substring("**Translation Key:** `items`"));
 
-        // plural バリアントが表示されている
+        // Plural variants are displayed
         assert_that!(content, contains_substring("(plural)"));
         assert_that!(content, contains_substring("`_one`: {{count}} item"));
         assert_that!(content, contains_substring("`_other`: {{count}} items"));
@@ -609,7 +608,7 @@ mod tests {
     fn generate_hover_content_with_ordinal_plural_variants() {
         let db = I18nDatabaseImpl::default();
 
-        // ordinal suffix のテスト
+        // Test ordinal suffixes
         let translation = create_translation(
             &db,
             "en",
@@ -627,7 +626,7 @@ mod tests {
 
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // plural バリアントが表示されている
+        // Plural variants are displayed
         assert_that!(content, contains_substring("(plural)"));
         assert_that!(content, contains_substring("`_ordinal_one`: {{count}}st"));
         assert_that!(content, contains_substring("`_ordinal_two`: {{count}}nd"));
@@ -639,7 +638,7 @@ mod tests {
     fn generate_hover_content_exact_match_over_plural() {
         let db = I18nDatabaseImpl::default();
 
-        // "items" キーが完全一致で存在する場合は plural より優先
+        // When "items" key exists as exact match, it takes priority over plural
         let translation = create_translation(
             &db,
             "en",
@@ -656,9 +655,9 @@ mod tests {
 
         let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
 
-        // 完全一致の値が表示される
+        // Exact match value is displayed
         assert_that!(content, contains_substring("**en**: Items (exact)"));
-        // plural バリアントは表示されない
+        // Plural variants are not displayed
         assert_that!(content, not(contains_substring("(plural)")));
     }
 }

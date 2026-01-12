@@ -1,8 +1,4 @@
-//! LSP ハンドラーモジュール
-//!
-//! `LanguageServer` trait の各メソッドの実装を機能別に分割しています。
-//!
-//! このモジュールは `ide::backend` 内部でのみ使用され、外部には公開されません。
+//! LSP handler modules (internal to `ide::backend`).
 
 #![allow(unreachable_pub)]
 

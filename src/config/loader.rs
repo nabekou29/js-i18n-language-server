@@ -1,4 +1,4 @@
-//! 設定ファイルの読み込み関数
+//! Configuration file loading.
 
 use std::path::Path;
 
@@ -7,21 +7,7 @@ use super::{
     I18nSettings,
 };
 
-/// ワークスペースから設定を読み込む
-///
-/// `.js-i18n.json` ファイルを探して読み込む
-///
-/// # Arguments
-/// * `workspace_root` - ワークスペースのルートパス
-///
-/// # Returns
-/// - `Ok(Some(settings))`: 設定ファイルが見つかり、読み込みに成功
-/// - `Ok(None)`: 設定ファイルが見つからない
-/// - `Err(ConfigError)`: ファイル読み込みまたはパースエラー
-///
-/// # Errors
-/// - ファイル読み込みエラー
-/// - JSON パースエラー
+/// Loads settings from `.js-i18n.json` in the workspace root.
 pub(super) fn load_from_workspace(
     workspace_root: &Path,
 ) -> Result<Option<I18nSettings>, ConfigError> {
@@ -50,7 +36,6 @@ mod tests {
 
     use super::*;
 
-    /// `load_from_workspace`: 設定ファイルが存在する場合
     #[rstest]
     fn test_load_from_workspace_with_valid_config() {
         let temp_dir = TempDir::new().unwrap();
@@ -65,7 +50,6 @@ mod tests {
         assert_eq!(settings.unwrap().key_separator, "-");
     }
 
-    /// `load_from_workspace`: 設定ファイルが存在しない場合
     #[rstest]
     fn test_load_from_workspace_no_config_file() {
         let temp_dir = TempDir::new().unwrap();
@@ -76,7 +60,6 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
-    /// `load_from_workspace`: JSON パースエラー
     #[rstest]
     fn test_load_from_workspace_invalid_json() {
         let temp_dir = TempDir::new().unwrap();

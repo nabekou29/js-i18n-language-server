@@ -1,3 +1,3 @@
-//! ワークスペースのインデックス処理を行うモジュール
+//! Workspace indexing module.
 pub mod types;
 pub mod workspace;

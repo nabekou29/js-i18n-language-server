@@ -1,7 +1,4 @@
 //! Load Tree-sitter queries from files.
-//!
-//! クエリのパースはコストが高いため、言語ごとに1回だけパースし、
-//! 以降はキャッシュを使用する。
 
 use std::sync::OnceLock;
 
@@ -9,15 +6,11 @@ use tree_sitter::Query;
 
 use crate::input::source::ProgrammingLanguage;
 
-/// クエリファイルの定義
 struct QueryFile {
-    /// クエリファイルの内容
     content: &'static str,
-    /// クエリの説明（デバッグ用）
     name: &'static str,
 }
 
-/// JavaScript/JSX 用のクエリファイル
 const JS_QUERIES: &[QueryFile] = &[
     QueryFile {
         content: include_str!("../../../queries/javascript/react-i18next.scm"),
@@ -30,7 +23,6 @@ const JS_QUERIES: &[QueryFile] = &[
     },
 ];
 
-/// TypeScript 用のクエリファイル
 const TS_QUERIES: &[QueryFile] = &[
     QueryFile {
         content: include_str!("../../../queries/typescript/react-i18next.scm"),
@@ -43,7 +35,6 @@ const TS_QUERIES: &[QueryFile] = &[
     },
 ];
 
-/// TSX 用のクエリファイル
 const TSX_QUERIES: &[QueryFile] = &[
     QueryFile {
         content: include_str!("../../../queries/tsx/react-i18next.scm"),
@@ -53,14 +44,10 @@ const TSX_QUERIES: &[QueryFile] = &[
     QueryFile { content: include_str!("../../../queries/tsx/next-intl.scm"), name: "next-intl" },
 ];
 
-/// JavaScript/JSX 用クエリキャッシュ
 static JS_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
-/// TypeScript 用クエリキャッシュ
 static TS_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
-/// TSX 用クエリキャッシュ
 static TSX_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
 
-/// 指定した言語用のクエリファイル群をパースする（内部関数）
 fn parse_queries(language: ProgrammingLanguage) -> Vec<Query> {
     let tree_sitter_lang = language.tree_sitter_language();
 
@@ -80,13 +67,7 @@ fn parse_queries(language: ProgrammingLanguage) -> Vec<Query> {
         .collect()
 }
 
-/// クエリをロード（キャッシュ付き）
-///
-/// クエリのパースは言語ごとに1回だけ行われ、以降はキャッシュを使用する。
-/// これにより、大量のファイルを処理する際のパフォーマンスが大幅に向上する。
-///
-/// # 注意
-/// キャッシュされた `Query` への参照を返すため、寿命は `'static` となる。
+/// Loads cached queries for a language. Queries are parsed once per language.
 #[must_use]
 pub fn load_queries(language: ProgrammingLanguage) -> &'static [Query] {
     match language {

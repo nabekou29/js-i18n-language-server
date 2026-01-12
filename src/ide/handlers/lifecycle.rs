@@ -1,6 +1,4 @@
-//! LSP ライフサイクルハンドラー
-//!
-//! `initialize`, `initialized`, `shutdown` の処理を担当します。
+//! LSP lifecycle handlers: `initialize`, `initialized`, `shutdown`.
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
@@ -31,19 +29,16 @@ use tower_lsp::lsp_types::{
 
 use super::super::backend::Backend;
 
-/// `initialize` リクエストを処理
 pub async fn handle_initialize(
     backend: &Backend,
     params: InitializeParams,
 ) -> Result<InitializeResult> {
-    // ワークスペースルートを取得
     let workspace_root = params
         .workspace_folders
         .as_ref()
         .and_then(|folders| folders.first())
         .and_then(|folder| folder.uri.to_file_path().ok());
 
-    // ConfigManager に設定を読み込ませる
     let mut config_manager = backend.config_manager.lock().await;
     if let Err(error) = config_manager.load_settings(workspace_root) {
         backend
@@ -52,7 +47,7 @@ pub async fn handle_initialize(
             .await;
         tracing::error!("Configuration error during initialize: {}", error);
     }
-    drop(config_manager); // ロックを早めに解放
+    drop(config_manager);
 
     Ok(InitializeResult {
         server_info: None,
@@ -90,7 +85,6 @@ pub async fn handle_initialize(
     })
 }
 
-/// `initialized` 通知を処理
 #[allow(clippy::too_many_lines)]
 pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
     backend.client.log_message(MessageType::INFO, "initialized!").await;
@@ -103,10 +97,8 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
 
         for folder in workspace_folders {
             if let Ok(workspace_path) = folder.uri.to_file_path() {
-                // 進捗トークン
                 let token = NumberOrString::String("workspace-indexing".to_string());
 
-                // 進捗開始通知
                 backend
                     .client
                     .send_notification::<Progress>(ProgressParams {
@@ -122,19 +114,11 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                     })
                     .await;
 
-                // ConfigManager をロックして参照を取得
                 let config_manager = backend.config_manager.lock().await;
-
-                // Database をクローン（Salsa のクローンは安価）
                 let db = backend.state.db.lock().await.clone();
-
-                // source_files をクローン（Arc のクローンは安価）
                 let source_files = backend.state.source_files.clone();
-
-                // 進捗報告用チャネル（順序保証のため）
                 let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<(u32, u32)>(100);
 
-                // Progress Report 送信タスク
                 let progress_task = {
                     let client = backend.client.clone();
                     let token = token.clone();
@@ -159,16 +143,10 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                     })
                 };
 
-                // 進捗報告コールバック（チャネル経由で送信）
                 let progress_callback = move |current: u32, total: u32| {
-                    // try_send を使用して非ブロッキングで送信
-                    // チャネルが満杯の場合は無視（進捗表示が少し遅れるだけ）
                     let _ = progress_tx.try_send((current, total));
                 };
 
-                // インデックス実行
-                // progress_callback は progress_tx を所有しているため、
-                // index_workspace 終了時に自動的にドロップされ、チャネルが閉じる
                 let index_result = backend
                     .workspace_indexer
                     .index_workspace(
@@ -181,14 +159,9 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                     )
                     .await;
 
-                // config_manager のロックを明示的に解放
                 drop(config_manager);
-
-                // すべての Progress Report 送信完了を待つ
-                // （チャネルが閉じられると progress_task は終了する）
                 let _ = progress_task.await;
 
-                // 進捗完了通知
                 match index_result {
                     Ok(()) => {
                         backend
@@ -228,22 +201,15 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
             }
         }
 
-        // インデックス中に溜まった保留更新を処理
         backend.process_pending_updates().await;
-
-        // すべてのワークスペースフォルダーのインデックス完了後、診断を送信
         backend.send_diagnostics_to_opened_files().await;
-
-        // 翻訳ファイルへの未使用キー診断を送信
         backend.send_unused_key_diagnostics().await;
     }
 
-    // ファイルウォッチを登録
     backend.register_file_watchers().await;
 }
 
-/// `shutdown` リクエストを処理
-#[allow(clippy::unused_async)] // trait requires async
+#[allow(clippy::unused_async)]
 pub async fn handle_shutdown() -> Result<()> {
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! 診断メッセージ生成モジュール
+//! Diagnostic generation module
 
 use std::collections::HashSet;
 
@@ -18,23 +18,17 @@ use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 use crate::syntax::analyze_source;
 
-/// 診断生成のオプション
 #[derive(Debug, Clone, Default)]
 pub struct DiagnosticOptions {
-    /// 翻訳が必須の言語（None の場合はすべての言語が必須）
+    /// Languages that require translations (None = all languages required)
     pub required_languages: Option<HashSet<String>>,
-    /// 翻訳が任意の言語（これらの言語は診断対象外）
+    /// Languages excluded from diagnostics
     pub optional_languages: Option<HashSet<String>>,
 }
 
-/// チェック対象の言語を決定する
+/// Determines which languages to check for missing translations.
 ///
-/// # Arguments
-/// * `all_languages` - 翻訳ファイルから検出されたすべての言語
-/// * `options` - 診断生成オプション
-///
-/// # Returns
-/// チェック対象の言語セット
+/// Priority: `required_languages` > `optional_languages` > all languages
 #[must_use]
 #[allow(clippy::implicit_hasher, clippy::option_if_let_else)]
 pub fn determine_target_languages<'a>(
@@ -42,36 +36,18 @@ pub fn determine_target_languages<'a>(
     options: &DiagnosticOptions,
 ) -> HashSet<&'a str> {
     if let Some(ref required) = options.required_languages {
-        // required_languages が指定されている場合、それらのみチェック
         all_languages.iter().filter(|lang| required.contains(*lang)).map(String::as_str).collect()
     } else if let Some(ref optional) = options.optional_languages {
-        // optional_languages が指定されている場合、それら以外をチェック
         all_languages.iter().filter(|lang| !optional.contains(*lang)).map(String::as_str).collect()
     } else {
-        // どちらも指定されていない場合、すべての言語をチェック
         all_languages.iter().map(String::as_str).collect()
     }
 }
 
-/// ソースファイルの診断メッセージを生成
+/// Generates diagnostics for missing translation keys in source file.
 ///
-/// ソースコード内で使用されている翻訳キーが、
-/// 実際の翻訳ファイルに存在するかをチェックし、
-/// 存在しない場合は診断メッセージを生成します。
-///
-/// # 逆方向 prefix マッチ
-/// `t('nested')` で `nested.key` が存在する場合、`nested` は有効なキーとみなします。
-/// これにより、オブジェクト全体を取得するパターンに対応します。
-///
-/// # Arguments
-/// * `db` - Salsa データベース
-/// * `source_file` - チェック対象のソースファイル
-/// * `translations` - 利用可能な翻訳データのリスト
-/// * `options` - 診断生成オプション
-/// * `key_separator` - キーの区切り文字（例: "."）
-///
-/// # Returns
-/// 診断メッセージのリストを返します（存在しないキーに対する警告）
+/// Supports reverse prefix matching: `t('nested')` is valid if `nested.key` exists,
+/// allowing object retrieval patterns.
 pub fn generate_diagnostics(
     db: &dyn I18nDatabase,
     source_file: SourceFile,
@@ -83,10 +59,8 @@ pub fn generate_diagnostics(
 
     tracing::debug!("Generating diagnostics for source file '{}'", source_file.uri(db));
 
-    // キー使用箇所を解析
     let key_usages = analyze_source(db, source_file, key_separator.to_string());
 
-    // 各言語の翻訳キーセットを構築
     let language_keys: Vec<(String, HashSet<String>)> = translations
         .iter()
         .map(|t| {
@@ -96,21 +70,17 @@ pub fn generate_diagnostics(
         })
         .collect();
 
-    // チェック対象の言語を決定
     let all_languages: HashSet<String> = translations.iter().map(|t| t.language(db)).collect();
     let target_languages = determine_target_languages(&all_languages, options);
 
-    // 各キー使用箇所をチェック
     for usage in key_usages {
         let key = usage.key(db).text(db);
 
-        // 空のキーはスキップ（補完中の状態）
+        // Empty key = completion in progress
         if key.is_empty() {
             continue;
         }
 
-        // 各言語でキーが存在するかチェックし、不足している言語を収集
-        // 逆方向 prefix マッチ: nested.key がある場合、nested も有効とみなす
         let missing_languages: Vec<String> = language_keys
             .iter()
             .filter(|(lang, _)| target_languages.contains(lang.as_str()))
@@ -118,7 +88,6 @@ pub fn generate_diagnostics(
             .map(|(lang, _)| lang.clone())
             .collect();
 
-        // 不足している言語がある場合、診断メッセージを追加
         if !missing_languages.is_empty() {
             let range = usage.range(db);
 
@@ -145,30 +114,16 @@ pub fn generate_diagnostics(
     diagnostics
 }
 
-/// 翻訳ファイルの未使用キー診断を生成
+/// Generates diagnostics for unused translation keys.
 ///
-/// ソースコードで使用されていない翻訳キーに対して診断メッセージを生成します。
-///
-/// # ネストしたキーの扱い
-/// `hoge.fuga.piyo` というキーがある場合、`hoge.fuga` が使用されていれば
-/// `hoge.fuga.piyo` も使用されているとみなす（prefix マッチ）。
-/// これは `t('hoge.fuga')` でオブジェクトをまとめて取得するケースに対応。
-///
-/// # Arguments
-/// * `db` - Salsa データベース
-/// * `translation` - 診断対象の翻訳ファイル
-/// * `source_files` - すべてのソースファイル
-/// * `key_separator` - キーの区切り文字（例: "."）
-///
-/// # Returns
-/// 未使用キーに対する診断メッセージのリスト
+/// Supports prefix matching: if `hoge.fuga` is used, `hoge.fuga.piyo` is considered used
+/// (for object retrieval patterns like `t('hoge.fuga')`).
 pub fn generate_unused_key_diagnostics(
     db: &dyn I18nDatabase,
     translation: Translation,
     source_files: &[SourceFile],
     key_separator: &str,
 ) -> Vec<Diagnostic> {
-    // 1. すべてのソースファイルから使用されているキーを集計
     let mut used_keys: HashSet<String> = HashSet::new();
     for source_file in source_files {
         let key_usages = analyze_source(db, *source_file, key_separator.to_string());
@@ -177,14 +132,11 @@ pub fn generate_unused_key_diagnostics(
         }
     }
 
-    // 2. 翻訳ファイル内の全キーと比較
     let all_keys = translation.keys(db);
     let key_ranges = translation.key_ranges(db);
 
-    // 3. 未使用キーに対して Diagnostic を生成
     let mut diagnostics = Vec::new();
     for key in all_keys.keys() {
-        // キーが使用されているかチェック（prefix マッチを含む）
         let is_used = is_key_used(key, &used_keys, key_separator);
 
         if !is_used && let Some(range) = key_ranges.get(key) {
@@ -205,29 +157,21 @@ pub fn generate_unused_key_diagnostics(
     diagnostics
 }
 
-/// キーが使用されているかチェック（prefix マッチと plural suffix を含む）
+/// Checks if a key is used (including prefix match and plural suffix).
 ///
-/// # マッチ順序
-/// 1. 完全一致
-/// 2. prefix マッチ: `used_keys` の要素が `key` の prefix である場合
-/// 3. plural suffix マッチ: `key` が plural suffix を持ち、ベースキーが使用されている場合
+/// # Match order
+/// 1. Exact match
+/// 2. Prefix match: an element in `used_keys` is a prefix of `key`
+/// 3. Plural suffix match: `key` has a plural suffix and its base key is used
 ///
 /// # Examples
-/// - `key = "hoge.fuga.piyo"`, `used_keys = {"hoge.fuga"}`
-///   → `"hoge.fuga"` が `"hoge.fuga.piyo"` の prefix なので `true` を返す
-/// - `key = "hoge.fuga"`, `used_keys = {"hoge.fuga"}`
-///   → 完全一致なので `true` を返す
-/// - `key = "items_one"`, `used_keys = {"items"}`
-///   → `"items"` がベースキーとして使用されているので `true` を返す
-/// - `key = "other.key"`, `used_keys = {"hoge.fuga"}`
-///   → マッチしないので `false` を返す
+/// - `key = "hoge.fuga.piyo"`, `used_keys = {"hoge.fuga"}` -> true (prefix match)
+/// - `key = "items_one"`, `used_keys = {"items"}` -> true (plural base key used)
 pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &str) -> bool {
-    // 完全一致
     if used_keys.contains(key) {
         return true;
     }
 
-    // prefix マッチ: used_keys のいずれかが key の prefix であるかチェック
     let is_prefix_match = used_keys.iter().any(|used_key| {
         let prefix = format!("{used_key}{separator}");
         key.starts_with(&prefix)
@@ -236,15 +180,14 @@ pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &st
         return true;
     }
 
-    // plural suffix マッチ: key が plural suffix を持つ場合、ベースキーが使用されているかチェック
     get_plural_base_key(key).is_some_and(|base_key| used_keys.contains(base_key))
 }
 
-/// 指定したキーが prefix となるキーが存在するかチェック（逆方向 prefix マッチ）
+/// Checks if any key starts with the given prefix (reverse prefix match).
 ///
 /// # Examples
-/// - `search_key = "nested"`, `available_keys = {"nested.key"}` → `true`
-/// - `search_key = "nested"`, `available_keys = {"other.key"}` → `false`
+/// - `search_key = "nested"`, `available_keys = {"nested.key"}` -> true
+/// - `search_key = "nested"`, `available_keys = {"other.key"}` -> false
 fn has_keys_with_prefix(
     search_key: &str,
     available_keys: &HashSet<String>,
@@ -254,30 +197,27 @@ fn has_keys_with_prefix(
     available_keys.iter().any(|key| key.starts_with(&prefix))
 }
 
-/// キーが存在するか、または prefix として子キーが存在するか、または plural バリアントが存在するかをチェック
+/// Checks if a key exists, has child keys, or has plural variants.
 ///
-/// # マッチ順序
-/// 1. 完全一致
-/// 2. plural バリアントが存在する場合（例: `items_one`, `items_other`）
-/// 3. 逆方向 prefix マッチ（例: `nested.key` が存在する場合の `nested`）
+/// # Match order
+/// 1. Exact match
+/// 2. Plural variants exist (e.g., `items_one`, `items_other`)
+/// 3. Reverse prefix match (e.g., `nested.key` exists for `nested`)
 ///
-/// これにより以下のケースで有効なキーとみなす：
-/// - `t('items')` で `items_one`, `items_other` がある場合
-/// - `t('nested')` で `nested.key` がある場合
+/// This validates:
+/// - `t('items')` when `items_one`, `items_other` exist
+/// - `t('nested')` when `nested.key` exists
 fn key_exists_or_has_children(
     key: &str,
     available_keys: &HashSet<String>,
     separator: &str,
 ) -> bool {
-    // 完全一致
     if available_keys.contains(key) {
         return true;
     }
-    // plural バリアントが存在するかチェック
     if has_plural_variants(key, available_keys) {
         return true;
     }
-    // 逆方向 prefix マッチ
     has_keys_with_prefix(key, available_keys, separator)
 }
 
@@ -306,7 +246,6 @@ mod tests {
     fn test_generate_diagnostics_with_missing_key() {
         let db = I18nDatabaseImpl::default();
 
-        // テスト用のソースコードを作成
         let source_code = r#"
             const msg = t("common.hello");
             const msg2 = t("common.missing");
@@ -318,7 +257,6 @@ mod tests {
             ProgrammingLanguage::TypeScript,
         );
 
-        // テスト用の翻訳データを作成
         let mut keys = HashMap::new();
         keys.insert("common.hello".to_string(), "Hello".to_string());
         keys.insert("common.goodbye".to_string(), "Goodbye".to_string());
@@ -334,11 +272,9 @@ mod tests {
             HashMap::new(),
         );
 
-        // 診断メッセージを生成
         let options = DiagnosticOptions::default();
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        // "common.missing" キーが存在しないため診断メッセージが生成されることを確認
         expect_that!(diagnostics, not(is_empty()));
         expect_that!(
             diagnostics,
@@ -348,7 +284,6 @@ mod tests {
             diagnostics,
             each(field!(Diagnostic.severity, some(eq(&DiagnosticSeverity::WARNING))))
         );
-        // code と data が正しく設定されていることを確認
         expect_that!(
             diagnostics,
             each(field!(
@@ -362,7 +297,6 @@ mod tests {
     fn test_generate_diagnostics_all_keys_exist() {
         let db = I18nDatabaseImpl::default();
 
-        // テスト用のソースコードを作成（全てのキーが存在）
         let source_code = r#"
             const msg = t("common.hello");
             const msg2 = t("common.goodbye");
@@ -374,7 +308,6 @@ mod tests {
             ProgrammingLanguage::TypeScript,
         );
 
-        // テスト用の翻訳データを作成
         let mut keys = HashMap::new();
         keys.insert("common.hello".to_string(), "Hello".to_string());
         keys.insert("common.goodbye".to_string(), "Goodbye".to_string());
@@ -390,11 +323,9 @@ mod tests {
             HashMap::new(),
         );
 
-        // 診断メッセージを生成
         let options = DiagnosticOptions::default();
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        // 全てのキーが存在するため、診断メッセージは生成されない
         expect_that!(diagnostics, is_empty());
     }
 
@@ -402,7 +333,6 @@ mod tests {
     fn test_generate_diagnostics_multiple_translations() {
         let db = I18nDatabaseImpl::default();
 
-        // テスト用のソースコードを作成
         let source_code = r#"
             const msg = t("common.hello");
             const msg2 = t("errors.notFound");
@@ -414,7 +344,6 @@ mod tests {
             ProgrammingLanguage::TypeScript,
         );
 
-        // テスト用の翻訳データを作成（複数言語）
         let mut keys_en = HashMap::new();
         keys_en.insert("common.hello".to_string(), "Hello".to_string());
 
@@ -442,7 +371,6 @@ mod tests {
             HashMap::new(),
         );
 
-        // 診断メッセージを生成
         let options = DiagnosticOptions::default();
         let diagnostics = generate_diagnostics(
             &db,
@@ -452,9 +380,7 @@ mod tests {
             ".",
         );
 
-        // 各言語で不足しているキーがあるため、診断メッセージが生成される
-        // - common.hello は ja で不足
-        // - errors.notFound は en で不足
+        // common.hello is missing in ja, errors.notFound is missing in en
         expect_that!(diagnostics, len(eq(2)));
         expect_that!(
             diagnostics,
@@ -518,13 +444,13 @@ mod tests {
 
     #[googletest::test]
     fn test_is_key_used_prefix_match() {
-        // t('hoge.fuga') が使われている場合、hoge.fuga.piyo は使用済みとみなす
+        // When t('hoge.fuga') is used, hoge.fuga.piyo is considered used
         let used_keys: HashSet<String> = ["hoge.fuga"].iter().map(|s| s.to_string()).collect();
 
         expect_that!(is_key_used("hoge.fuga", &used_keys, "."), eq(true));
         expect_that!(is_key_used("hoge.fuga.piyo", &used_keys, "."), eq(true));
         expect_that!(is_key_used("hoge.fuga.piyo.deep", &used_keys, "."), eq(true));
-        // hoge.fugaX は prefix マッチしない（hoge.fuga. で始まらない）
+        // hoge.fugaX does not prefix match (doesn't start with hoge.fuga.)
         expect_that!(is_key_used("hoge.fugaX", &used_keys, "."), eq(false));
         expect_that!(is_key_used("other.key", &used_keys, "."), eq(false));
     }
@@ -535,7 +461,7 @@ mod tests {
 
         expect_that!(is_key_used("hoge:fuga", &used_keys, ":"), eq(true));
         expect_that!(is_key_used("hoge:fuga:piyo", &used_keys, ":"), eq(true));
-        // ドットは区切り文字ではないので prefix マッチしない
+        // Dot is not the separator, so no prefix match
         expect_that!(is_key_used("hoge:fuga.piyo", &used_keys, ":"), eq(false));
     }
 
@@ -543,7 +469,6 @@ mod tests {
     fn test_generate_unused_key_diagnostics_basic() {
         let db = I18nDatabaseImpl::default();
 
-        // ソースコード: common.hello のみ使用
         let source_code = r#"const msg = t("common.hello");"#;
         let source_file = SourceFile::new(
             &db,
@@ -552,7 +477,6 @@ mod tests {
             ProgrammingLanguage::TypeScript,
         );
 
-        // 翻訳ファイル: common.hello と common.unused を含む
         let mut keys = HashMap::new();
         keys.insert("common.hello".to_string(), "Hello".to_string());
         keys.insert("common.unused".to_string(), "Unused".to_string());
@@ -586,7 +510,6 @@ mod tests {
 
         let diagnostics = generate_unused_key_diagnostics(&db, translation, &[source_file], ".");
 
-        // common.unused のみが未使用として検出される
         expect_that!(diagnostics, len(eq(1)));
         expect_that!(
             diagnostics,
@@ -606,7 +529,7 @@ mod tests {
     fn test_generate_unused_key_diagnostics_with_prefix_match() {
         let db = I18nDatabaseImpl::default();
 
-        // ソースコード: hoge.fuga を使用（オブジェクト全体を取得するパターン）
+        // Source uses hoge.fuga (fetches entire object)
         let source_code = r#"const obj = t("hoge.fuga");"#;
         let source_file = SourceFile::new(
             &db,
@@ -615,7 +538,6 @@ mod tests {
             ProgrammingLanguage::TypeScript,
         );
 
-        // 翻訳ファイル: ネストしたキーを含む
         let mut keys = HashMap::new();
         keys.insert("hoge.fuga".to_string(), "Parent".to_string());
         keys.insert("hoge.fuga.piyo".to_string(), "Child".to_string());
@@ -657,8 +579,8 @@ mod tests {
 
         let diagnostics = generate_unused_key_diagnostics(&db, translation, &[source_file], ".");
 
-        // hoge.fuga と hoge.fuga.piyo は使用済み（prefix マッチ）
-        // other.key のみが未使用として検出される
+        // hoge.fuga and hoge.fuga.piyo are used (prefix match)
+        // Only other.key is detected as unused
         expect_that!(diagnostics, len(eq(1)));
         expect_that!(
             diagnostics,
@@ -671,13 +593,10 @@ mod tests {
         let keys: HashSet<String> =
             ["nested.key", "nested.foo", "other.key"].iter().map(|s| s.to_string()).collect();
 
-        // "nested" は "nested.key" や "nested.foo" の prefix
         expect_that!(has_keys_with_prefix("nested", &keys, "."), eq(true));
-        // "other" は "other.key" の prefix
         expect_that!(has_keys_with_prefix("other", &keys, "."), eq(true));
-        // "missing" には子キーがない
         expect_that!(has_keys_with_prefix("missing", &keys, "."), eq(false));
-        // "nest" は "nested.key" の prefix ではない（ドットが必要）
+        // "nest" is not a prefix of "nested.key" (requires separator)
         expect_that!(has_keys_with_prefix("nest", &keys, "."), eq(false));
     }
 
@@ -686,16 +605,14 @@ mod tests {
         let keys: HashSet<String> =
             ["nested.key", "nested.foo", "single"].iter().map(|s| s.to_string()).collect();
 
-        // 完全一致
         expect_that!(key_exists_or_has_children("single", &keys, "."), eq(true));
         expect_that!(key_exists_or_has_children("nested.key", &keys, "."), eq(true));
 
-        // 逆方向 prefix マッチ（子キーが存在する）
+        // Reverse prefix match (child keys exist)
         expect_that!(key_exists_or_has_children("nested", &keys, "."), eq(true));
 
-        // 存在しないキー（完全一致も prefix マッチもしない）
         expect_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
-        // "singl" は "single" の prefix ではない（ドットが必要）
+        // "singl" is not a prefix of "single" (requires separator)
         expect_that!(key_exists_or_has_children("singl", &keys, "."), eq(false));
     }
 
@@ -703,7 +620,7 @@ mod tests {
     fn test_generate_diagnostics_with_reverse_prefix_match() {
         let db = I18nDatabaseImpl::default();
 
-        // t('nested') を使用（nested キーは存在せず、nested.key のみ存在）
+        // Uses t('nested') where nested key doesn't exist but nested.key does
         let source_code = r#"const msg = t("nested");"#;
         let source_file = SourceFile::new(
             &db,
@@ -712,7 +629,6 @@ mod tests {
             ProgrammingLanguage::TypeScript,
         );
 
-        // 翻訳ファイル: nested.key と nested.foo のみ存在（nested キーは存在しない）
         let mut keys = HashMap::new();
         keys.insert("nested.key".to_string(), "Key Value".to_string());
         keys.insert("nested.foo".to_string(), "Foo Value".to_string());
@@ -728,11 +644,10 @@ mod tests {
             HashMap::new(),
         );
 
-        // 診断メッセージを生成
         let options = DiagnosticOptions::default();
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        // nested.key が存在するため、nested は有効なキーとみなされ、診断は生成されない
+        // Since nested.key exists, nested is valid (no diagnostics)
         expect_that!(diagnostics, is_empty());
     }
 
@@ -740,7 +655,7 @@ mod tests {
     fn test_generate_diagnostics_no_reverse_prefix_match() {
         let db = I18nDatabaseImpl::default();
 
-        // t('missing') を使用（missing キーも missing.* も存在しない）
+        // Uses t('missing') where neither missing nor missing.* exist
         let source_code = r#"const msg = t("missing");"#;
         let source_file = SourceFile::new(
             &db,
@@ -749,7 +664,6 @@ mod tests {
             ProgrammingLanguage::TypeScript,
         );
 
-        // 翻訳ファイル: 関係のないキーのみ
         let mut keys = HashMap::new();
         keys.insert("other.key".to_string(), "Other Value".to_string());
 
@@ -764,11 +678,9 @@ mod tests {
             HashMap::new(),
         );
 
-        // 診断メッセージを生成
         let options = DiagnosticOptions::default();
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        // missing キーも missing.* も存在しないため、診断が生成される
         expect_that!(diagnostics, len(eq(1)));
         expect_that!(
             diagnostics,

@@ -4,41 +4,33 @@ use serde::{
 };
 use thiserror::Error;
 
-/// 設定のバリデーションエラー
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 #[error("Configuration error in '{field_path}': {message}")]
 pub struct ValidationError {
-    /// エラーが発生したフィールドのJSONパス（例: "includePatterns[0]"）
+    /// JSON path to the field (e.g., "includePatterns[0]")
     pub field_path: String,
-    /// エラーメッセージ
     pub message: String,
 }
 
 impl ValidationError {
-    /// 新しいバリデーションエラーを作成
     #[must_use]
     pub fn new(field_path: impl Into<String>, message: impl Into<String>) -> Self {
         Self { field_path: field_path.into(), message: message.into() }
     }
 }
 
-/// 設定管理に関するエラー
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    /// バリデーションエラー（複数のエラーを含む）
     #[error("Configuration validation failed:\n{}", format_validation_errors(.0))]
     ValidationErrors(Vec<ValidationError>),
 
-    /// ファイル読み込みエラー
     #[error("Failed to load configuration file: {0}")]
     IoError(#[from] std::io::Error),
 
-    /// JSON パースエラー
     #[error("Failed to parse configuration: {0}")]
     ParseError(#[from] serde_json::Error),
 }
 
-/// `ValidationError` のリストを読みやすい文字列に整形
 fn format_validation_errors(errors: &[ValidationError]) -> String {
     errors
         .iter()
@@ -57,71 +49,51 @@ pub struct ServerSettings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct I18nSettings {
-    /// 翻訳ファイル
     pub translation_files: TranslationFilesConfig,
 
-    /// ソースコードとして含むパターン
     pub include_patterns: Vec<String>,
-    /// ソースコードから除外するパターン
     pub exclude_patterns: Vec<String>,
 
-    /// キーの区切り文字（デフォルト: "."）
     pub key_separator: String,
-    /// ネームスペースの区切り文字
     pub namespace_separator: Option<String>,
-    /// デフォルトのネームスペース
-    ///
-    /// 明示的な namespace 指定がない場合に使用される。
-    /// 設定されていない場合は、全翻訳ファイルを検索する（後方互換性）。
+    /// Used when no explicit namespace is specified in code.
+    /// If unset, searches all translation files (backward compatibility).
     pub default_namespace: Option<String>,
 
-    /// インデックス設定
     pub indexing: IndexingConfig,
 
-    /// 翻訳が必須の言語
+    /// Languages that require translations.
     ///
-    /// - `None`: 翻訳ファイルから検出されたすべての言語が必須（デフォルト）
-    /// - `Some([...])`: 指定された言語のみが必須
+    /// - `None`: All detected languages are required (default)
+    /// - `Some([...])`: Only specified languages are required
     ///
-    /// 必須言語で翻訳が欠けている場合は警告が表示されます。
-    /// `optional_languages` と同時に指定することはできません。
+    /// Mutually exclusive with `optional_languages`.
     pub required_languages: Option<Vec<String>>,
 
-    /// 翻訳が任意の言語
+    /// Languages where missing translations are ignored.
     ///
-    /// この言語で翻訳が欠けていても診断は表示されません。
-    /// `required_languages` と同時に指定することはできません。
+    /// Mutually exclusive with `required_languages`.
     pub optional_languages: Option<Vec<String>>,
 
-    /// Virtual Text（翻訳置換表示）の設定
     pub virtual_text: VirtualTextConfig,
-
-    /// 診断（Diagnostics）の設定
     pub diagnostics: DiagnosticsConfig,
 
-    /// 優先表示する言語のリスト
-    ///
-    /// ワークスペースに存在する言語の中から、このリストの順序で優先的に使用される。
-    /// `currentLanguage` が設定されていない場合のフォールバック。
+    /// Fallback language priority when `currentLanguage` is unset.
     pub primary_languages: Option<Vec<String>>,
 }
 
-/// インデックス処理の設定
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct IndexingConfig {
-    /// インデックス処理の並列スレッド数
-    ///
-    /// - `None`: デフォルト（CPUコア数の80%、最低1スレッド）
-    /// - `Some(n)`: 指定されたスレッド数を使用
+    /// Parallel thread count for indexing.
+    /// Default: 80% of CPU cores (minimum 1).
     pub num_threads: Option<usize>,
 }
 
-/// Virtual Text（翻訳置換表示）の設定
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct VirtualTextConfig {
-    /// 最大表示文字数（超過時は省略記号を追加）
+    /// Max characters before truncation with ellipsis.
     pub max_length: usize,
 }
 
@@ -131,11 +103,9 @@ impl Default for VirtualTextConfig {
     }
 }
 
-/// 診断（Diagnostics）の設定
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DiagnosticsConfig {
-    /// 未使用キーの警告を有効にするか（デフォルト: true）
     pub unused_keys: bool,
 }
 
@@ -152,16 +122,13 @@ pub struct TranslationFilesConfig {
 }
 
 impl I18nSettings {
-    /// 設定をバリデーションする
-    ///
     /// # Errors
-    /// - 必須フィールドが空の場合
-    /// - glob パターンが不正な場合
-    /// - 区切り文字が無効な場合
+    /// - Required field is empty
+    /// - Invalid glob pattern
+    /// - Invalid separator
     pub fn validate(&self) -> Result<(), Vec<ValidationError>> {
         let mut errors = Vec::new();
 
-        // key_separator のチェック
         if self.key_separator.is_empty() {
             errors.push(ValidationError::new(
                 "keySeparator",
@@ -169,7 +136,6 @@ impl I18nSettings {
             ));
         }
 
-        // namespace_separator のチェック
         if let Some(sep) = &self.namespace_separator
             && sep.is_empty()
         {
@@ -179,7 +145,6 @@ impl I18nSettings {
                 ));
         }
 
-        // include_patterns のチェック
         if self.include_patterns.is_empty() {
             errors.push(ValidationError::new(
                 "includePatterns",
@@ -187,7 +152,6 @@ impl I18nSettings {
             ));
         }
 
-        // include_patterns の glob パターン妥当性チェック
         for (index, pattern) in self.include_patterns.iter().enumerate() {
             if let Err(e) = globset::Glob::new(pattern) {
                 errors.push(ValidationError::new(
@@ -197,7 +161,6 @@ impl I18nSettings {
             }
         }
 
-        // exclude_patterns の glob パターン妥当性チェック
         for (index, pattern) in self.exclude_patterns.iter().enumerate() {
             if let Err(e) = globset::Glob::new(pattern) {
                 errors.push(ValidationError::new(
@@ -207,7 +170,6 @@ impl I18nSettings {
             }
         }
 
-        // translation_files.file_pattern のバリデーション
         if self.translation_files.file_pattern.is_empty() {
             errors.push(ValidationError::new(
                 "translationFiles.filePattern",
@@ -220,7 +182,6 @@ impl I18nSettings {
             ));
         }
 
-        // required_languages と optional_languages の排他チェック
         if self.required_languages.is_some() && self.optional_languages.is_some() {
             errors.push(ValidationError::new(
                 "requiredLanguages/optionalLanguages",
@@ -269,17 +230,15 @@ mod tests {
     fn validate_valid_settings() {
         let settings = I18nSettings::default();
 
-        assert_that!(settings.validate(), ok(anything())); // Result型のOkチェックに最適
+        assert_that!(settings.validate(), ok(anything()));
     }
 
     #[rstest]
     fn deserialize_partial_settings() {
-        // 一部のフィールドのみを持つ JSON
         let json = r#"{"namespaceSeparator": ":"}"#;
 
         let settings: I18nSettings = serde_json::from_str(json).unwrap();
 
-        // 省略されたフィールドはデフォルト値になる
         assert_that!(settings.key_separator, eq("."));
         assert_that!(settings.include_patterns, len(eq(1)));
         assert_that!(settings.namespace_separator, some(eq(":")));
@@ -287,12 +246,10 @@ mod tests {
 
     #[rstest]
     fn deserialize_empty_settings() {
-        // 空の JSON オブジェクト
         let json = "{}";
 
         let settings: I18nSettings = serde_json::from_str(json).unwrap();
 
-        // 全てのフィールドがデフォルト値になる
         assert_that!(settings.key_separator, eq("."));
         assert_that!(settings.include_patterns, elements_are![eq("**/*.{js,jsx,ts,tsx}")]);
         assert_that!(settings.exclude_patterns, elements_are![eq("node_modules/**")]);
@@ -333,10 +290,7 @@ mod tests {
 
     #[rstest]
     fn validate_invalid_include_patterns_empty() {
-        let settings = I18nSettings {
-            include_patterns: vec![], // 空のパターン
-            ..I18nSettings::default()
-        };
+        let settings = I18nSettings { include_patterns: vec![], ..I18nSettings::default() };
         let result = settings.validate();
 
         assert_that!(
@@ -351,7 +305,7 @@ mod tests {
     #[rstest]
     fn validate_invalid_include_pattern_invalid_glob() {
         let settings = I18nSettings {
-            include_patterns: vec!["**/*.{js,ts".to_string()], // 不正なパターン
+            include_patterns: vec!["**/*.{js,ts".to_string()],
             ..I18nSettings::default()
         };
 
@@ -374,7 +328,7 @@ mod tests {
                 "node_modules/**".to_string(),
                 "dist/**".to_string(),
                 "invalid[pattern".to_string(),
-            ], // 不正なパターン
+            ],
             ..I18nSettings::default()
         };
 
@@ -412,7 +366,7 @@ mod tests {
     fn validate_invalid_translation_file_pattern_invalid_glob() {
         let settings = I18nSettings {
             translation_files: TranslationFilesConfig {
-                file_pattern: "**/{locales,messages/*.json".to_string(), // 不正なパターン
+                file_pattern: "**/{locales,messages/*.json".to_string(),
             },
 
             ..I18nSettings::default()
@@ -431,10 +385,9 @@ mod tests {
 
     #[rstest]
     fn config_error_validation_errors_format() {
-        // 複数のバリデーションエラーを持つ設定
         let settings = I18nSettings {
-            key_separator: String::new(), // エラー1
-            include_patterns: vec![],     // エラー2
+            key_separator: String::new(),
+            include_patterns: vec![],
             ..I18nSettings::default()
         };
 
@@ -443,7 +396,6 @@ mod tests {
         let config_error = ConfigError::ValidationErrors(errors);
 
         let error_message = format!("{config_error}");
-        // エラーメッセージに詳細が含まれていることを確認
         assert_that!(error_message, contains_substring("Configuration validation failed"));
         assert_that!(error_message, contains_substring("1. keySeparator"));
         assert_that!(error_message, contains_substring("cannot be empty"));

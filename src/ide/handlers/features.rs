@@ -1,6 +1,4 @@
-//! LSP 機能ハンドラー
-//!
-//! `completion`, `hover`, `goto_definition`, `references` の処理を担当します。
+//! LSP feature handlers: completion, hover, `goto_definition`, references.
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
@@ -19,7 +17,6 @@ use tower_lsp::lsp_types::{
 
 use super::super::backend::Backend;
 
-/// `textDocument/completion` リクエストを処理
 pub async fn handle_completion(
     backend: &Backend,
     params: CompletionParams,
@@ -29,18 +26,15 @@ pub async fn handle_completion(
 
     tracing::debug!(uri = %uri, line = position.line, character = position.character, "Completion request");
 
-    // 翻訳データが必要なため、インデックス完了を待つ
     if !backend.wait_for_translations().await {
         tracing::debug!("Completion request - translations not indexed yet");
         return Ok(None);
     }
 
-    // ファイルパスを取得
     let Some(file_path) = Backend::uri_to_path(&uri) else {
         return Ok(None);
     };
 
-    // SourceFile を取得
     let source_file = {
         let source_files = backend.state.source_files.lock().await;
         source_files.get(&file_path).copied()
@@ -51,7 +45,6 @@ pub async fn handle_completion(
         return Ok(None);
     };
 
-    // ファイルの内容を取得してコンテキストを抽出
     let db = backend.state.db.lock().await;
     let text = source_file.text(&*db);
     let language = source_file.language(&*db);
@@ -77,12 +70,10 @@ pub async fn handle_completion(
         "Extracted completion context"
     );
 
-    // 補完候補を生成
     let translations = backend.state.translations.lock().await;
     let partial_key_opt =
         if context.partial_key.is_empty() { None } else { Some(context.partial_key.as_str()) };
 
-    // 有効な言語を決定（currentLanguage → primaryLanguages → 最初の言語）
     let current_language = backend.state.current_language.lock().await.clone();
     let primary_languages =
         backend.config_manager.lock().await.get_settings().primary_languages.clone();
@@ -111,34 +102,28 @@ pub async fn handle_completion(
     if items.is_empty() { Ok(None) } else { Ok(Some(CompletionResponse::Array(items))) }
 }
 
-/// `textDocument/hover` リクエストを処理
 pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
 
     tracing::debug!(uri = %uri, line = position.line, character = position.character, "Hover request");
 
-    // 翻訳データが必要なため、インデックス完了を待つ
-    // タイムアウトした場合は hover情報なしを返す
     if !backend.wait_for_translations().await {
         tracing::debug!("Hover request timeout - translations not indexed yet");
         return Ok(None);
     }
 
-    // ファイルパスを取得
     let Some(file_path) = Backend::uri_to_path(&uri) else {
         return Ok(None);
     };
 
     let source_position = crate::types::SourcePosition::from(position);
 
-    // 翻訳キーを取得
     let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
         tracing::debug!("No translation key found at position");
         return Ok(None);
     };
 
-    // 翻訳内容を取得
     let hover_text = {
         let config = backend.config_manager.lock().await;
         let settings = config.get_settings();
@@ -176,7 +161,7 @@ pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Opti
     }))
 }
 
-/// `textDocument/definition` リクエストを処理
+/// Handles `textDocument/definition` request.
 pub async fn handle_goto_definition(
     backend: &Backend,
     params: GotoDefinitionParams,
@@ -186,26 +171,22 @@ pub async fn handle_goto_definition(
 
     tracing::debug!(uri = %uri, line = position.line, character = position.character, "Goto Definition request");
 
-    // 翻訳データが必要なため、インデックス完了を待つ
     if !backend.wait_for_translations().await {
         tracing::debug!("Goto Definition request - translations not indexed yet");
         return Ok(None);
     }
 
-    // ファイルパスを取得
     let Some(file_path) = Backend::uri_to_path(&uri) else {
         return Ok(None);
     };
 
     let source_position = crate::types::SourcePosition::from(position);
 
-    // 翻訳キーを取得
     let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
         tracing::debug!("No translation key found at position");
         return Ok(None);
     };
 
-    // 翻訳ファイル内の定義を検索
     let locations = {
         let key_separator =
             backend.config_manager.lock().await.get_settings().key_separator.clone();
@@ -220,7 +201,6 @@ pub async fn handle_goto_definition(
     if locations.is_empty() { Ok(None) } else { Ok(Some(GotoDefinitionResponse::Array(locations))) }
 }
 
-/// `textDocument/references` リクエストを処理
 pub async fn handle_references(
     backend: &Backend,
     params: ReferenceParams,
@@ -230,26 +210,22 @@ pub async fn handle_references(
 
     tracing::debug!(uri = %uri, line = position.line, character = position.character, "References request");
 
-    // 全インデックス完了をチェック（待機しない）
     if !backend.workspace_indexer.is_indexing_completed() {
         tracing::debug!("References request - indexing not completed, returning empty results");
         return Ok(Some(vec![]));
     }
 
-    // ファイルパスを取得
     let Some(file_path) = Backend::uri_to_path(&uri) else {
         return Ok(None);
     };
 
     let source_position = crate::types::SourcePosition::from(position);
 
-    // 翻訳キーを取得
     let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
         tracing::debug!("No translation key found at position");
         return Ok(None);
     };
 
-    // 全ソースファイルから参照を検索
     let locations = {
         let db = backend.state.db.lock().await;
         let key = crate::interned::TransKey::new(&*db, key_text.clone());

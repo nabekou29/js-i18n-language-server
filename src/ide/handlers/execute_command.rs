@@ -1,7 +1,4 @@
-//! Execute Command ハンドラー
-//!
-//! `workspace/executeCommand` リクエストを処理し、
-//! カスタムコマンドを実行します。
+//! Execute command handler for `workspace/executeCommand` requests
 
 use std::collections::HashMap;
 
@@ -54,8 +51,7 @@ async fn apply_single_file_edit(backend: &Backend, uri: Url, text_edit: TextEdit
     }
 }
 
-/// `workspace/executeCommand` リクエストを処理
-#[allow(clippy::single_match_else)] // 将来的にコマンドが増える可能性を考慮
+#[allow(clippy::single_match_else)] // More commands may be added in the future
 pub async fn handle_execute_command(
     backend: &Backend,
     params: ExecuteCommandParams,
@@ -76,15 +72,10 @@ pub async fn handle_execute_command(
     }
 }
 
-/// `i18n.editTranslation` コマンドを実行
+/// Open translation file and position cursor at the key's value.
 ///
-/// # Arguments
-/// * `arguments[0]` - 言語コード (例: "en", "ja")
-/// * `arguments[1]` - 翻訳キー (例: "common.hello")
-///
-/// # 動作
-/// - キーが存在しない場合: プレースホルダーを挿入し、ファイルを開く
-/// - キーが存在する場合: ファイルを開き、値の位置にカーソルを移動
+/// If the key doesn't exist, inserts a placeholder and opens the file.
+/// If the key exists, opens the file and moves cursor to value position.
 async fn handle_edit_translation(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
@@ -101,7 +92,6 @@ async fn handle_edit_translation(
 
     tracing::debug!(lang = %lang, key = %key, "Executing i18n.editTranslation");
 
-    // 設定から key_separator を取得
     let key_separator = {
         let config = backend.config_manager.lock().await;
         config.get_settings().key_separator.clone()
@@ -110,7 +100,6 @@ async fn handle_edit_translation(
     let db = backend.state.db.lock().await;
     let translations = backend.state.translations.lock().await;
 
-    // 指定された言語の翻訳ファイルを検索
     let Some(translation) = translations.iter().find(|t| t.language(&*db) == lang) else {
         backend
             .client
@@ -122,11 +111,10 @@ async fn handle_edit_translation(
     let file_path = translation.file_path(&*db).clone();
     let key_exists = translation.keys(&*db).contains_key(key);
 
-    // キーの存在有無で動作を分岐
     let (insert_result, original_text, cursor_range) = if key_exists {
-        // キーが存在する → 値の末尾（閉じクォートの手前）にカーソル
+        // Position cursor before closing quote
         let range = translation.value_ranges(&*db).get(key).map(|r| {
-            // end は `"` の後の位置なので、1つ前（`"` の手前）にする
+            // r.end points after the closing `"`, so subtract 1 to position before it
             let cursor_char = r.end.character.saturating_sub(1);
             Range {
                 start: Position { line: r.end.line, character: cursor_char },
@@ -135,7 +123,7 @@ async fn handle_edit_translation(
         });
         (None, None, range)
     } else {
-        // キーが存在しない → CST でキーを挿入
+        // Key doesn't exist - insert via CST manipulation
         let original = translation.json_text(&*db).clone();
         let result =
             crate::ide::code_actions::insert_key_to_json(&*db, translation, key, &key_separator);
@@ -143,23 +131,19 @@ async fn handle_edit_translation(
         (result, Some(original), cursor)
     };
 
-    // ロックを解放
     drop(translations);
     drop(db);
 
-    // ファイル URI を構築
     let Ok(uri) = Url::from_file_path(&file_path) else {
         tracing::error!("Failed to convert file path to URI: {}", file_path);
         return Ok(None);
     };
 
-    // キーが存在しない場合、ファイル全体を置換
     if let (Some(result), Some(original)) = (insert_result, original_text) {
         let text_edit = create_full_file_text_edit(&original, result.new_text);
         apply_single_file_edit(backend, uri.clone(), text_edit).await;
     }
 
-    // ファイルを開き、カーソルを移動
     let show_result = backend
         .client
         .show_document(ShowDocumentParams {
@@ -177,35 +161,21 @@ async fn handle_edit_translation(
     Ok(None)
 }
 
-/// `i18n.getDecorations` コマンドの引数
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GetDecorationsArgs {
-    /// ファイル URI
     uri: String,
-    /// 表示する言語（省略時は最初に見つかった翻訳を使用）
     language: Option<String>,
-    /// 最大表示文字数（省略時は設定のデフォルト値）
     max_length: Option<usize>,
 }
 
-/// `i18n.getDecorations` コマンドを実行
-///
-/// ドキュメント内の翻訳キーと翻訳値のリストを返す。
-/// エディタ拡張がこの情報を使用して、キー文字列を翻訳値で置換表示する。
-///
-/// # Arguments
-/// * `arguments[0]` - `GetDecorationsArgs` オブジェクト
-///
-/// # Returns
-/// `TranslationDecoration` の配列（JSON）
+/// Returns translation decorations for editor extensions to display inline translations.
 async fn handle_get_decorations(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
     let args = arguments.unwrap_or_default();
 
-    // 引数をパース
     let Some(first_arg) = args.first().cloned() else {
         tracing::warn!("Missing arguments for i18n.getDecorations");
         return Ok(Some(serde_json::json!([])));
@@ -226,19 +196,16 @@ async fn handle_get_decorations(
         "Executing i18n.getDecorations"
     );
 
-    // URI をパース
     let Ok(uri) = Url::parse(&parsed_args.uri) else {
         tracing::warn!("Invalid URI: {}", parsed_args.uri);
         return Ok(Some(serde_json::json!([])));
     };
 
-    // ファイルパスを取得
     let Some(file_path) = Backend::uri_to_path(&uri) else {
         tracing::warn!("Failed to convert URI to path: {}", parsed_args.uri);
         return Ok(Some(serde_json::json!([])));
     };
 
-    // 設定からデフォルト値を取得
     let config = backend.config_manager.lock().await;
     let settings = config.get_settings();
     let max_length = parsed_args.max_length.unwrap_or(settings.virtual_text.max_length);
@@ -246,7 +213,6 @@ async fn handle_get_decorations(
     let key_separator = settings.key_separator.clone();
     drop(config);
 
-    // SourceFile を取得
     let db = backend.state.db.lock().await;
     let source_files = backend.state.source_files.lock().await;
 
@@ -255,10 +221,9 @@ async fn handle_get_decorations(
         return Ok(Some(serde_json::json!([])));
     };
 
-    // 翻訳データを取得
     let translations = backend.state.translations.lock().await;
 
-    // 有効な言語を決定（リクエスト指定 → currentLanguage → primaryLanguages → 最初の言語）
+    // Priority: request arg > currentLanguage > primaryLanguages > first available
     let language = parsed_args.language.clone().or_else(|| {
         let current_language = backend.state.current_language.blocking_lock().clone();
         let sorted_languages = crate::ide::backend::collect_sorted_languages(
@@ -270,7 +235,6 @@ async fn handle_get_decorations(
         sorted_languages.first().cloned()
     });
 
-    // 翻訳装飾情報を生成
     let decorations = crate::ide::virtual_text::get_translation_decorations(
         &*db,
         source_file,
@@ -280,12 +244,10 @@ async fn handle_get_decorations(
         &key_separator,
     );
 
-    // ロックを解放
     drop(translations);
     drop(source_files);
     drop(db);
 
-    // JSON に変換して返す
     match serde_json::to_value(&decorations) {
         Ok(value) => Ok(Some(value)),
         Err(e) => {
@@ -295,30 +257,19 @@ async fn handle_get_decorations(
     }
 }
 
-/// `i18n.setCurrentLanguage` コマンドの引数
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SetCurrentLanguageArgs {
-    /// 設定する言語コード（null でリセット）
     language: Option<String>,
 }
 
-/// `i18n.setCurrentLanguage` コマンドを実行
-///
-/// 現在の表示言語を変更する。Virtual Text、補完、Code Actions で使用される。
-///
-/// # Arguments
-/// * `arguments[0]` - `SetCurrentLanguageArgs` オブジェクト
-///
-/// # Returns
-/// 成功時は `null`
+/// Set current display language used by virtual text, completion, and code actions.
 async fn handle_set_current_language(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
     let args = arguments.unwrap_or_default();
 
-    // 引数をパース
     let parsed_args: SetCurrentLanguageArgs = if let Some(first_arg) = args.first().cloned() {
         match serde_json::from_value(first_arg) {
             Ok(args) => args,
@@ -328,7 +279,7 @@ async fn handle_set_current_language(
             }
         }
     } else {
-        // 引数なしの場合はリセット
+        // No arguments means reset to default
         SetCurrentLanguageArgs { language: None }
     };
 
@@ -337,7 +288,6 @@ async fn handle_set_current_language(
         "Executing i18n.setCurrentLanguage"
     );
 
-    // current_language を更新
     let mut current_language = backend.state.current_language.lock().await;
     current_language.clone_from(&parsed_args.language);
     drop(current_language);
@@ -353,23 +303,13 @@ async fn handle_set_current_language(
     Ok(None)
 }
 
-/// `i18n.deleteUnusedKeys` コマンドの引数
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DeleteUnusedKeysArgs {
-    /// 翻訳ファイルの URI
     uri: String,
 }
 
-/// `i18n.deleteUnusedKeys` コマンドを実行
-///
-/// 翻訳ファイル内の未使用キーを一括で削除する。
-///
-/// # Arguments
-/// * `arguments[0]` - `DeleteUnusedKeysArgs` オブジェクト
-///
-/// # Returns
-/// 成功時は削除されたキーの数を含むオブジェクト
+/// Delete all unused translation keys from a translation file.
 #[allow(clippy::too_many_lines)]
 async fn handle_delete_unused_keys(
     backend: &Backend,
@@ -380,7 +320,6 @@ async fn handle_delete_unused_keys(
 
     let args = arguments.unwrap_or_default();
 
-    // 引数をパース
     let Some(first_arg) = args.first().cloned() else {
         tracing::warn!("Missing arguments for i18n.deleteUnusedKeys");
         return Ok(None);
@@ -396,25 +335,21 @@ async fn handle_delete_unused_keys(
 
     tracing::debug!(uri = %parsed_args.uri, "Executing i18n.deleteUnusedKeys");
 
-    // URI をパース
     let Ok(uri) = Url::parse(&parsed_args.uri) else {
         tracing::warn!("Invalid URI: {}", parsed_args.uri);
         return Ok(None);
     };
 
-    // ファイルパスを取得
     let Some(file_path) = Backend::uri_to_path(&uri) else {
         tracing::warn!("Failed to convert URI to path: {}", parsed_args.uri);
         return Ok(None);
     };
 
-    // 設定から key_separator を取得
     let key_separator = {
         let config = backend.config_manager.lock().await;
         config.get_settings().key_separator.clone()
     };
 
-    // ソースファイルの使用キーを収集
     let used_keys: HashSet<String> = {
         let db = backend.state.db.lock().await;
         let source_files = backend.state.source_files.lock().await;
@@ -432,7 +367,6 @@ async fn handle_delete_unused_keys(
         keys
     };
 
-    // 対象の Translation を取得し、未使用キーを検出
     let (json_text, unused_keys) = {
         let db = backend.state.db.lock().await;
         let translations = backend.state.translations.lock().await;
@@ -449,7 +383,6 @@ async fn handle_delete_unused_keys(
         drop(translations);
         drop(db);
 
-        // 未使用キーを収集
         let unused: Vec<String> = all_keys
             .keys()
             .filter(|key| !crate::ide::diagnostics::is_key_used(key, &used_keys, &key_separator))
@@ -467,7 +400,6 @@ async fn handle_delete_unused_keys(
         })));
     }
 
-    // キーを削除
     let Some(result) = crate::ide::code_actions::delete_keys_from_json_text(
         &json_text,
         &unused_keys,
@@ -479,17 +411,12 @@ async fn handle_delete_unused_keys(
 
     tracing::info!(deleted_count = result.deleted_count, "Deleting unused translation keys");
 
-    // ファイル全体を置換する WorkspaceEdit を作成
     let text_edit = create_full_file_text_edit(&json_text, result.new_text.clone());
     apply_single_file_edit(backend, uri, text_edit).await;
 
-    // 翻訳ファイルを再読み込み
     backend.reload_translation_file(Path::new(&file_path)).await;
-
-    // 診断を更新
     backend.send_unused_key_diagnostics().await;
 
-    // 結果をログ出力
     let deleted_count = result.deleted_count;
     backend
         .client

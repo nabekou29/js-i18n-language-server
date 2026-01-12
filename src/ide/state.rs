@@ -1,4 +1,4 @@
-//! LSP サーバーの共有状態
+//! Shared state for the LSP server.
 
 use std::collections::{
     HashMap,
@@ -16,42 +16,29 @@ use crate::db::I18nDatabaseImpl;
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 
-/// インデックス中にスキップされた更新を保持するための型
 pub type PendingUpdate = (tower_lsp::lsp_types::Url, String, bool);
 
-/// LSP サーバーの共有状態
+/// Shared state for the LSP server.
 ///
-/// `Backend` から状態管理の責務を分離し、ハンドラー間で共有可能にします。
+/// # Lock Ordering
 ///
-/// # ロック順序
-///
-/// 複数のロックを同時に取得する場合は、以下の順序を厳守してください：
+/// When acquiring multiple locks, always follow this order:
 /// 1. `db`
 /// 2. `source_files` / `translations` / `opened_files`
 #[derive(Clone)]
 pub struct ServerState {
-    /// Salsa データベース
     pub db: Arc<Mutex<I18nDatabaseImpl>>,
-    /// `SourceFile` 管理（ファイルパス → `SourceFile`）
     pub source_files: Arc<Mutex<HashMap<PathBuf, SourceFile>>>,
-    /// 翻訳データ
     pub translations: Arc<Mutex<Vec<Translation>>>,
-    /// 現在開いているファイルの URI
     pub opened_files: Arc<Mutex<HashSet<tower_lsp::lsp_types::Url>>>,
-    /// 現在選択されている言語（ランタイム状態）
-    ///
-    /// `i18n.setCurrentLanguage` コマンドで変更可能。
-    /// Virtual Text、補完、Code Actions で使用される。
+    /// Current language for Virtual Text, completion, and Code Actions.
+    /// Changeable via `i18n.setCurrentLanguage` command.
     pub current_language: Arc<Mutex<Option<String>>>,
-    /// インデックス中にスキップされた更新を保持するキュー
-    ///
-    /// インデックス完了後に処理される。
-    /// `(uri, text, force_create)` のタプルを保持。
+    /// Updates skipped during indexing; processed after indexing completes.
     pub pending_updates: Arc<Mutex<Vec<PendingUpdate>>>,
 }
 
 impl ServerState {
-    /// 新しい `ServerState` を作成
     pub fn new(db: I18nDatabaseImpl) -> Self {
         Self {
             db: Arc::new(Mutex::new(db)),
@@ -63,9 +50,7 @@ impl ServerState {
         }
     }
 
-    /// `db` と `translations` のロックを一括取得
-    ///
-    /// ロック順序（`db` → `translations`）を保証します。
+    /// Acquires locks on `db` and `translations` in correct order.
     pub async fn lock_db_and_translations(
         &self,
     ) -> (MutexGuard<'_, I18nDatabaseImpl>, MutexGuard<'_, Vec<Translation>>) {
@@ -74,9 +59,7 @@ impl ServerState {
         (db, translations)
     }
 
-    /// `db` と `source_files` のロックを一括取得
-    ///
-    /// ロック順序（`db` → `source_files`）を保証します。
+    /// Acquires locks on `db` and `source_files` in correct order.
     pub async fn lock_db_and_source_files(
         &self,
     ) -> (MutexGuard<'_, I18nDatabaseImpl>, MutexGuard<'_, HashMap<PathBuf, SourceFile>>) {
@@ -85,9 +68,7 @@ impl ServerState {
         (db, source_files)
     }
 
-    /// `db`, `source_files`, `translations` のロックを一括取得
-    ///
-    /// ロック順序（`db` → `source_files` → `translations`）を保証します。
+    /// Acquires all locks in correct order.
     pub async fn lock_all(
         &self,
     ) -> (
@@ -133,8 +114,6 @@ mod tests {
         let db = I18nDatabaseImpl::default();
         let state = ServerState::new(db);
 
-        // tokio::test を使わずに同期的に確認
-        // Arc のポインタが存在することを確認
         expect_that!(Arc::strong_count(&state.db), eq(1));
         expect_that!(Arc::strong_count(&state.source_files), eq(1));
         expect_that!(Arc::strong_count(&state.translations), eq(1));
@@ -148,14 +127,12 @@ mod tests {
         let state1 = ServerState::new(db);
         let state2 = state1.clone();
 
-        // Clone 後は Arc の参照カウントが 2 になる
         expect_that!(Arc::strong_count(&state1.db), eq(2));
         expect_that!(Arc::strong_count(&state1.source_files), eq(2));
         expect_that!(Arc::strong_count(&state1.translations), eq(2));
         expect_that!(Arc::strong_count(&state1.opened_files), eq(2));
         expect_that!(Arc::strong_count(&state1.current_language), eq(2));
 
-        // 同じポインタを指していることを確認
         expect_that!(Arc::ptr_eq(&state1.db, &state2.db), eq(true));
         expect_that!(Arc::ptr_eq(&state1.source_files, &state2.source_files), eq(true));
     }
@@ -167,7 +144,6 @@ mod tests {
 
         let debug_str = format!("{state:?}");
 
-        // Debug 出力に主要なフィールド名が含まれていることを確認
         expect_that!(debug_str, contains_substring("ServerState"));
         expect_that!(debug_str, contains_substring("db"));
         expect_that!(debug_str, contains_substring("source_files"));
@@ -181,7 +157,6 @@ mod tests {
         let db = I18nDatabaseImpl::default();
         let state = ServerState::new(db);
 
-        // source_files に要素を追加
         {
             let mut source_files = state.source_files.lock().await;
             let dummy_source = SourceFile::new(
@@ -193,7 +168,6 @@ mod tests {
             source_files.insert(PathBuf::from("/test.ts"), dummy_source);
         }
 
-        // 追加した要素が取得できることを確認
         let source_files = state.source_files.lock().await;
         assert_eq!(source_files.len(), 1);
         assert!(source_files.contains_key(&PathBuf::from("/test.ts")));
@@ -205,14 +179,12 @@ mod tests {
         let state1 = ServerState::new(db);
         let state2 = state1.clone();
 
-        // state1 経由で opened_files に要素を追加
         {
             let mut opened_files = state1.opened_files.lock().await;
             let uri = tower_lsp::lsp_types::Url::parse("file:///test.ts").unwrap();
             opened_files.insert(uri);
         }
 
-        // state2 経由でも変更が見えることを確認
         let opened_files = state2.opened_files.lock().await;
         assert_eq!(opened_files.len(), 1);
     }

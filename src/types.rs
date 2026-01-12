@@ -1,13 +1,11 @@
-//! プロジェクト全体で使用される基本型定義
+//! Core types used throughout the project.
 
 use tower_lsp::lsp_types;
 
-/// ソースコード内の範囲を表す
+/// A range in source code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourceRange {
-    /// 開始位置
     pub start: SourcePosition,
-    /// 終了位置
     pub end: SourcePosition,
 }
 
@@ -23,12 +21,10 @@ impl From<SourceRange> for lsp_types::Range {
     }
 }
 
-/// ソースコード内の位置を表す
+/// A position in source code (0-indexed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SourcePosition {
-    /// 行（0-indexed）
     pub line: u32,
-    /// 文字位置（0-indexed）
     pub character: u32,
 }
 
@@ -52,37 +48,26 @@ impl From<tree_sitter::Point> for SourcePosition {
 }
 
 impl SourceRange {
-    /// tree-sitter のノードから `SourceRange` を作成
     #[must_use]
     pub fn from_node(node: &tree_sitter::Node<'_>) -> Self {
         Self { start: node.start_position().into(), end: node.end_position().into() }
     }
 
-    /// 指定した位置が範囲内にあるかをチェック
-    ///
-    /// # Arguments
-    /// * `position` - チェックする位置
-    ///
-    /// # Returns
-    /// 位置が範囲内にあれば `true`、そうでなければ `false`
+    /// Checks if a position is within this range.
     #[must_use]
     pub const fn contains(&self, position: SourcePosition) -> bool {
-        // 開始位置より前の場合
         if position.line < self.start.line {
             return false;
         }
         if position.line == self.start.line && position.character < self.start.character {
             return false;
         }
-
-        // 終了位置より後の場合
         if position.line > self.end.line {
             return false;
         }
         if position.line == self.end.line && position.character > self.end.character {
             return false;
         }
-
         true
     }
 }
@@ -95,18 +80,13 @@ mod tests {
 
     use super::*;
 
-    /// ヘルパー関数: `SourcePosition` を作成
     const fn pos(line: u32, character: u32) -> SourcePosition {
         SourcePosition { line, character }
     }
 
-    /// ヘルパー関数: `SourceRange` を作成
     const fn range(start_line: u32, start_char: u32, end_line: u32, end_char: u32) -> SourceRange {
         SourceRange { start: pos(start_line, start_char), end: pos(end_line, end_char) }
     }
-
-    // SourceRange::contains の境界条件テスト
-    // 範囲: (1, 5) から (2, 10) を使用
 
     #[rstest]
     #[case::before_start_line(pos(0, 5), range(1, 5, 2, 10), false)]
@@ -126,7 +106,6 @@ mod tests {
         assert_that!(range.contains(position), eq(expected));
     }
 
-    // 同一行内での境界テスト
     #[rstest]
     #[case::same_line_before(pos(1, 4), range(1, 5, 1, 10), false)]
     #[case::same_line_at_start(pos(1, 5), range(1, 5, 1, 10), true)]

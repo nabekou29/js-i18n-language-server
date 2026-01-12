@@ -29,14 +29,10 @@ use crate::input::translation::{
     load_translation_file,
 };
 
-/// Workspace indexer
 #[derive(Clone, Debug)]
 pub struct WorkspaceIndexer {
-    /// グローバルインデックスが完了したかどうか
     indexing_completed: Arc<AtomicBool>,
-    /// 翻訳ファイルのインデックスが完了したかどうか
     translations_indexed: Arc<AtomicBool>,
-    /// 翻訳インデックス完了通知
     translations_notify: Arc<Notify>,
 }
 
@@ -47,7 +43,6 @@ impl Default for WorkspaceIndexer {
 }
 
 impl WorkspaceIndexer {
-    /// 新しいインデクサーを作成
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -57,60 +52,45 @@ impl WorkspaceIndexer {
         }
     }
 
-    /// インデックスが完了しているかチェック
     #[must_use]
     pub fn is_indexing_completed(&self) -> bool {
         self.indexing_completed.load(Ordering::Acquire)
     }
 
-    /// 翻訳ファイルのインデックスが完了しているかチェック
     #[must_use]
     pub fn is_translations_indexed(&self) -> bool {
         self.translations_indexed.load(Ordering::Acquire)
     }
 
-    /// インデックス状態をリセット
-    ///
-    /// ワークスペースの再インデックス時に呼び出され、
-    /// 全ての状態フラグを初期化する。
     pub fn reset_indexing_state(&self) {
         tracing::info!("Resetting indexing state");
         self.indexing_completed.store(false, Ordering::Release);
         self.translations_indexed.store(false, Ordering::Release);
     }
 
-    /// デフォルトのスレッド数を計算
+    /// Returns 40% of CPU cores (minimum 1 thread).
     ///
-    /// CPUコア数の40%を返す（最低1スレッド）。
-    /// これはcclsなど他のLSP実装の例に従い、複数のLSPサーバーが
-    /// 同時に起動する環境を考慮した設定。
+    /// Based on ccls approach: limits parallelism for LSP servers to
+    /// coexist with other processes in modern dev environments.
     #[must_use]
     fn default_num_threads() -> usize {
-        // CPUコア数の40% = (コア数 * 2) / 5
-        // 浮動小数点演算を避けるため整数演算を使用
+        // Use integer arithmetic to avoid floating-point imprecision
         let cpu_count = num_cpus::get();
         let num_threads = (cpu_count * 2) / 5;
         num_threads.max(1)
     }
 
-    /// 翻訳ファイルのインデックス完了を待つ（タイムアウト付き）
+    /// Wait for translation file indexing with timeout.
     ///
-    /// タイムアウト内にインデックスが完了すれば `true`、
-    /// タイムアウトした場合は `false` を返す。
-    ///
-    /// # Arguments
-    /// * `timeout` - 待機時間の上限
+    /// Returns `true` if indexing completes within timeout, `false` otherwise.
     pub async fn wait_for_translations_indexed(&self, timeout: Duration) -> bool {
-        // すでに完了している場合は即座に返す
         if self.translations_indexed.load(Ordering::Acquire) {
             tracing::debug!("Translations already indexed");
             return true;
         }
 
-        // タイムアウト付きで通知を待機
         tokio::select! {
             () = self.translations_notify.notified() => {
-                // 通知を受け取ったので状態を確認
                 let indexed = self.translations_indexed.load(Ordering::Acquire);
                 tracing::debug!(indexed, "Translation index notification received");
                 indexed
@@ -122,15 +102,15 @@ impl WorkspaceIndexer {
         }
     }
 
-    /// ワークスペースをインデックス
+    /// Index the workspace.
     ///
-    /// 翻訳ファイルを優先的にインデックスした後、ソースファイルを並列度制限付きで処理する。
-    /// これにより、LSP機能（Hover、Diagnostics）が早期に利用可能になる。
+    /// Two-phase indexing: translations first (enables LSP features early),
+    /// then source files with parallelism limit.
     ///
     /// # Errors
-    /// ファイル検索やパターンのビルドに失敗した場合、`IndexerError` を返す。
+    /// Returns `IndexerError` if file discovery or pattern matching fails.
     #[allow(clippy::too_many_lines)]
-    #[allow(clippy::significant_drop_tightening)] // フラグ設定をロック保持中に行うため意図的
+    #[allow(clippy::significant_drop_tightening)] // Intentional: set flag while holding lock
     #[tracing::instrument(
         skip(self, db, config_manager, source_files, translations, progress_callback),
         fields(workspace_path = %workspace_path.display())
@@ -149,11 +129,6 @@ impl WorkspaceIndexer {
     {
         let settings = config_manager.get_settings();
 
-        // CPU飢餓を防ぐため、同時に処理するソースファイルの最大数
-        //
-        // ユーザー設定がある場合はそれを使用し、ない場合はCPUコア数の80%をデフォルトとする。
-        // これはcclsなど他のLSP実装の例に従い、複数のLSPサーバーが同時に起動する
-        // 現代的な開発環境を考慮した設定。
         let max_concurrent_files =
             settings.indexing.num_threads.unwrap_or_else(Self::default_num_threads);
 
@@ -163,37 +138,31 @@ impl WorkspaceIndexer {
             "Indexing workspace"
         );
 
-        // FileMatcher を使用してファイルを検索
         let Some(file_matcher) = config_manager.file_matcher() else {
             return Err(IndexerError::Error(
                 "FileMatcher not available (workspace root not set?)".to_string(),
             ));
         };
 
-        // ソースファイルを検索
         let files =
             Self::find_files(workspace_path, |path| file_matcher.is_source_file_relative(path));
 
-        // 翻訳ファイルを検索（総ファイル数計算のため先に実行）
         let translation_files = Self::find_files(workspace_path, |path| {
             file_matcher.is_translation_file_relative(path)
         });
 
-        // 総ファイル数と進捗カウンター
-        #[allow(clippy::cast_possible_truncation)]
-        // ワークスペース内のファイル数が42億を超えることはない
+        #[allow(clippy::cast_possible_truncation)] // File count won't exceed u32::MAX
         let total_files = (files.len() + translation_files.len()) as u32;
         let processed_files = Arc::new(AtomicU32::new(0));
         let last_reported_percent = Arc::new(AtomicU32::new(0));
 
-        // 進捗報告ヘルパー（5%刻みまたは10ファイルごと）
+        // Report progress every 5% or 10 files
         let report_progress = Arc::new(move |current: u32| {
             if let Some(ref callback) = progress_callback {
                 let current_percent =
                     if total_files > 0 { (current * 100) / total_files } else { 0 };
                 let last_percent = last_reported_percent.load(Ordering::Relaxed);
 
-                // 5%以上変化したか、10ファイルごと、または最後のファイル
                 if current_percent >= last_percent + 5
                     || current.is_multiple_of(10)
                     || current == total_files
@@ -204,9 +173,7 @@ impl WorkspaceIndexer {
             }
         });
 
-        // 【ステップ1】翻訳ファイルを優先的にインデックス
-        // LSP機能（Hover、Diagnostics）を早期に利用可能にするため、
-        // 翻訳ファイルを先にインデックスして通知する
+        // Step 1: Index translation files first to enable LSP features early
         let mut loaded_translations = Vec::new();
         for file_path in &translation_files {
             match load_translation_file(&db, file_path, &settings.key_separator) {
@@ -232,9 +199,7 @@ impl WorkspaceIndexer {
             report_progress(current);
         }
 
-        // 翻訳データを保存してから通知（順序が重要）
-        // フラグ設定をロック内で行うことで、フラグが true の時に
-        // データが必ず存在することを保証する
+        // Set flag while holding lock to guarantee data exists when flag is true
         {
             let mut guard = translations.lock().await;
             guard.extend(loaded_translations);
@@ -242,9 +207,7 @@ impl WorkspaceIndexer {
         }
         self.translations_notify.notify_waiters();
 
-        // 【ステップ2】並列度を制限してソースファイルをインデックス
-        // CPU飢餓を防ぐため、buffer_unordered で並列度を制限する
-
+        // Step 2: Index source files with parallelism limit
         let key_separator = settings.key_separator.clone();
         let futures: Vec<_> = files
             .iter()
@@ -282,7 +245,6 @@ impl WorkspaceIndexer {
         Ok(())
     }
 
-    /// 単一ファイルをインデックス
     #[tracing::instrument(skip(self, db, key_separator), fields(file_path = %file_path.display()))]
     async fn index_file(
         &self,
@@ -290,16 +252,14 @@ impl WorkspaceIndexer {
         file_path: &PathBuf,
         key_separator: String,
     ) -> Option<(PathBuf, SourceFile)> {
-        // ファイル内容を読み込み
         let content = match tokio::fs::read_to_string(file_path).await {
             Ok(content) => content,
             Err(e) => {
                 tracing::warn!("Failed to read file {:?}: {}", file_path, e);
-                return None; // ファイル読み込みエラーは警告として扱い、処理を続行
+                return None;
             }
         };
 
-        // ファイルURIを作成
         let Ok(uri) = Url::from_file_path(file_path) else {
             tracing::warn!("Failed to create URI for file {:?}", file_path);
             return None;
@@ -307,17 +267,12 @@ impl WorkspaceIndexer {
 
         let path_clone = file_path.clone();
 
-        // CPU集約的な解析処理を専用スレッドプールで実行
+        // Run CPU-intensive parsing in blocking thread pool
         let result = tokio::task::spawn_blocking(move || {
             use crate::input::source::ProgrammingLanguage;
 
-            // ファイルの言語を推論
             let language = ProgrammingLanguage::from_uri(uri.as_str())?;
-
-            // SourceFile を作成
             let source_file = SourceFile::new(&db, uri.to_string(), content, language);
-
-            // analyze_source クエリを実行
             let key_usages = crate::syntax::analyze_source(&db, source_file, key_separator);
 
             tracing::debug!(
@@ -333,17 +288,15 @@ impl WorkspaceIndexer {
         result.ok().flatten()
     }
 
-    /// ファイルを検索
+    /// Walk workspace and return files matching the filter.
     ///
-    /// ワークスペースを走査し、フィルタ関数を満たすファイルを返します。
-    /// フィルタ関数にはワークスペースルートからの相対パスが渡されます。
+    /// The filter receives paths relative to workspace root.
     fn find_files<F>(workspace_path: &Path, filter: F) -> Vec<PathBuf>
     where
         F: Fn(&Path) -> bool,
     {
         let mut found_files = Vec::new();
 
-        // ignore クレートでファイルを走査
         for result in WalkBuilder::new(workspace_path)
             .hidden(false)
             .git_ignore(true)
@@ -360,14 +313,12 @@ impl WorkspaceIndexer {
                 }
             };
 
-            // ファイルのみを対象
             if !entry.file_type().is_some_and(|ft| ft.is_file()) {
                 continue;
             }
 
             let path = entry.path();
 
-            // workspace からの相対パスを取得
             let Ok(relative_path) = path.strip_prefix(workspace_path) else {
                 continue;
             };
@@ -380,10 +331,9 @@ impl WorkspaceIndexer {
         found_files
     }
 
-    /// ファイル内容を更新
+    /// Parse file content and extract key usages.
     ///
-    /// Salsa を使ってファイルを解析し、キー使用箇所を抽出します。
-    /// 新しい `SourceFile` を作成して返します。
+    /// Returns a new `SourceFile` with analyzed key usages (Salsa caches automatically).
     pub fn update_file(
         &self,
         db: &crate::db::I18nDatabaseImpl,
@@ -393,13 +343,8 @@ impl WorkspaceIndexer {
     ) -> Option<SourceFile> {
         use crate::input::source::ProgrammingLanguage;
 
-        // ファイルの言語を推論
         let language = ProgrammingLanguage::from_uri(uri.as_str())?;
-
-        // 新しい SourceFile を作成
         let source_file = SourceFile::new(db, uri.to_string(), content.to_string(), language);
-
-        // analyze_source クエリを実行（Salsa が自動的にキャッシュ）
         let key_usages = crate::syntax::analyze_source(db, source_file, key_separator.to_string());
 
         tracing::debug!(
@@ -426,11 +371,6 @@ mod tests {
     use crate::config::FileMatcher;
     use crate::db::I18nDatabaseImpl;
 
-    // ========================================
-    // 状態管理テスト
-    // ========================================
-
-    /// `new`: 初期状態は未完了
     #[rstest]
     fn test_new_initial_state() {
         let indexer = WorkspaceIndexer::new();
@@ -439,7 +379,6 @@ mod tests {
         assert!(!indexer.is_translations_indexed());
     }
 
-    /// `Default` trait: `new()` と同じ初期状態
     #[rstest]
     fn test_default_trait() {
         let indexer = WorkspaceIndexer::default();
@@ -448,63 +387,48 @@ mod tests {
         assert!(!indexer.is_translations_indexed());
     }
 
-    /// `reset_indexing_state`: フラグがリセットされる
     #[rstest]
     fn test_reset_indexing_state() {
         let indexer = WorkspaceIndexer::new();
 
-        // 手動でフラグを true に設定
         indexer.indexing_completed.store(true, Ordering::Release);
         indexer.translations_indexed.store(true, Ordering::Release);
 
-        // リセット
         indexer.reset_indexing_state();
 
-        // 両方とも false に戻る
         assert!(!indexer.is_indexing_completed());
         assert!(!indexer.is_translations_indexed());
     }
 
-    /// `Clone`: 状態を共有する
     #[rstest]
     fn test_clone_shares_state() {
         let indexer1 = WorkspaceIndexer::new();
         let indexer2 = indexer1.clone();
 
-        // indexer1 でフラグを変更
         indexer1.indexing_completed.store(true, Ordering::Release);
 
-        // indexer2 でも反映される（Arc で共有）
+        // Arc shares state between clones
         assert!(indexer2.is_indexing_completed());
     }
 
-    // ========================================
-    // default_num_threads テスト
-    // ========================================
-
-    /// `default_num_threads`: 最低1スレッドを保証
     #[rstest]
     fn test_default_num_threads_minimum() {
         let threads = WorkspaceIndexer::default_num_threads();
 
-        // 最低 1 スレッド
         assert!(threads >= 1, "Expected at least 1 thread, got {threads}");
     }
 
-    /// `default_num_threads`: CPU コア数の 40% 程度
     #[rstest]
     fn test_default_num_threads_calculation() {
         let cpu_count = num_cpus::get();
         let threads = WorkspaceIndexer::default_num_threads();
 
-        // 計算式: (cpu_count * 2) / 5 = cpu_count * 0.4
         let expected = (cpu_count * 2) / 5;
         let expected = expected.max(1);
 
         assert_eq!(threads, expected, "CPU count: {cpu_count}");
     }
 
-    /// `default_num_threads`: CPU コア数以下
     #[rstest]
     fn test_default_num_threads_upper_bound() {
         let cpu_count = num_cpus::get();
@@ -515,10 +439,6 @@ mod tests {
             "Threads ({threads}) should not exceed CPU count ({cpu_count})"
         );
     }
-
-    // ========================================
-    // find_files テスト
-    // ========================================
 
     fn create_test_settings(
         include: &[&str],
@@ -535,12 +455,10 @@ mod tests {
         }
     }
 
-    /// `find_files`: include パターンでファイルを選択
     #[rstest]
     fn test_find_files_include_pattern() {
         let temp_dir = TempDir::new().unwrap();
 
-        // テストファイルを作成
         fs::write(temp_dir.path().join("app.tsx"), "").unwrap();
         fs::write(temp_dir.path().join("index.ts"), "").unwrap();
         fs::write(temp_dir.path().join("readme.md"), "").unwrap();
@@ -556,7 +474,6 @@ mod tests {
         assert!(files[0].ends_with("app.tsx"));
     }
 
-    /// `find_files`: 複数の include パターン
     #[rstest]
     fn test_find_files_multiple_include_patterns() {
         let temp_dir = TempDir::new().unwrap();
@@ -575,12 +492,10 @@ mod tests {
         assert_eq!(files.len(), 2);
     }
 
-    /// `find_files`: exclude パターンでファイルを除外
     #[rstest]
     fn test_find_files_exclude_pattern() {
         let temp_dir = TempDir::new().unwrap();
 
-        // node_modules ディレクトリを作成
         fs::create_dir(temp_dir.path().join("node_modules")).unwrap();
         fs::write(temp_dir.path().join("node_modules/lib.tsx"), "").unwrap();
         fs::write(temp_dir.path().join("app.tsx"), "").unwrap();
@@ -597,12 +512,10 @@ mod tests {
         assert!(files[0].ends_with("app.tsx"));
     }
 
-    /// `find_files`: ネストしたディレクトリ
     #[rstest]
     fn test_find_files_nested_directories() {
         let temp_dir = TempDir::new().unwrap();
 
-        // ネストしたディレクトリ構造を作成
         fs::create_dir_all(temp_dir.path().join("src/components")).unwrap();
         fs::write(temp_dir.path().join("src/index.tsx"), "").unwrap();
         fs::write(temp_dir.path().join("src/components/Button.tsx"), "").unwrap();
@@ -617,7 +530,6 @@ mod tests {
         assert_eq!(files.len(), 2);
     }
 
-    /// `find_files`: 空のディレクトリ
     #[rstest]
     fn test_find_files_empty_directory() {
         let temp_dir = TempDir::new().unwrap();
@@ -632,7 +544,6 @@ mod tests {
         assert!(files.is_empty());
     }
 
-    /// `find_files`: include と exclude の両方が適用される
     #[rstest]
     fn test_find_files_include_and_exclude() {
         let temp_dir = TempDir::new().unwrap();
@@ -653,7 +564,6 @@ mod tests {
         assert!(files[0].ends_with("src/app.tsx"));
     }
 
-    /// `find_files`: 翻訳ファイルを検索
     #[rstest]
     fn test_find_files_translation_files() {
         let temp_dir = TempDir::new().unwrap();
@@ -673,17 +583,11 @@ mod tests {
         assert_eq!(files.len(), 2);
     }
 
-    // ========================================
-    // wait_for_translations_indexed テスト
-    // ========================================
-
-    /// `wait_for_translations_indexed`: すでに完了している場合は即座に true
     #[rstest]
     #[tokio::test]
     async fn test_wait_for_translations_indexed_already_done() {
         let indexer = WorkspaceIndexer::new();
 
-        // すでに完了状態に設定
         indexer.translations_indexed.store(true, Ordering::Release);
 
         let result = indexer.wait_for_translations_indexed(Duration::from_millis(100)).await;
@@ -691,26 +595,22 @@ mod tests {
         assert!(result);
     }
 
-    /// `wait_for_translations_indexed`: タイムアウト時は false
     #[rstest]
     #[tokio::test]
     async fn test_wait_for_translations_indexed_timeout() {
         let indexer = WorkspaceIndexer::new();
 
-        // 短いタイムアウトで待機（完了しないので false）
         let result = indexer.wait_for_translations_indexed(Duration::from_millis(10)).await;
 
         assert!(!result);
     }
 
-    /// `wait_for_translations_indexed`: 通知を受け取ると状態を返す
     #[rstest]
     #[tokio::test]
     async fn test_wait_for_translations_indexed_notified() {
         let indexer = WorkspaceIndexer::new();
         let indexer_clone = indexer.clone();
 
-        // 別タスクで通知を送信
         let handle = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(10)).await;
             indexer_clone.translations_indexed.store(true, Ordering::Release);
@@ -723,11 +623,6 @@ mod tests {
         assert!(result);
     }
 
-    // ========================================
-    // update_file テスト
-    // ========================================
-
-    /// `update_file`: 有効な TypeScript ファイル
     #[rstest]
     fn test_update_file_valid_typescript() {
         let indexer = WorkspaceIndexer::new();
@@ -740,7 +635,6 @@ mod tests {
         assert!(result.is_some());
     }
 
-    /// `update_file`: 無効な拡張子は None
     #[rstest]
     fn test_update_file_invalid_extension() {
         let indexer = WorkspaceIndexer::new();
@@ -753,7 +647,6 @@ mod tests {
         assert!(result.is_none());
     }
 
-    /// `update_file`: JavaScript ファイルも処理可能
     #[rstest]
     fn test_update_file_javascript() {
         let indexer = WorkspaceIndexer::new();
@@ -766,7 +659,6 @@ mod tests {
         assert!(result.is_some());
     }
 
-    /// `update_file`: 空のファイルも処理可能
     #[rstest]
     fn test_update_file_empty_content() {
         let indexer = WorkspaceIndexer::new();

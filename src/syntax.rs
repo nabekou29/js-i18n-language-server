@@ -9,9 +9,9 @@ use crate::types::{
     SourceRange,
 };
 
-/// ソースファイルを解析してキー使用箇所を抽出
+/// Analyzes a source file and extracts key usages.
 #[salsa::tracked]
-#[allow(clippy::needless_pass_by_value)] // Salsa tracked 関数では所有型が必要
+#[allow(clippy::needless_pass_by_value)]
 pub fn analyze_source(
     db: &dyn I18nDatabase,
     file: SourceFile,
@@ -40,9 +40,9 @@ pub fn analyze_source(
         .collect()
 }
 
-/// 特定位置にあるキーを取得（Salsa クエリ）
+/// Finds a key at a specific position.
 #[salsa::tracked]
-#[allow(clippy::needless_pass_by_value)] // Salsa tracked 関数では所有型が必要
+#[allow(clippy::needless_pass_by_value)]
 pub fn key_at_position(
     db: &dyn I18nDatabase,
     file: SourceFile,

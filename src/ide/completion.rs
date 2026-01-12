@@ -26,46 +26,24 @@ use crate::types::{
     SourceRange,
 };
 
-/// クォートのコンテキスト情報
+/// Quote context for completion
 #[derive(Debug, Clone)]
 pub enum QuoteContext {
-    /// クォートなし - カーソルが引数の開始位置（例: `t(|)`）
+    /// No quotes - cursor at argument start (e.g., `t(|)`)
     NoQuotes { position: Position },
 
-    /// クォート内 - カーソルがクォート内にある（例: `t("|")` or `t("com|mon")`）
-    InsideQuotes {
-        /// クォート内のキー開始位置（クォート記号の次の位置）
-        key_start: Position,
-        /// クォート内のキー終了位置（閉じクォート記号の位置）
-        key_end: Position,
-        /// 既に入力されたキー部分
-        partial_key: String,
-    },
+    /// Inside quotes (e.g., `t("|")` or `t("com|mon")`)
+    InsideQuotes { key_start: Position, key_end: Position, partial_key: String },
 }
 
-/// 補完コンテキスト情報
 #[derive(Debug, Clone)]
 pub struct CompletionContext {
-    /// 部分的に入力されたキー（空文字列の可能性あり）
     pub partial_key: String,
-    /// クォートのコンテキスト
     pub quote_context: QuoteContext,
-    /// Key prefix from useTranslation options
     pub key_prefix: Option<String>,
 }
 
-/// Generate completion items for translation keys
-///
-/// # Arguments
-/// * `db` - Salsa database
-/// * `translations` - All translation data
-/// * `partial_key` - Partial key text at cursor position (e.g., "common." or "")
-/// * `quote_context` - Quote context information for proper text editing
-/// * `key_prefix` - Key prefix from useTranslation options
-/// * `effective_language` - 有効な言語（detail 表示に使用、None の場合は detail なし）
-///
-/// # Returns
-/// List of completion items
+/// Generates completion items for translation keys.
 pub fn generate_completions(
     db: &dyn I18nDatabase,
     translations: &[Translation],
@@ -78,7 +56,6 @@ pub fn generate_completions(
     let mut completion_items = Vec::new();
     let mut key_translations: HashMap<String, Vec<(String, String)>> = HashMap::new();
 
-    // key_prefix + partial_key で検索するフルパターンを構築
     let full_partial = match (key_prefix, partial_key) {
         (Some(prefix), Some(partial)) if !partial.is_empty() => {
             Some(format!("{prefix}{key_separator}{partial}"))
@@ -94,14 +71,12 @@ pub fn generate_completions(
         let language = translation.language(db);
 
         for (key, value) in keys {
-            // key_prefix がある場合、そのプレフィックスで始まるキーのみを候補に
             if let Some(prefix) = key_prefix
                 && !key.starts_with(prefix)
             {
                 continue;
             }
 
-            // Filter by partial key if provided (部分一致)
             if let Some(ref full) = full_partial
                 && !key.contains(full.as_str())
             {
@@ -115,14 +90,12 @@ pub fn generate_completions(
         }
     }
 
-    // Create completion items for each unique key
     for (key, lang_values) in key_translations {
-        // Skip if no translations found (should not happen)
         if lang_values.is_empty() {
             continue;
         }
 
-        // key_prefix を除いた挿入用キーを計算
+        // Remove key_prefix from insert key
         let insert_key = key_prefix.map_or_else(
             || key.clone(),
             |prefix| {
@@ -133,14 +106,12 @@ pub fn generate_completions(
             },
         );
 
-        // Build documentation with all languages
         let mut doc_lines = Vec::new();
         for (lang, value) in &lang_values {
             doc_lines.push(format!("- **{lang}**: {value}"));
         }
         let documentation_text = doc_lines.join("\n");
 
-        // effective_language が設定されている場合、その言語の翻訳値を detail に表示
         let detail = effective_language.and_then(|eff_lang| {
             lang_values.iter().find(|(lang, _)| lang == eff_lang).map(|(_, value)| value.clone())
         });
@@ -156,10 +127,8 @@ pub fn generate_completions(
             ..Default::default()
         };
 
-        // Use textEdit based on quote context
         match quote_context {
             QuoteContext::NoQuotes { position } => {
-                // t(|) → insert `"key"` with quotes
                 let new_text = format!("\"{insert_key}\"");
                 item.text_edit = Some(CompletionTextEdit::Edit(TextEdit {
                     range: Range::new(*position, *position),
@@ -167,7 +136,6 @@ pub fn generate_completions(
                 }));
             }
             QuoteContext::InsideQuotes { key_start, key_end, .. } => {
-                // t("|") → replace range with key (no quotes)
                 item.text_edit = Some(CompletionTextEdit::Edit(TextEdit {
                     range: Range::new(*key_start, *key_end),
                     new_text: insert_key.clone(),
@@ -178,26 +146,15 @@ pub fn generate_completions(
         completion_items.push(item);
     }
 
-    // Sort by label for consistent ordering
     completion_items.sort_by(|a, b| a.label.cmp(&b.label));
 
     completion_items
 }
 
-/// tree-sitter を使用して補完コンテキストを抽出
+/// Extracts completion context using tree-sitter.
 ///
-/// リネームされた翻訳関数（例: `const { t: t2 } = useTranslation()`）や
-/// 空の引数（例: `t()`）にも対応。
-///
-/// # Arguments
-/// * `text` - Full text of the file
-/// * `language` - Programming language of the source file
-/// * `line` - Line number (0-indexed)
-/// * `character` - Character position in line (0-indexed)
-/// * `key_separator` - キーの区切り文字
-///
-/// # Returns
-/// `CompletionContext` if cursor is inside a translation function call, `None` otherwise
+/// Supports renamed translation functions (e.g., `const { t: t2 } = useTranslation()`)
+/// and empty arguments (e.g., `t()`).
 #[must_use]
 pub fn extract_completion_context_tree_sitter(
     text: &str,
@@ -206,7 +163,6 @@ pub fn extract_completion_context_tree_sitter(
     character: u32,
     key_separator: &str,
 ) -> Option<CompletionContext> {
-    // Parse source code with tree-sitter
     let tree_sitter_lang = language.tree_sitter_language();
     let queries = load_queries(language);
 
@@ -215,19 +171,15 @@ pub fn extract_completion_context_tree_sitter(
 
     let cursor_position = Position::new(line, character);
 
-    // Find translation function call that contains the cursor
     for call in &trans_fn_calls {
         let arg_range = call.arg_key_node;
 
-        // Check if cursor is within the argument range
         if !SourceRange::from(arg_range).contains(SourcePosition::from(cursor_position)) {
             continue;
         }
 
-        // Extract the text of the argument to determine quote context
         let lines: Vec<&str> = text.lines().collect();
 
-        // For simplicity, assume single-line argument (multi-line strings are rare)
         if arg_range.start.line != arg_range.end.line {
             continue;
         }
@@ -243,14 +195,11 @@ pub fn extract_completion_context_tree_sitter(
 
         let arg_text = &arg_start_line[arg_start_char..arg_end_char];
 
-        // Determine quote context
-        // arg_text is typically something like `"common.hello"`, `'common.hello'`, or `()` for t(|)
         let first_char = arg_text.chars().next()?;
 
-        // Case: t(|) - no quotes yet, arg_text is "()" or similar
+        // t(|) - no quotes
         if first_char == '(' {
-            // Cursor is inside empty arguments - return NoQuotes context
-            #[allow(clippy::cast_possible_truncation)] // ソースファイルの列が42億を超えることはない
+            #[allow(clippy::cast_possible_truncation)] // Column count won't exceed u32::MAX
             let insert_position = Position::new(line, (arg_start_char + 1) as u32);
 
             return Some(CompletionContext {
@@ -260,16 +209,14 @@ pub fn extract_completion_context_tree_sitter(
             });
         }
 
-        // Case: t("...") or t('...') - has quotes
+        // t("...") or t('...')
         if first_char != '"' && first_char != '\'' {
             continue;
         }
 
-        // Calculate positions relative to the quote
-        let key_start_char = arg_start_char + 1; // After opening quote
-        let key_end_char = arg_end_char.saturating_sub(1); // Before closing quote
+        let key_start_char = arg_start_char + 1;
+        let key_end_char = arg_end_char.saturating_sub(1);
 
-        // Extract partial key
         let cursor_char = character as usize;
         let line_text = lines.get(line as usize)?;
 
@@ -277,16 +224,15 @@ pub fn extract_completion_context_tree_sitter(
             continue;
         }
 
-        // Calculate partial key (from start of key to cursor)
         let partial_key = if cursor_char >= key_start_char && cursor_char <= key_end_char {
             &line_text[key_start_char..cursor_char]
         } else {
             ""
         };
 
-        #[allow(clippy::cast_possible_truncation)] // ソースファイルの列が42億を超えることはない
+        #[allow(clippy::cast_possible_truncation)] // Column count won't exceed u32::MAX
         let key_start = Position::new(line, key_start_char as u32);
-        #[allow(clippy::cast_possible_truncation)] // ソースファイルの列が42億を超えることはない
+        #[allow(clippy::cast_possible_truncation)] // Column count won't exceed u32::MAX
         let key_end = Position::new(line, key_end_char as u32);
 
         return Some(CompletionContext {
@@ -678,11 +624,6 @@ const msg = foo();
         assert_that!(result.is_none(), eq(true));
     }
 
-    // ========================================
-    // key_prefix フィルタリングテスト
-    // ========================================
-
-    /// `key_prefix` あり、`partial_key` なし → prefix のみでフィルタ
     #[rstest]
     fn generate_completions_with_key_prefix_only() {
         let db = I18nDatabaseImpl::default();
@@ -708,7 +649,6 @@ const msg = foo();
             partial_key: String::new(),
         };
 
-        // key_prefix="common" で partial_key=None
         let items = generate_completions(
             &db,
             &translations,
@@ -719,14 +659,11 @@ const msg = foo();
             ".",
         );
 
-        // "common." で始まるキーのみが返る
         assert_eq!(items.len(), 2);
-        // ラベルは prefix を除いた形で返る
         assert!(items.iter().any(|i| i.label == "hello"));
         assert!(items.iter().any(|i| i.label == "goodbye"));
     }
 
-    /// `key_prefix` あり、`partial_key` あり → 両方で絞り込み
     #[rstest]
     fn generate_completions_with_key_prefix_and_partial() {
         let db = I18nDatabaseImpl::default();
@@ -752,7 +689,6 @@ const msg = foo();
             partial_key: "hel".to_string(),
         };
 
-        // key_prefix="common" + partial_key="hel" → "common.hel" を含むもの
         let items = generate_completions(
             &db,
             &translations,
@@ -763,10 +699,9 @@ const msg = foo();
             ".",
         );
 
-        assert_eq!(items.len(), 2); // hello, help
+        assert_eq!(items.len(), 2);
     }
 
-    /// `key_prefix` でフィルタリングされるキーが除外されることを検証
     #[rstest]
     fn generate_completions_key_prefix_filters_out_non_matching() {
         let db = I18nDatabaseImpl::default();
@@ -791,7 +726,6 @@ const msg = foo();
             partial_key: String::new(),
         };
 
-        // key_prefix="errors" → "common.*" は除外される
         let items = generate_completions(
             &db,
             &translations,
@@ -805,10 +739,6 @@ const msg = foo();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "notFound");
     }
-
-    // ========================================
-    // effective_language による detail 表示テスト
-    // ========================================
 
     #[rstest]
     fn generate_completions_with_effective_language() {
@@ -841,7 +771,6 @@ const msg = foo();
             partial_key: String::new(),
         };
 
-        // effective_language="ja" → detail に日本語が表示される
         let items =
             generate_completions(&db, &translations, None, &quote_context, None, Some("ja"), ".");
 
@@ -870,17 +799,12 @@ const msg = foo();
             partial_key: String::new(),
         };
 
-        // effective_language="fr" (存在しない) → detail は None
         let items =
             generate_completions(&db, &translations, None, &quote_context, None, Some("fr"), ".");
 
         assert_eq!(items.len(), 1);
         assert!(items[0].detail.is_none());
     }
-
-    // ========================================
-    // CompletionItem フィールド検証テスト
-    // ========================================
 
     #[rstest]
     fn generate_completions_item_fields() {
@@ -909,25 +833,14 @@ const msg = foo();
         assert_eq!(items.len(), 1);
         let item = &items[0];
 
-        // kind が CONSTANT であること
         assert_eq!(item.kind, Some(CompletionItemKind::CONSTANT));
-
-        // detail が設定されていること
         assert_eq!(item.detail, Some("Hello World".to_string()));
-
-        // documentation が Markdown であること
         assert!(matches!(
             &item.documentation,
             Some(Documentation::MarkupContent(c)) if c.kind == MarkupKind::Markdown
         ));
-
-        // textEdit が設定されていること
         assert!(item.text_edit.is_some());
     }
-
-    // ========================================
-    // NoQuotes vs InsideQuotes の textEdit テスト
-    // ========================================
 
     #[rstest]
     fn generate_completions_no_quotes_text_edit() {
@@ -951,7 +864,7 @@ const msg = foo();
 
         assert_eq!(items.len(), 1);
 
-        // NoQuotes → クォート付きで挿入 ("hello")
+        // NoQuotes inserts with quotes ("hello")
         if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
             assert_eq!(edit.new_text, "\"hello\"");
             assert_eq!(edit.range.start, position);
@@ -986,7 +899,7 @@ const msg = foo();
 
         assert_eq!(items.len(), 1);
 
-        // InsideQuotes → クォートなしで置換 (hello)
+        // InsideQuotes replaces without quotes (hello)
         if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
             assert_eq!(edit.new_text, "hello");
             assert_eq!(edit.range.start, key_start);
@@ -995,10 +908,6 @@ const msg = foo();
             panic!("Expected TextEdit");
         }
     }
-
-    // ========================================
-    // 空の translations テスト
-    // ========================================
 
     #[rstest]
     fn generate_completions_empty_translations() {

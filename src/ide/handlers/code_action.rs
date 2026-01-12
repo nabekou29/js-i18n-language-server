@@ -1,7 +1,4 @@
-//! Code Action ハンドラー
-//!
-//! `textDocument/codeAction` リクエストを処理し、
-//! 翻訳キーに対する編集アクションを提供します。
+//! Code Action handler for `textDocument/codeAction` requests.
 
 use std::path::Path;
 
@@ -17,10 +14,6 @@ use tower_lsp::lsp_types::{
 
 use super::super::backend::Backend;
 
-/// `textDocument/codeAction` リクエストを処理
-///
-/// ソースファイル上の翻訳キーに対する「Edit translation」アクションと、
-/// 翻訳ファイル上の未使用キーに対する「Delete unused keys」アクションを提供します。
 pub async fn handle_code_action(
     backend: &Backend,
     params: CodeActionParams,
@@ -31,18 +24,15 @@ pub async fn handle_code_action(
 
     tracing::debug!(uri = %uri, line = position.line, character = position.character, "Code Action request");
 
-    // 翻訳データが必要なため、インデックス完了を待つ
     if !backend.wait_for_translations().await {
         tracing::debug!("Code Action request - translations not indexed yet");
         return Ok(Some(vec![]));
     }
 
-    // ファイルパスを取得
     let Some(file_path) = Backend::uri_to_path(uri) else {
         return Ok(Some(vec![]));
     };
 
-    // 翻訳ファイルかどうか判定
     let is_translation_file = {
         let config_manager = backend.config_manager.lock().await;
         config_manager
@@ -51,16 +41,13 @@ pub async fn handle_code_action(
     };
 
     if is_translation_file {
-        // 翻訳ファイル用の Code Action
         let file_path_str = file_path.to_string_lossy();
         return generate_translation_file_code_actions(backend, uri, &file_path_str, diagnostics)
             .await;
     }
 
-    // ソースファイル用の Code Action
     let source_position = crate::types::SourcePosition::from(position);
 
-    // カーソル位置の翻訳キーを取得
     let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
         tracing::debug!("No translation key found at position");
         return Ok(Some(vec![]));
@@ -68,7 +55,6 @@ pub async fn handle_code_action(
 
     tracing::debug!(key = %key_text, "Found translation key for code action");
 
-    // すべての利用可能な言語をソートして取得
     let current_language = backend.state.current_language.lock().await.clone();
     let primary_languages =
         backend.config_manager.lock().await.get_settings().primary_languages.clone();
@@ -88,13 +74,9 @@ pub async fn handle_code_action(
         return Ok(Some(vec![]));
     }
 
-    // 診断から missing_languages を抽出
     let missing_languages = crate::ide::code_actions::extract_missing_languages(diagnostics);
-
-    // 有効な言語（ソート済みの先頭）
     let effective_language = sorted_languages.first().cloned();
 
-    // Code Action を生成（全言語対象）
     let actions = crate::ide::code_actions::generate_code_actions(
         &key_text,
         &sorted_languages,
@@ -107,10 +89,6 @@ pub async fn handle_code_action(
     Ok(Some(actions))
 }
 
-/// 翻訳ファイル用の Code Action を処理
-///
-/// Translation データから未使用キーの正確な数をカウントし、
-/// 削除アクションを生成します。
 async fn generate_translation_file_code_actions(
     backend: &Backend,
     uri: &tower_lsp::lsp_types::Url,
@@ -119,13 +97,11 @@ async fn generate_translation_file_code_actions(
 ) -> Result<Option<CodeActionResponse>> {
     use std::collections::HashSet;
 
-    // 設定から key_separator を取得
     let key_separator = {
         let config = backend.config_manager.lock().await;
         config.get_settings().key_separator.clone()
     };
 
-    // ソースファイルから使用されているキーを収集
     let used_keys: HashSet<String> = {
         let db = backend.state.db.lock().await;
         let source_files = backend.state.source_files.lock().await;
@@ -143,7 +119,6 @@ async fn generate_translation_file_code_actions(
         keys
     };
 
-    // 未使用キーの数をカウント
     let unused_key_count = {
         let db = backend.state.db.lock().await;
         let translations = backend.state.translations.lock().await;
@@ -170,7 +145,6 @@ async fn generate_translation_file_code_actions(
 
     tracing::debug!(unused_key_count, "Found unused translation keys");
 
-    // カーソル位置の診断をフィルタ（Code Action の diagnostics フィールド用）
     let unused_key_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
@@ -181,7 +155,6 @@ async fn generate_translation_file_code_actions(
         .cloned()
         .collect();
 
-    // 削除アクションを生成
     let action = CodeAction {
         title: format!("Delete {unused_key_count} unused translation key(s)"),
         kind: Some(CodeActionKind::QUICKFIX),
