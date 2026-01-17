@@ -637,6 +637,7 @@ pub fn load_translation_file(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use std::path::Path;
 

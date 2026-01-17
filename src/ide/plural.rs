@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn test_has_plural_variants() {
         let keys: HashSet<String> =
-            ["items_one", "items_other", "single"].iter().map(|s| s.to_string()).collect();
+            ["items_one", "items_other", "single"].iter().copied().map(String::from).collect();
 
         assert!(has_plural_variants("items", &keys));
         assert!(!has_plural_variants("single", &keys));
@@ -139,7 +139,8 @@ mod tests {
 
     #[test]
     fn test_is_key_used_with_plural() {
-        let used_keys: HashSet<String> = ["items", "other"].iter().map(|s| s.to_string()).collect();
+        let used_keys: HashSet<String> =
+            ["items", "other"].iter().copied().map(String::from).collect();
 
         // Direct match
         assert!(is_key_used_with_plural("items", &used_keys));
@@ -158,7 +159,7 @@ mod tests {
     #[test]
     fn test_key_exists_with_plural() {
         let keys: HashSet<String> =
-            ["items_one", "items_other", "single"].iter().map(|s| s.to_string()).collect();
+            ["items_one", "items_other", "single"].iter().copied().map(String::from).collect();
 
         // Direct match
         assert!(key_exists_with_plural("items_one", &keys));
