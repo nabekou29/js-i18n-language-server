@@ -10,6 +10,7 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::db::I18nDatabase;
+use crate::ide::key_match::is_child_key;
 use crate::ide::plural::{
     get_plural_base_key,
     has_plural_variants,
@@ -161,21 +162,19 @@ pub fn generate_unused_key_diagnostics(
 ///
 /// # Match order
 /// 1. Exact match
-/// 2. Prefix match: an element in `used_keys` is a prefix of `key`
+/// 2. Prefix match: an element in `used_keys` is a prefix of `key` (supports array notation)
 /// 3. Plural suffix match: `key` has a plural suffix and its base key is used
 ///
 /// # Examples
 /// - `key = "hoge.fuga.piyo"`, `used_keys = {"hoge.fuga"}` -> true (prefix match)
+/// - `key = "items[0]"`, `used_keys = {"items"}` -> true (array prefix match)
 /// - `key = "items_one"`, `used_keys = {"items"}` -> true (plural base key used)
 pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &str) -> bool {
     if used_keys.contains(key) {
         return true;
     }
 
-    let is_prefix_match = used_keys.iter().any(|used_key| {
-        let prefix = format!("{used_key}{separator}");
-        key.starts_with(&prefix)
-    });
+    let is_prefix_match = used_keys.iter().any(|used_key| is_child_key(key, used_key, separator));
     if is_prefix_match {
         return true;
     }
@@ -187,14 +186,14 @@ pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &st
 ///
 /// # Examples
 /// - `search_key = "nested"`, `available_keys = {"nested.key"}` -> true
+/// - `search_key = "items"`, `available_keys = {"items[0]"}` -> true (array notation)
 /// - `search_key = "nested"`, `available_keys = {"other.key"}` -> false
 fn has_keys_with_prefix(
     search_key: &str,
     available_keys: &HashSet<String>,
     separator: &str,
 ) -> bool {
-    let prefix = format!("{search_key}{separator}");
-    available_keys.iter().any(|key| key.starts_with(&prefix))
+    available_keys.iter().any(|key| is_child_key(key, search_key, separator))
 }
 
 /// Checks if a key exists, has child keys, or has plural variants.
@@ -686,5 +685,39 @@ mod tests {
             diagnostics,
             contains(field!(Diagnostic.message, contains_substring("missing")))
         );
+    }
+
+    #[googletest::test]
+    fn test_is_key_used_with_array_prefix() {
+        // When t('items') is used, items[0] is considered used
+        let used_keys: HashSet<String> = ["items"].iter().map(|s| s.to_string()).collect();
+
+        expect_that!(is_key_used("items", &used_keys, "."), eq(true));
+        expect_that!(is_key_used("items[0]", &used_keys, "."), eq(true));
+        expect_that!(is_key_used("items[0].name", &used_keys, "."), eq(true));
+        expect_that!(is_key_used("items[1]", &used_keys, "."), eq(true));
+        // itemsX does not match (no separator/bracket)
+        expect_that!(is_key_used("itemsX", &used_keys, "."), eq(false));
+    }
+
+    #[googletest::test]
+    fn test_has_keys_with_prefix_with_array() {
+        let keys: HashSet<String> =
+            ["items[0]", "items[1]", "other.key"].iter().map(|s| s.to_string()).collect();
+
+        expect_that!(has_keys_with_prefix("items", &keys, "."), eq(true));
+        expect_that!(has_keys_with_prefix("other", &keys, "."), eq(true));
+        expect_that!(has_keys_with_prefix("missing", &keys, "."), eq(false));
+    }
+
+    #[googletest::test]
+    fn test_key_exists_or_has_children_with_array() {
+        let keys: HashSet<String> =
+            ["items[0]", "items[1]", "single"].iter().map(|s| s.to_string()).collect();
+
+        expect_that!(key_exists_or_has_children("single", &keys, "."), eq(true));
+        // Array children exist
+        expect_that!(key_exists_or_has_children("items", &keys, "."), eq(true));
+        expect_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
     }
 }

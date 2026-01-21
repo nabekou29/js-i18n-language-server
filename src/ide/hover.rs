@@ -3,6 +3,7 @@
 use std::fmt::Write as _;
 
 use crate::db::I18nDatabase;
+use crate::ide::key_match::is_child_key;
 use crate::ide::plural::find_plural_variants;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
@@ -55,12 +56,12 @@ pub fn generate_hover_content(
             continue;
         }
 
-        // Reverse prefix match: collect child keys
-        let prefix = format!("{key_text}{key_separator}");
-        let nested_keys: Vec<_> = keys.iter().filter(|(k, _)| k.starts_with(&prefix)).collect();
+        // Reverse prefix match: collect child keys (supports array notation)
+        let nested_keys: Vec<_> =
+            keys.iter().filter(|(k, _)| is_child_key(k, key_text, key_separator)).collect();
 
         if !nested_keys.is_empty() {
-            let nested_display = format_nested_keys(&nested_keys, &prefix);
+            let nested_display = format_nested_keys(&nested_keys, key_text);
             translations_found.push((language, nested_display));
         }
     }
@@ -98,7 +99,7 @@ fn format_plural_variants(variants: &[(&str, &str)], base_key: &str) -> String {
 }
 
 /// Format nested child keys into a display string
-fn format_nested_keys(nested_keys: &[(&String, &String)], prefix: &str) -> String {
+fn format_nested_keys(nested_keys: &[(&String, &String)], parent_key: &str) -> String {
     let mut sorted_keys: Vec<_> = nested_keys.iter().collect();
     sorted_keys.sort_by(|(a, _), (b, _)| a.cmp(b));
 
@@ -106,11 +107,11 @@ fn format_nested_keys(nested_keys: &[(&String, &String)], prefix: &str) -> Strin
         .iter()
         .take(MAX_NESTED_KEYS_DISPLAY)
         .map(|(k, v)| {
-            // Relative key name after stripping the prefix
-            let relative_key = k.strip_prefix(prefix).unwrap_or(k);
+            // Relative key name after stripping the parent key
+            let relative_key = k.strip_prefix(parent_key).unwrap_or(k);
             let truncated_value = truncate_string(v, MAX_NESTED_VALUE_LENGTH);
             // Wrap key name in backticks (escapes Markdown special characters)
-            format!("  `.{relative_key}`: {truncated_value}")
+            format!("  `{relative_key}`: {truncated_value}")
         })
         .collect();
 
@@ -659,5 +660,34 @@ mod tests {
         assert_that!(content, contains_substring("**en**: Items (exact)"));
         // Plural variants are not displayed
         assert_that!(content, not(contains_substring("(plural)")));
+    }
+
+    #[rstest]
+    fn generate_hover_content_with_array_children() {
+        let db = I18nDatabaseImpl::default();
+
+        // "items" key does not exist, but "items[0]" and "items[1]" exist
+        let translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([
+                ("items[0]".to_string(), "apple".to_string()),
+                ("items[1]".to_string(), "banana".to_string()),
+            ]),
+        );
+
+        let key = TransKey::new(&db, "items".to_string());
+        let translations = vec![translation];
+
+        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+
+        // Key is included
+        assert_that!(content, contains_substring("**Translation Key:** `items`"));
+
+        // Array children are displayed
+        assert_that!(content, contains_substring("{...}"));
+        assert_that!(content, contains_substring("apple"));
+        assert_that!(content, contains_substring("banana"));
     }
 }

@@ -6,6 +6,7 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::db::I18nDatabase;
+use crate::ide::key_match::is_child_key;
 use crate::ide::plural::PLURAL_SUFFIXES;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
@@ -67,14 +68,13 @@ fn find_plural_variant_range<'a>(
     })
 }
 
-/// Find the first child key range using prefix matching
+/// Find the first child key range using prefix matching (supports array notation)
 fn find_child_key_range<'a>(
     key_text: &str,
     separator: &str,
     key_ranges: &'a std::collections::HashMap<String, SourceRange>,
 ) -> Option<&'a SourceRange> {
-    let prefix = format!("{key_text}{separator}");
-    key_ranges.iter().find(|(k, _)| k.starts_with(&prefix)).map(|(_, range)| range)
+    key_ranges.iter().find(|(k, _)| is_child_key(k, key_text, separator)).map(|(_, range)| range)
 }
 
 /// Create a Location from file path and range
@@ -479,5 +479,53 @@ mod tests {
         assert_that!(locations.len(), eq(1));
         assert_that!(locations[0].range.start.line, eq(0));
         assert_that!(locations[0].range.start.character, eq(2));
+    }
+
+    #[rstest]
+    fn find_definitions_fallback_to_array_child_key() {
+        let db = I18nDatabaseImpl::default();
+
+        // Parent key "items" doesn't exist as a leaf, only array element keys
+        let mut key_ranges = HashMap::new();
+        key_ranges.insert(
+            "items[0]".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 1, character: 4 },
+                end: SourcePosition { line: 1, character: 11 },
+            },
+        );
+        key_ranges.insert(
+            "items[1]".to_string(),
+            SourceRange {
+                start: SourcePosition { line: 2, character: 4 },
+                end: SourcePosition { line: 2, character: 11 },
+            },
+        );
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "/test/locales/en.json".to_string(),
+            HashMap::from([
+                ("items[0]".to_string(), "apple".to_string()),
+                ("items[1]".to_string(), "banana".to_string()),
+            ]),
+            r#"{"items": ["apple", "banana"]}"#.to_string(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        // Searching "items" should jump to first array element
+        let key = TransKey::new(&db, "items".to_string());
+        let translations = vec![translation];
+
+        let locations = find_definitions(&db, key, &translations, ".");
+
+        assert_that!(locations.len(), eq(1));
+        assert_that!(locations[0].uri.path(), ends_with("en.json"));
+        // Should find one of the array elements
+        let line = locations[0].range.start.line;
+        assert_that!(line, any![eq(1), eq(2)]);
     }
 }
