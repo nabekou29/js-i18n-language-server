@@ -9,8 +9,6 @@ cargo-dist-version = "0.30.3"
 ci = "github"
 # The installers to generate for each app
 installers = ["shell", "powershell", "npm"]
-# npm scope for platform packages
-npm-scope = "@js-i18n-language-server"
 # Publish to npm automatically
 publish-jobs = ["npm"]
 # Target platforms to build apps for (Rust target-triple syntax)
