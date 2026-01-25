@@ -32,6 +32,15 @@ pub async fn handle_did_change(backend: &Backend, params: DidChangeTextDocumentP
     };
     let new_content = change.text;
 
+    // Check if this is a translation file
+    if let Some(file_path) = Backend::uri_to_path(&uri)
+        && backend.is_translation_file(&file_path).await
+    {
+        backend.update_translation_from_content(&file_path, &new_content).await;
+        backend.send_diagnostics_to_opened_files().await;
+        return;
+    }
+
     backend.update_and_diagnose(uri, new_content, false).await;
 }
 

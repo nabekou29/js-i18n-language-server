@@ -616,11 +616,24 @@ pub fn load_translation_file(
     let content = std::fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read translation file: {e}"))?;
 
+    load_translation_from_content(db, file_path, &content, separator)
+}
+
+/// Loads a translation from content string (for unsaved buffer).
+///
+/// # Errors
+/// Returns error if JSON parse fails.
+pub fn load_translation_from_content(
+    db: &dyn crate::db::I18nDatabase,
+    file_path: &Path,
+    content: &str,
+    separator: &str,
+) -> Result<Translation, String> {
     let json: Value =
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse JSON: {e}"))?;
+        serde_json::from_str(content).map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
     let keys = flatten_json(&json, separator, None);
-    let (key_ranges, value_ranges) = extract_key_value_ranges(&content, separator);
+    let (key_ranges, value_ranges) = extract_key_value_ranges(content, separator);
     let language = detect_language_from_path(file_path);
     let namespace = detect_namespace_from_path(file_path);
 
@@ -630,7 +643,7 @@ pub fn load_translation_file(
         namespace,
         file_path.to_string_lossy().to_string(),
         keys,
-        content,
+        content.to_string(),
         key_ranges,
         value_ranges,
     ))

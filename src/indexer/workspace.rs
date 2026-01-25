@@ -153,13 +153,6 @@ impl WorkspaceIndexer {
             file_matcher.is_translation_file_from_workspace(workspace_path, path)
         });
 
-        tracing::debug!(
-            source_files = files.len(),
-            translation_files = translation_files.len(),
-            workspace = ?workspace_path,
-            "Found files for indexing"
-        );
-
         #[allow(clippy::cast_possible_truncation)] // File count won't exceed u32::MAX
         let total_files = (files.len() + translation_files.len()) as u32;
         let processed_files = Arc::new(AtomicU32::new(0));

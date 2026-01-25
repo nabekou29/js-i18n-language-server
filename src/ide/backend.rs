@@ -483,6 +483,38 @@ impl Backend {
         }
     }
 
+    /// Updates translation from buffer content (for unsaved changes).
+    #[tracing::instrument(skip(self, content), fields(file_path = %file_path.display()))]
+    pub(crate) async fn update_translation_from_content(&self, file_path: &Path, content: &str) {
+        let config_manager = self.config_manager.lock().await;
+        let key_separator = config_manager.get_settings().key_separator.clone();
+        drop(config_manager);
+
+        let db = self.state.db.lock().await;
+
+        match crate::input::translation::load_translation_from_content(
+            &*db,
+            file_path,
+            content,
+            &key_separator,
+        ) {
+            Ok(new_translation) => {
+                let mut translations = self.state.translations.lock().await;
+
+                let file_path_str = file_path.to_string_lossy().to_string();
+                translations.retain(|t| t.file_path(&*db) != &file_path_str);
+
+                translations.push(new_translation);
+                drop(translations);
+
+                tracing::info!("Updated translation from buffer: {:?}", file_path);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to update translation {:?}: {}", file_path, e);
+            }
+        }
+    }
+
     /// Removes translation entry for the specified file.
     #[tracing::instrument(skip(self), fields(file_path = %file_path.display()))]
     pub(crate) async fn remove_translation_file(&self, file_path: &Path) {
@@ -527,9 +559,9 @@ impl Backend {
             register_options: Some(register_options),
         };
 
-        tracing::info!(
-            "Registering file watchers for config and translation files (pattern: {})",
-            translation_pattern
+        tracing::debug!(
+            pattern = %translation_pattern,
+            "Registering file watcher for translation files"
         );
         if let Err(e) = self.client.register_capability(vec![registration]).await {
             tracing::warn!("Failed to register file watcher: {}", e);
@@ -541,13 +573,8 @@ impl Backend {
     }
 
     pub(crate) async fn is_translation_file(&self, file_path: &Path) -> bool {
-        let file_pattern = {
-            let config_manager = self.config_manager.lock().await;
-            config_manager.get_settings().translation_files.file_pattern.clone()
-        };
-
-        globset::Glob::new(&file_pattern)
-            .is_ok_and(|glob| glob.compile_matcher().is_match(file_path))
+        let config_manager = self.config_manager.lock().await;
+        config_manager.file_matcher().is_some_and(|matcher| matcher.is_translation_file(file_path))
     }
 
     /// Checks if file matches `includePatterns` and not `excludePatterns`.
