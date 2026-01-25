@@ -1,0 +1,5 @@
+# CI environment specific config
+
+[tasks.coverage-ci]
+description = "Run tests with coverage for CI (codecov format)"
+run = "cargo llvm-cov --workspace --all-features --codecov --output-path codecov.json"

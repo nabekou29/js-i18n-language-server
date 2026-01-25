@@ -7,9 +7,8 @@ rust = "nightly-2026-01-24"
 
 [tasks.build]
 description = "Build the LSP binary"
-run = "cargo build"
+run = "cargo build --workspace --all-features"
 sources = ["Cargo.toml", "src/**/*.rs"]
-outputs = ["target/debug/{{env.LSP_BINARY}}"]
 
 [tasks.test]
 description = "Run tests"
@@ -26,6 +25,10 @@ run = "cargo clippy --workspace --all-targets --all-features --fix --allow-dirty
 [tasks.format]
 description = "Format the code"
 run = "cargo fmt --all"
+
+[tasks.format-check]
+description = "Check code formatting"
+run = "cargo fmt --all -- --check"
 
 [tasks.install-components]
 description = "Install components"

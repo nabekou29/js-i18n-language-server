@@ -23,7 +23,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: mise run test
 
   build:
     name: Build (${{ matrix.os }})
@@ -42,7 +42,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --workspace --all-features
+        run: mise run build
 
   clippy:
     name: Clippy
@@ -60,7 +60,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: mise run lint
 
   fmt:
     name: Format
@@ -76,7 +76,7 @@ jobs:
         run: rustup component add rustfmt
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: mise run format-check
 
   coverage:
     name: Coverage
@@ -96,7 +96,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Generate coverage report
-        run: cargo llvm-cov --workspace --all-features --codecov --output-path codecov.json
+        run: mise run coverage-ci
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
