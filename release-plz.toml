@@ -1,0 +1,3 @@
+[workspace]
+# Disable crates.io publishing (GitHub release only)
+publish = false
