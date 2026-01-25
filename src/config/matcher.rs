@@ -1,7 +1,4 @@
 //! File pattern matcher for source and translation files.
-//!
-//! Performs pattern matching against config-relative paths.
-//! When a config file exists, patterns are relative to its directory.
 
 use std::path::{
     Path,
@@ -44,13 +41,9 @@ pub enum MatcherError {
 }
 
 /// Matches files against configured glob patterns.
-///
-/// Patterns are relative to `pattern_base` (typically the directory containing `.js-i18n.json`).
-/// When checking paths relative to a different workspace root, paths are adjusted automatically.
 #[derive(Debug, Clone)]
 pub struct FileMatcher {
-    /// Base directory for pattern matching (config directory or workspace root).
-    pattern_base: PathBuf,
+    workspace_root: PathBuf,
     source_include_set: GlobSet,
     exclude_set: GlobSet,
     translation_set: GlobSet,
@@ -58,9 +51,7 @@ pub struct FileMatcher {
 
 impl FileMatcher {
     /// Creates a new matcher from settings.
-    ///
-    /// `pattern_base` is the base directory for pattern matching (typically the config directory).
-    pub fn new(pattern_base: PathBuf, settings: &I18nSettings) -> Result<Self, MatcherError> {
+    pub fn new(workspace_root: PathBuf, settings: &I18nSettings) -> Result<Self, MatcherError> {
         let source_include_set =
             Self::build_glob_set(&settings.include_patterns, |pattern, source| {
                 MatcherError::InvalidSourceIncludePattern { pattern, source }
@@ -75,7 +66,7 @@ impl FileMatcher {
             |pattern, source| MatcherError::InvalidTranslationPattern { pattern, source },
         )?;
 
-        Ok(Self { pattern_base, source_include_set, exclude_set, translation_set })
+        Ok(Self { workspace_root, source_include_set, exclude_set, translation_set })
     }
 
     fn build_glob_set<F>(patterns: &[String], make_error: F) -> Result<GlobSet, MatcherError>
@@ -90,24 +81,17 @@ impl FileMatcher {
         Ok(builder.build()?)
     }
 
-    /// Returns the base directory for pattern matching.
     #[must_use]
-    pub fn pattern_base(&self) -> &Path {
-        &self.pattern_base
-    }
-
-    #[must_use]
-    #[deprecated(since = "0.0.2", note = "use `pattern_base()` instead")]
     pub fn workspace_root(&self) -> &Path {
-        &self.pattern_base
+        &self.workspace_root
     }
 
     /// Returns true if the path matches `includePatterns` but not `excludePatterns`.
     ///
-    /// The path must be absolute and under the pattern base directory.
+    /// The path must be absolute and under the workspace root.
     #[must_use]
     pub fn is_source_file(&self, absolute_path: &Path) -> bool {
-        let Some(relative_path) = absolute_path.strip_prefix(&self.pattern_base).ok() else {
+        let Some(relative_path) = absolute_path.strip_prefix(&self.workspace_root).ok() else {
             return false;
         };
 
@@ -116,32 +100,18 @@ impl FileMatcher {
 
     /// Returns true if the path matches `includePatterns` but not `excludePatterns`.
     ///
-    /// The path must be relative to the pattern base directory.
+    /// The path must be relative to the workspace root.
     #[must_use]
     pub fn is_source_file_relative(&self, relative_path: &Path) -> bool {
         self.source_include_set.is_match(relative_path) && !self.exclude_set.is_match(relative_path)
     }
 
-    /// Check if a workspace-relative path matches source patterns.
-    ///
-    /// When the pattern base differs from the workspace root, this method
-    /// adjusts the path accordingly. Files outside the pattern base return false.
-    #[must_use]
-    pub fn is_source_file_from_workspace(
-        &self,
-        workspace_root: &Path,
-        workspace_relative_path: &Path,
-    ) -> bool {
-        let absolute_path = workspace_root.join(workspace_relative_path);
-        self.is_source_file(&absolute_path)
-    }
-
     /// Returns true if the path matches `translationFiles.filePattern` but not `excludePatterns`.
     ///
-    /// The path must be absolute and under the pattern base directory.
+    /// The path must be absolute and under the workspace root.
     #[must_use]
     pub fn is_translation_file(&self, absolute_path: &Path) -> bool {
-        let Some(relative_path) = absolute_path.strip_prefix(&self.pattern_base).ok() else {
+        let Some(relative_path) = absolute_path.strip_prefix(&self.workspace_root).ok() else {
             return false;
         };
 
@@ -150,24 +120,10 @@ impl FileMatcher {
 
     /// Returns true if the path matches `translationFiles.filePattern` but not `excludePatterns`.
     ///
-    /// The path must be relative to the pattern base directory.
+    /// The path must be relative to the workspace root.
     #[must_use]
     pub fn is_translation_file_relative(&self, relative_path: &Path) -> bool {
         self.translation_set.is_match(relative_path) && !self.exclude_set.is_match(relative_path)
-    }
-
-    /// Check if a workspace-relative path matches translation patterns.
-    ///
-    /// When the pattern base differs from the workspace root, this method
-    /// adjusts the path accordingly. Files outside the pattern base return false.
-    #[must_use]
-    pub fn is_translation_file_from_workspace(
-        &self,
-        workspace_root: &Path,
-        workspace_relative_path: &Path,
-    ) -> bool {
-        let absolute_path = workspace_root.join(workspace_relative_path);
-        self.is_translation_file(&absolute_path)
     }
 }
 
@@ -319,11 +275,11 @@ mod tests {
     }
 
     #[rstest]
-    fn pattern_base_accessor() {
+    fn workspace_root_accessor() {
         let settings = I18nSettings::default();
         let matcher =
             FileMatcher::new(PathBuf::from("/workspace"), &settings).expect("valid patterns");
 
-        assert_eq!(matcher.pattern_base(), Path::new("/workspace"));
+        assert_eq!(matcher.workspace_root(), Path::new("/workspace"));
     }
 }

@@ -144,13 +144,11 @@ impl WorkspaceIndexer {
             ));
         };
 
-        // Use workspace-aware methods to handle config_dir != workspace_path case
-        let files = Self::find_files(workspace_path, |path| {
-            file_matcher.is_source_file_from_workspace(workspace_path, path)
-        });
+        let files =
+            Self::find_files(workspace_path, |path| file_matcher.is_source_file_relative(path));
 
         let translation_files = Self::find_files(workspace_path, |path| {
-            file_matcher.is_translation_file_from_workspace(workspace_path, path)
+            file_matcher.is_translation_file_relative(path)
         });
 
         #[allow(clippy::cast_possible_truncation)] // File count won't exceed u32::MAX
@@ -671,52 +669,5 @@ mod tests {
         let result = indexer.update_file(&db, &uri, content, ".");
 
         assert!(result.is_some());
-    }
-
-    #[rstest]
-    fn test_find_files_with_config_in_subdirectory() {
-        // Simulates: workspace_root = /repo, config_dir = /repo/subproject
-        // Pattern `locales/**/*.json` should match files in /repo/subproject/locales/
-        let temp_dir = TempDir::new().unwrap();
-        let subproject = temp_dir.path().join("subproject");
-
-        // Create directory structure
-        fs::create_dir_all(subproject.join("locales/en")).unwrap();
-        fs::create_dir_all(subproject.join("locales/ja")).unwrap();
-        fs::write(subproject.join("app.tsx"), "").unwrap();
-        fs::write(subproject.join("locales/en/translation.json"), "{}").unwrap();
-        fs::write(subproject.join("locales/ja/translation.json"), "{}").unwrap();
-
-        // Files outside subproject (should NOT match)
-        fs::create_dir_all(temp_dir.path().join("other/locales")).unwrap();
-        fs::write(temp_dir.path().join("other/locales/en.json"), "{}").unwrap();
-        fs::write(temp_dir.path().join("other/app.tsx"), "").unwrap();
-
-        // Config is in subproject, patterns are relative to subproject
-        let settings = create_test_settings(&["**/*.tsx"], &[], "locales/**/*.json");
-        let matcher = FileMatcher::new(subproject.clone(), &settings).unwrap();
-
-        // Find files from workspace root (temp_dir), but patterns relative to subproject
-        let source_files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
-            matcher.is_source_file_from_workspace(temp_dir.path(), path)
-        });
-
-        let translation_files = WorkspaceIndexer::find_files(temp_dir.path(), |path| {
-            matcher.is_translation_file_from_workspace(temp_dir.path(), path)
-        });
-
-        // Should only find files under subproject/
-        assert_eq!(source_files.len(), 1, "Should find 1 source file: {:?}", source_files);
-        assert!(source_files[0].ends_with("subproject/app.tsx"));
-
-        assert_eq!(
-            translation_files.len(),
-            2,
-            "Should find 2 translation files: {:?}",
-            translation_files
-        );
-        assert!(
-            translation_files.iter().all(|f| f.to_string_lossy().contains("subproject/locales"))
-        );
     }
 }
