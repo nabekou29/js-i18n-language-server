@@ -86,7 +86,7 @@ pub struct I18nSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct IndexingConfig {
     /// Parallel thread count for indexing.
-    /// Default: 80% of CPU cores (minimum 1).
+    /// Default: 40% of CPU cores (minimum 1).
     pub num_threads: Option<usize>,
 }
 
