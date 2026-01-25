@@ -62,12 +62,14 @@ description = "Run tests with coverage and generate HTML report"
 run = "cargo llvm-cov --workspace --all-features --html --open"
 
 [tasks.release]
-description = "Preview release (dry-run). Usage: mise run release [patch|minor|major|x.y.z]"
-run = "cargo release ${1:-patch}"
+description = "Preview release (dry-run)"
+usage = 'arg "[level]" default="patch"'
+run = "cargo release ${usage_level}"
 
 [tasks.release-execute]
-description = "Execute release. Usage: mise run release-execute [patch|minor|major|x.y.z]"
-run = "cargo release ${1:-patch} --execute"
+description = "Execute release"
+usage = 'arg "[level]" default="patch"'
+run = "cargo release --execute ${usage_level}"
 
 [tasks.changelog]
 description = "Preview CHANGELOG generation"
