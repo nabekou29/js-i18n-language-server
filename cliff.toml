@@ -1,9 +1,6 @@
 [changelog]
-header = """
-# Changelog
-
-All notable changes to this project will be documented in this file.
-"""
+# --prepend モードではヘッダー不要（既存の CHANGELOG.md にすでにある）
+header = ""
 body = """
 {% if version %}\
     ## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
