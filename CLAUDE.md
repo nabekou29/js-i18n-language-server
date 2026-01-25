@@ -4,12 +4,7 @@ Rust LSP for JavaScript/TypeScript i18n (i18next, next-intl, etc.)
 
 ## Commands
 
-```bash
-cargo build          # Build
-cargo test           # Run tests (265 tests)
-cargo clippy         # Lint
-cargo +nightly fmt   # Format
-```
+Use `mise run <task>` for all commands. See `mise.toml` for available tasks.
 
 ## Architecture
 
@@ -28,9 +23,3 @@ src/
 - **tree-sitter**: Incremental parsing (JS/TS/JSON)
 - **salsa**: Incremental computation (caching)
 - **jsonc-parser**: JSON with comments (CST manipulation)
-
-## Conventions
-
-- Rust 2024 edition with strict lints (see Cargo.toml)
-- No `mod.rs` - use modern module style (`foo.rs` + `foo/`)
-- Prefer functional style: `iter()`, `filter()`, `map()`, `find_map()`

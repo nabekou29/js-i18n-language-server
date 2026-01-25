@@ -2,7 +2,13 @@
 paths: "src/**/*.rs"
 ---
 
-# Testing Rules
+# Rust Conventions
+
+- Rust 2024 edition with strict lints (see Cargo.toml)
+- No `mod.rs` - use modern module style (`foo.rs` + `foo/`)
+- Prefer functional style: `iter()`, `filter()`, `map()`, `find_map()`
+
+# Testing
 
 ## Framework
 

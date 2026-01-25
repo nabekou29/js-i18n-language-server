@@ -1,3 +1,7 @@
+---
+paths: "src/**/*.rs"
+---
+
 # Code Comment Policy
 
 ## Core Principle
