@@ -1,4 +1,6 @@
-[workspace]
+# cargo-release configuration
+# https://github.com/crate-ci/cargo-release/blob/master/docs/reference.md
+
 # crates.io への publish を無効化
 publish = false
 # タグ形式
@@ -9,3 +11,7 @@ tag-message = "Release {{version}}"
 pre-release-hook = ["git-cliff", "-o", "CHANGELOG.md", "--tag", "{{version}}"]
 # リリースコミットのみ許可（dirty な状態でのリリースを防止）
 allow-branch = ["main"]
+# git push を有効化
+push = true
+# git tag を有効化
+tag = true
