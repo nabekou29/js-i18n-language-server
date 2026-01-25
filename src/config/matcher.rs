@@ -96,8 +96,8 @@ impl FileMatcher {
         &self.pattern_base
     }
 
-    /// Deprecated: use `pattern_base()` instead.
     #[must_use]
+    #[deprecated(since = "0.0.2", note = "use `pattern_base()` instead")]
     pub fn workspace_root(&self) -> &Path {
         &self.pattern_base
     }
@@ -319,11 +319,11 @@ mod tests {
     }
 
     #[rstest]
-    fn workspace_root_accessor() {
+    fn pattern_base_accessor() {
         let settings = I18nSettings::default();
         let matcher =
             FileMatcher::new(PathBuf::from("/workspace"), &settings).expect("valid patterns");
 
-        assert_eq!(matcher.workspace_root(), Path::new("/workspace"));
+        assert_eq!(matcher.pattern_base(), Path::new("/workspace"));
     }
 }
