@@ -70,7 +70,7 @@ pub fn generate_code_actions(
         .collect();
 
     // Sort: primary > missing > others (tuple comparison in descending order)
-    languages.sort_by(|a, b| (b.1, b.2).cmp(&(a.1, a.2)));
+    languages.sort_by_key(|item| std::cmp::Reverse((item.1, item.2)));
 
     languages
         .into_iter()

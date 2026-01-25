@@ -124,7 +124,7 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                     let token = token.clone();
                     tokio::spawn(async move {
                         while let Some((current, total)) = progress_rx.recv().await {
-                            let percentage = if total > 0 { (current * 100) / total } else { 0 };
+                            let percentage = (current * 100).checked_div(total).unwrap_or(0);
                             client
                                 .send_notification::<Progress>(ProgressParams {
                                     token: token.clone(),

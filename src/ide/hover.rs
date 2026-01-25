@@ -101,7 +101,7 @@ fn format_plural_variants(variants: &[(&str, &str)], base_key: &str) -> String {
 /// Format nested child keys into a display string
 fn format_nested_keys(nested_keys: &[(&String, &String)], parent_key: &str) -> String {
     let mut sorted_keys: Vec<_> = nested_keys.iter().collect();
-    sorted_keys.sort_by(|(a, _), (b, _)| a.cmp(b));
+    sorted_keys.sort_by_key(|(a, _)| *a);
 
     let display_keys: Vec<String> = sorted_keys
         .iter()

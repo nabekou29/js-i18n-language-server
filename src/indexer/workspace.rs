@@ -159,8 +159,7 @@ impl WorkspaceIndexer {
         // Report progress every 5% or 10 files
         let report_progress = Arc::new(move |current: u32| {
             if let Some(ref callback) = progress_callback {
-                let current_percent =
-                    if total_files > 0 { (current * 100) / total_files } else { 0 };
+                let current_percent = (current * 100).checked_div(total_files).unwrap_or(0);
                 let last_percent = last_reported_percent.load(Ordering::Relaxed);
 
                 if current_percent >= last_percent + 5
@@ -617,7 +616,7 @@ mod tests {
             indexer_clone.translations_notify.notify_waiters();
         });
 
-        let result = indexer.wait_for_translations_indexed(Duration::from_millis(1000)).await;
+        let result = indexer.wait_for_translations_indexed(Duration::from_secs(1)).await;
 
         handle.await.unwrap();
         assert!(result);
