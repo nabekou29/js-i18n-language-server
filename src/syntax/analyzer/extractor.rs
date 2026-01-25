@@ -880,20 +880,20 @@ mod tests {
     #[case::with_variable(r#"t("key.with.variable", someVariable)"#)]
     #[case::with_multiple_args(r#"t("key.multiple.args", arg1, arg2, arg3)"#)]
     #[case::with_multiline_object(
-        r#"t('key.multiline', {
+        r"t('key.multiline', {
   postProcess: 'interval',
-})"#
+})"
     )]
-    #[case::with_single_quotes(r#"t('key.single.quotes', { count: 1 })"#)]
+    #[case::with_single_quotes(r"t('key.single.quotes', { count: 1 })")]
     #[case::with_trailing_comma(r#"t("key.trailing.comma", { count: 1, })"#)]
     #[case::with_string_value(r#"t("key.string.value", { postProcess: "interval" })"#)]
     #[case::with_nested_object(
-        r#"t('key.nested', {
+        r"t('key.nested', {
   interpolation: { escapeValue: false },
   start: formatDate(data.startAt),
   end: formatDate(data.endAt),
   timezone,
-})"#
+})"
     )]
     #[case::with_nested_object_simple(r#"t("key.nested.simple", { nested: { a: 1 } })"#)]
     #[case::with_function_call_value(r#"t("key.func", { value: getData() })"#)]
@@ -1326,7 +1326,7 @@ mod tests {
 
     #[rstest]
     fn test_tsx_complex_object_options(tsx_queries: Vec<Query>, tsx_lang: Language) {
-        let code = r#"
+        let code = r"
 function Component() {
     const { t } = useTranslation();
     return (
@@ -1339,7 +1339,7 @@ function Component() {
         </div>
     );
 }
-"#;
+";
 
         let calls = analyze_trans_fn_calls(code, &tsx_lang, &tsx_queries, ".").unwrap();
 
