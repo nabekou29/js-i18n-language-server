@@ -3,7 +3,7 @@
 experimental = true
 
 [tools]
-rust = "nightly"
+rust = "nightly-2026-01-24"
 hk = "1.32.0"
 pkl = "0.30.2"
 
