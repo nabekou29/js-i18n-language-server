@@ -1,6 +1,6 @@
 [package]
 name = "js-i18n-language-server"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2024"
 description = "A simple Language Server Protocol implementation in Rust"
 license = "MIT"
