@@ -516,6 +516,11 @@ mod tests {
     }
 
     #[fixture]
+    fn tsx_lang() -> Language {
+        tree_sitter_typescript::LANGUAGE_TSX.into()
+    }
+
+    #[fixture]
     fn queries(js_lang: Language) -> Vec<Query> {
         let query_files = [
             ("react-i18next", include_str!("../../../queries/javascript/react-i18next.scm")),
@@ -527,6 +532,23 @@ mod tests {
             .iter()
             .map(|(name, content)| {
                 Query::new(&js_lang, content)
+                    .unwrap_or_else(|e| panic!("Failed to parse {name} query: {e}"))
+            })
+            .collect()
+    }
+
+    #[fixture]
+    fn tsx_queries(tsx_lang: Language) -> Vec<Query> {
+        let query_files = [
+            ("react-i18next", include_str!("../../../queries/tsx/react-i18next.scm")),
+            ("i18next", include_str!("../../../queries/tsx/i18next.scm")),
+            ("next-intl", include_str!("../../../queries/tsx/next-intl.scm")),
+        ];
+
+        query_files
+            .iter()
+            .map(|(name, content)| {
+                Query::new(&tsx_lang, content)
                     .unwrap_or_else(|e| panic!("Failed to parse {name} query: {e}"))
             })
             .collect()
@@ -857,6 +879,25 @@ mod tests {
     #[case::with_number(r#"t("key.with.number", 42)"#)]
     #[case::with_variable(r#"t("key.with.variable", someVariable)"#)]
     #[case::with_multiple_args(r#"t("key.multiple.args", arg1, arg2, arg3)"#)]
+    #[case::with_multiline_object(
+        r#"t('key.multiline', {
+  postProcess: 'interval',
+})"#
+    )]
+    #[case::with_single_quotes(r#"t('key.single.quotes', { count: 1 })"#)]
+    #[case::with_trailing_comma(r#"t("key.trailing.comma", { count: 1, })"#)]
+    #[case::with_string_value(r#"t("key.string.value", { postProcess: "interval" })"#)]
+    #[case::with_nested_object(
+        r#"t('key.nested', {
+  interpolation: { escapeValue: false },
+  start: formatDate(data.startAt),
+  end: formatDate(data.endAt),
+  timezone,
+})"#
+    )]
+    #[case::with_nested_object_simple(r#"t("key.nested.simple", { nested: { a: 1 } })"#)]
+    #[case::with_function_call_value(r#"t("key.func", { value: getData() })"#)]
+    #[case::with_shorthand_property(r#"t("key.shorthand", { count, name })"#)]
     fn test_multiple_arguments_ignored(
         queries: Vec<Query>,
         js_lang: Language,
@@ -1280,6 +1321,68 @@ mod tests {
                 field!(TransFnCall.key, eq("hello")),
                 field!(TransFnCall.namespace, some(eq("errors")))
             ]]
+        );
+    }
+
+    #[rstest]
+    fn test_tsx_complex_object_options(tsx_queries: Vec<Query>, tsx_lang: Language) {
+        let code = r#"
+function Component() {
+    const { t } = useTranslation();
+    return (
+        <div>
+            {t('key.complex', {
+                interpolation: { escapeValue: false },
+                value: someFunc(a.b),
+                shorthand,
+            })}
+        </div>
+    );
+}
+"#;
+
+        let calls = analyze_trans_fn_calls(code, &tsx_lang, &tsx_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("key.complex"))]);
+    }
+
+    #[rstest]
+    fn test_mixed_patterns_same_file(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation('common');
+            const msg1 = t("key1");
+            const msg2 = t("key2", { count: 1 });
+            const msg3 = t("key3", { ns: "errors" });
+            const msg4 = t("key4", { count: 5, ns: "other" });
+            const msg5 = t("key5", { postProcess: "interval" });
+        "#;
+
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![
+                all![
+                    field!(TransFnCall.key, eq("key1")),
+                    field!(TransFnCall.namespace, some(eq("common")))
+                ],
+                all![
+                    field!(TransFnCall.key, eq("key2")),
+                    field!(TransFnCall.namespace, some(eq("common")))
+                ],
+                all![
+                    field!(TransFnCall.key, eq("key3")),
+                    field!(TransFnCall.namespace, some(eq("errors")))
+                ],
+                all![
+                    field!(TransFnCall.key, eq("key4")),
+                    field!(TransFnCall.namespace, some(eq("other")))
+                ],
+                all![
+                    field!(TransFnCall.key, eq("key5")),
+                    field!(TransFnCall.namespace, some(eq("common")))
+                ]
+            ]
         );
     }
 }

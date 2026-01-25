@@ -38,11 +38,19 @@
       (string
         (string_fragment)? @i18n.trans_key
       )? @i18n.trans_key_arg
-      (object
-        (pair
-          key: (property_identifier) @ns_key (#eq? @ns_key "ns")
-          value: (string (string_fragment) @i18n.explicit_namespace)
-        )?
-      )?
+      (_)*
     ) @i18n.trans_args
 ) @i18n.call_trans_fn
+
+;; Capture explicit namespace: t("key", { ns: "namespace" })
+(call_expression
+  arguments: (arguments
+    (string)
+    (object
+      (pair
+        key: (property_identifier) @_ns_key (#eq? @_ns_key "ns")
+        value: (string (string_fragment) @i18n.explicit_namespace)
+      )
+    )
+  )
+)
