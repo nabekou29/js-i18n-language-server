@@ -144,11 +144,13 @@ impl WorkspaceIndexer {
             ));
         };
 
-        let files =
-            Self::find_files(workspace_path, |path| file_matcher.is_source_file_relative(path));
+        // Use workspace-aware methods to handle config_dir != workspace_path case
+        let files = Self::find_files(workspace_path, |path| {
+            file_matcher.is_source_file_from_workspace(workspace_path, path)
+        });
 
         let translation_files = Self::find_files(workspace_path, |path| {
-            file_matcher.is_translation_file_relative(path)
+            file_matcher.is_translation_file_from_workspace(workspace_path, path)
         });
 
         #[allow(clippy::cast_possible_truncation)] // File count won't exceed u32::MAX

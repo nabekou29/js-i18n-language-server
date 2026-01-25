@@ -1,21 +1,31 @@
 //! Configuration file loading.
 
-use std::path::Path;
+use std::path::{
+    Path,
+    PathBuf,
+};
 
 use super::{
     ConfigError,
     I18nSettings,
 };
 
+/// Result of loading configuration from workspace.
+pub(super) struct LoadResult {
+    pub settings: I18nSettings,
+    /// Directory containing the config file (if found).
+    pub config_dir: Option<PathBuf>,
+}
+
 /// Loads settings from `.js-i18n.json` in the workspace root.
-pub(super) fn load_from_workspace(
-    workspace_root: &Path,
-) -> Result<Option<I18nSettings>, ConfigError> {
+///
+/// Returns both the settings and the directory where the config was found.
+pub(super) fn load_from_workspace(workspace_root: &Path) -> Result<LoadResult, ConfigError> {
     let config_path = workspace_root.join(".js-i18n.json");
 
     if !config_path.exists() {
         tracing::debug!("Configuration file not found: {:?}", config_path);
-        return Ok(None);
+        return Ok(LoadResult { settings: I18nSettings::default(), config_dir: None });
     }
 
     tracing::debug!("Loading configuration from: {:?}", config_path);
@@ -23,7 +33,7 @@ pub(super) fn load_from_workspace(
     let content = std::fs::read_to_string(&config_path)?;
     let settings: I18nSettings = serde_json::from_str(&content)?;
 
-    Ok(Some(settings))
+    Ok(LoadResult { settings, config_dir: Some(workspace_root.to_path_buf()) })
 }
 
 #[cfg(test)]
@@ -45,9 +55,10 @@ mod tests {
         let result = load_from_workspace(temp_dir.path());
 
         assert!(result.is_ok());
-        let settings = result.unwrap();
-        assert!(settings.is_some());
-        assert_eq!(settings.unwrap().key_separator, "-");
+        let load_result = result.unwrap();
+        assert!(load_result.config_dir.is_some());
+        assert_eq!(load_result.settings.key_separator, "-");
+        assert_eq!(load_result.config_dir.unwrap(), temp_dir.path());
     }
 
     #[rstest]
@@ -57,7 +68,10 @@ mod tests {
         let result = load_from_workspace(temp_dir.path());
 
         assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
+        let load_result = result.unwrap();
+        assert!(load_result.config_dir.is_none());
+        // Default settings should be used
+        assert_eq!(load_result.settings.key_separator, ".");
     }
 
     #[rstest]
