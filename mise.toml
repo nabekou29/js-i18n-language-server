@@ -23,7 +23,7 @@ outputs = ["target/debug/{{env.LSP_BINARY}}"]
 [tasks.build-install]
 description = "Build and install the LSP binary"
 run = "cargo install --path . --force --debug"
-sources = ["Cargo.toml", "src/**/*.rs"]
+sources = ["Cargo.toml", "src/**/*.rs", "queries/**/*"]
 outputs = ["{{env.CARGO_HOME}}/bin/{{env.LSP_BINARY}}"]
 
 [tasks.test]
