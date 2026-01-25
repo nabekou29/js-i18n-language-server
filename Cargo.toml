@@ -94,3 +94,8 @@ cognitive_complexity = "deny"
 multiple_crate_versions = "allow"
 missing_errors_doc = "allow"
 missing_docs_in_private_items = "allow"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

@@ -1,3 +1,5 @@
 [workspace]
-# Disable crates.io publishing (GitHub release only)
+# Disable crates.io publishing
 publish = false
+# Disable GitHub release creation (let cargo-dist handle it)
+git_release_enable = false
