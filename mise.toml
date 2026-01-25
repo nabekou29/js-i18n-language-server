@@ -6,6 +6,8 @@ experimental = true
 rust = "nightly-2026-01-24"
 hk = "1.32.0"
 pkl = "0.30.2"
+"cargo:cargo-release" = "latest"
+"cargo:git-cliff" = "latest"
 
 [env]
 LSP_BINARY = "js-i18n-language-server"

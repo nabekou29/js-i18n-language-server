@@ -11,6 +11,8 @@ ci = "github"
 installers = ["shell", "powershell", "npm"]
 # npm scope for platform packages
 npm-scope = "@js-i18n-language-server"
+# Publish to npm automatically
+publish-jobs = ["npm"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Path that installers should place binaries in
