@@ -1,3 +1,0 @@
-# CI environment: only install required tools
-[tools]
-rust = "nightly-2026-01-24"

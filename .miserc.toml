@@ -1,0 +1,2 @@
+# .miserc.toml
+env = ["development"]
