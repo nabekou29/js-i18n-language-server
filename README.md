@@ -1,5 +1,8 @@
 # js-i18n-language-server
 
+[![CI](https://github.com/nabekou29/js-i18n-language-server/actions/workflows/ci.yml/badge.svg)](https://github.com/nabekou29/js-i18n-language-server/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/nabekou29/js-i18n-language-server/graph/badge.svg)](https://codecov.io/gh/nabekou29/js-i18n-language-server)
+
 Language Server for JavaScript/TypeScript i18n libraries.
 
 Provides IDE features (completion, hover, diagnostics, etc.) for translation keys in i18next, react-i18next, and next-intl projects.
