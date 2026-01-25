@@ -13,12 +13,12 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    env:
+      MISE_ENV: ci
     steps:
       - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
-        env:
-          MISE_ENV: ci
 
       - uses: Swatinem/rust-cache@v2
 
@@ -32,12 +32,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
+    env:
+      MISE_ENV: ci
     steps:
       - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
-        env:
-          MISE_ENV: ci
 
       - uses: Swatinem/rust-cache@v2
 
@@ -47,12 +47,12 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    env:
+      MISE_ENV: ci
     steps:
       - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
-        env:
-          MISE_ENV: ci
 
       - name: Install clippy
         run: rustup component add clippy
@@ -65,12 +65,12 @@ jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    env:
+      MISE_ENV: ci
     steps:
       - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
-        env:
-          MISE_ENV: ci
 
       - name: Install rustfmt
         run: rustup component add rustfmt
@@ -81,12 +81,12 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    env:
+      MISE_ENV: ci
     steps:
       - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
-        env:
-          MISE_ENV: ci
 
       - name: Install llvm-tools-preview
         run: rustup component add llvm-tools-preview
