@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: jdx/mise-action@v2
 
       - uses: Swatinem/rust-cache@v2
 
@@ -33,7 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: jdx/mise-action@v2
 
       - uses: Swatinem/rust-cache@v2
 
@@ -46,9 +46,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: clippy
+      - uses: jdx/mise-action@v2
+
+      - name: Install clippy
+        run: rustup component add clippy
 
       - uses: Swatinem/rust-cache@v2
 
@@ -61,9 +62,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt
+      - uses: jdx/mise-action@v2
+
+      - name: Install rustfmt
+        run: rustup component add rustfmt
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -74,9 +76,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: llvm-tools-preview
+      - uses: jdx/mise-action@v2
+
+      - name: Install llvm-tools-preview
+        run: rustup component add llvm-tools-preview
 
       - uses: taiki-e/install-action@cargo-llvm-cov
 

@@ -4,12 +4,11 @@ experimental = true
 
 [tools]
 rust = "nightly"
-hk = "1.28.0"
+hk = "1.32.0"
 pkl = "0.30.2"
 
 [env]
 LSP_BINARY = "js-i18n-language-server"
-RUST_LOG = "debug"
 
 [hooks]
 postinstall = "hk install"
