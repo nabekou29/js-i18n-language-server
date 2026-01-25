@@ -1,5 +1,5 @@
 [changelog]
-# --prepend モードではヘッダー不要（既存の CHANGELOG.md にすでにある）
+# No header needed in --prepend mode (CHANGELOG.md already has one)
 header = ""
 body = """
 {% if version %}\
