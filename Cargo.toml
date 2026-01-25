@@ -2,10 +2,10 @@
 name = "js-i18n-language-server"
 version = "0.1.0"
 edition = "2024"
-description = "A simple Language Server Protocol implementation in Rust"
+description = "Language Server for JavaScript/TypeScript i18n (i18next, next-intl, react-intl)"
 license = "MIT"
 repository = "https://github.com/nabekou29/js-i18n-language-server"
-keywords = ["lsp", "language-server", "i18n", "javascript"]
+keywords = ["lsp", "language-server", "i18n", "javascript", "typescript", "i18next", "next-intl", "react-intl", "internationalization"]
 categories = ["development-tools"]
 readme = "README.md"
 

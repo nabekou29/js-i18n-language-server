@@ -9,11 +9,21 @@ Provides IDE features (completion, hover, diagnostics, etc.) for translation key
 
 ## Installation
 
+### npm
+
+```bash
+npm install -g js-i18n-language-server
+```
+
+### Cargo
+
 ```bash
 cargo install --git https://github.com/nabekou29/js-i18n-language-server
 ```
 
-Or download from [GitHub Releases](https://github.com/nabekou29/js-i18n-language-server/releases).
+### Binary
+
+Download from [GitHub Releases](https://github.com/nabekou29/js-i18n-language-server/releases).
 
 ## Configuration
 
