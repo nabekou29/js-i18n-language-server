@@ -21,32 +21,6 @@ Open translation file and position cursor at the key's value. If the key doesn't
 arguments: [lang: string, key: string]
 ```
 
-### `i18n.getDecorations`
-
-Returns decoration information for inline translation display.
-
-```typescript
-arguments: [{
-  uri: string,
-  language?: string,
-  maxLength?: number
-}]
-
-returns: Array<{
-  range: Range,
-  text: string,
-  key: string
-}>
-```
-
-### `i18n.setCurrentLanguage`
-
-Set the display language for hover, completion, and code actions.
-
-```typescript
-arguments: [{ language?: string }]  // null to reset
-```
-
 ### `i18n.deleteUnusedKeys`
 
 Delete all unused translation keys from a translation file.
@@ -71,6 +45,42 @@ arguments: [{
 }]
 
 returns: { key: string } | null
+```
+
+### `i18n.getDecorations`
+
+Returns decoration information for inline translation display.
+
+```typescript
+arguments: [{
+  uri: string,
+  language?: string,
+  maxLength?: number
+}]
+
+returns: Array<{
+  range: Range,
+  text: string,
+  key: string
+}>
+```
+
+### `i18n.getCurrentLanguage`
+
+Returns the current display language.
+
+```typescript
+arguments: none
+
+returns: { language: string | null }
+```
+
+### `i18n.setCurrentLanguage`
+
+Set the display language for hover, completion, and code actions.
+
+```typescript
+arguments: [{ language?: string }]  // null to reset
 ```
 
 ## Server Capabilities

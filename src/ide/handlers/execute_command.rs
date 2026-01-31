@@ -60,13 +60,14 @@ pub async fn handle_execute_command(
 
     match params.command.as_str() {
         "i18n.editTranslation" => handle_edit_translation(backend, Some(params.arguments)).await,
-        "i18n.getDecorations" => handle_get_decorations(backend, Some(params.arguments)).await,
-        "i18n.setCurrentLanguage" => {
-            handle_set_current_language(backend, Some(params.arguments)).await
-        }
         "i18n.deleteUnusedKeys" => handle_delete_unused_keys(backend, Some(params.arguments)).await,
         "i18n.getKeyAtPosition" => {
             handle_get_key_at_position(backend, Some(params.arguments)).await
+        }
+        "i18n.getDecorations" => handle_get_decorations(backend, Some(params.arguments)).await,
+        "i18n.getCurrentLanguage" => handle_get_current_language(backend).await,
+        "i18n.setCurrentLanguage" => {
+            handle_set_current_language(backend, Some(params.arguments)).await
         }
         _ => {
             tracing::warn!("Unknown command: {}", params.command);
@@ -160,148 +161,6 @@ async fn handle_edit_translation(
     if let Err(e) = show_result {
         tracing::error!("Failed to show document: {}", e);
     }
-
-    Ok(None)
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GetDecorationsArgs {
-    uri: String,
-    language: Option<String>,
-    max_length: Option<usize>,
-}
-
-/// Returns translation decorations for editor extensions to display inline translations.
-async fn handle_get_decorations(
-    backend: &Backend,
-    arguments: Option<Vec<Value>>,
-) -> Result<Option<Value>> {
-    let args = arguments.unwrap_or_default();
-
-    let Some(first_arg) = args.first().cloned() else {
-        tracing::warn!("Missing arguments for i18n.getDecorations");
-        return Ok(Some(serde_json::json!([])));
-    };
-
-    let parsed_args: GetDecorationsArgs = match serde_json::from_value(first_arg) {
-        Ok(args) => args,
-        Err(e) => {
-            tracing::warn!("Invalid arguments for i18n.getDecorations: {}", e);
-            return Ok(Some(serde_json::json!([])));
-        }
-    };
-
-    tracing::debug!(
-        uri = %parsed_args.uri,
-        language = ?parsed_args.language,
-        max_length = ?parsed_args.max_length,
-        "Executing i18n.getDecorations"
-    );
-
-    let Ok(uri) = Url::parse(&parsed_args.uri) else {
-        tracing::warn!("Invalid URI: {}", parsed_args.uri);
-        return Ok(Some(serde_json::json!([])));
-    };
-
-    let Some(file_path) = Backend::uri_to_path(&uri) else {
-        tracing::warn!("Failed to convert URI to path: {}", parsed_args.uri);
-        return Ok(Some(serde_json::json!([])));
-    };
-
-    let config = backend.config_manager.lock().await;
-    let settings = config.get_settings();
-    let max_length = parsed_args.max_length.unwrap_or(settings.virtual_text.max_length);
-    let primary_languages = settings.primary_languages.clone();
-    let key_separator = settings.key_separator.clone();
-    drop(config);
-
-    let db = backend.state.db.lock().await;
-    let source_files = backend.state.source_files.lock().await;
-
-    let Some(source_file) = source_files.get(&file_path).copied() else {
-        tracing::debug!("Source file not found: {:?}", file_path);
-        return Ok(Some(serde_json::json!([])));
-    };
-
-    let translations = backend.state.translations.lock().await;
-
-    // Priority: request arg > currentLanguage > primaryLanguages > first available
-    let current_language = backend.state.current_language.lock().await.clone();
-    let language = parsed_args.language.clone().or_else(|| {
-        let sorted_languages = crate::ide::backend::collect_sorted_languages(
-            &*db,
-            &translations,
-            current_language.as_deref(),
-            primary_languages.as_deref(),
-        );
-        sorted_languages.first().cloned()
-    });
-
-    let decorations = crate::ide::virtual_text::get_translation_decorations(
-        &*db,
-        source_file,
-        &translations,
-        language.as_deref(),
-        max_length,
-        &key_separator,
-    );
-
-    drop(translations);
-    drop(source_files);
-    drop(db);
-
-    match serde_json::to_value(&decorations) {
-        Ok(value) => Ok(Some(value)),
-        Err(e) => {
-            tracing::error!("Failed to serialize decorations: {}", e);
-            Ok(Some(serde_json::json!([])))
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct SetCurrentLanguageArgs {
-    language: Option<String>,
-}
-
-/// Set current display language used by virtual text, completion, and code actions.
-async fn handle_set_current_language(
-    backend: &Backend,
-    arguments: Option<Vec<Value>>,
-) -> Result<Option<Value>> {
-    let args = arguments.unwrap_or_default();
-
-    let parsed_args: SetCurrentLanguageArgs = if let Some(first_arg) = args.first().cloned() {
-        match serde_json::from_value(first_arg) {
-            Ok(args) => args,
-            Err(e) => {
-                tracing::warn!("Invalid arguments for i18n.setCurrentLanguage: {}", e);
-                return Ok(None);
-            }
-        }
-    } else {
-        // No arguments means reset to default
-        SetCurrentLanguageArgs { language: None }
-    };
-
-    tracing::debug!(
-        language = ?parsed_args.language,
-        "Executing i18n.setCurrentLanguage"
-    );
-
-    let mut current_language = backend.state.current_language.lock().await;
-    current_language.clone_from(&parsed_args.language);
-    drop(current_language);
-
-    backend
-        .client
-        .log_message(
-            MessageType::INFO,
-            format!("Current language set to: {:?}", parsed_args.language),
-        )
-        .await;
 
     Ok(None)
 }
@@ -483,4 +342,155 @@ async fn handle_get_key_at_position(
     let key = backend.get_key_at_position(&file_path, source_position).await;
 
     Ok(key.map(|k| serde_json::json!({ "key": k })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetDecorationsArgs {
+    uri: String,
+    language: Option<String>,
+    max_length: Option<usize>,
+}
+
+/// Returns translation decorations for editor extensions to display inline translations.
+async fn handle_get_decorations(
+    backend: &Backend,
+    arguments: Option<Vec<Value>>,
+) -> Result<Option<Value>> {
+    let args = arguments.unwrap_or_default();
+
+    let Some(first_arg) = args.first().cloned() else {
+        tracing::warn!("Missing arguments for i18n.getDecorations");
+        return Ok(Some(serde_json::json!([])));
+    };
+
+    let parsed_args: GetDecorationsArgs = match serde_json::from_value(first_arg) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::warn!("Invalid arguments for i18n.getDecorations: {}", e);
+            return Ok(Some(serde_json::json!([])));
+        }
+    };
+
+    tracing::debug!(
+        uri = %parsed_args.uri,
+        language = ?parsed_args.language,
+        max_length = ?parsed_args.max_length,
+        "Executing i18n.getDecorations"
+    );
+
+    let Ok(uri) = Url::parse(&parsed_args.uri) else {
+        tracing::warn!("Invalid URI: {}", parsed_args.uri);
+        return Ok(Some(serde_json::json!([])));
+    };
+
+    let Some(file_path) = Backend::uri_to_path(&uri) else {
+        tracing::warn!("Failed to convert URI to path: {}", parsed_args.uri);
+        return Ok(Some(serde_json::json!([])));
+    };
+
+    let config = backend.config_manager.lock().await;
+    let settings = config.get_settings();
+    let max_length = parsed_args.max_length.unwrap_or(settings.virtual_text.max_length);
+    let primary_languages = settings.primary_languages.clone();
+    let key_separator = settings.key_separator.clone();
+    drop(config);
+
+    let db = backend.state.db.lock().await;
+    let source_files = backend.state.source_files.lock().await;
+
+    let Some(source_file) = source_files.get(&file_path).copied() else {
+        tracing::debug!("Source file not found: {:?}", file_path);
+        return Ok(Some(serde_json::json!([])));
+    };
+
+    let translations = backend.state.translations.lock().await;
+
+    // Priority: request arg > currentLanguage > primaryLanguages > first available
+    let current_language = backend.state.current_language.lock().await.clone();
+    let language = parsed_args.language.clone().or_else(|| {
+        let sorted_languages = crate::ide::backend::collect_sorted_languages(
+            &*db,
+            &translations,
+            current_language.as_deref(),
+            primary_languages.as_deref(),
+        );
+        sorted_languages.first().cloned()
+    });
+
+    let decorations = crate::ide::virtual_text::get_translation_decorations(
+        &*db,
+        source_file,
+        &translations,
+        language.as_deref(),
+        max_length,
+        &key_separator,
+    );
+
+    drop(translations);
+    drop(source_files);
+    drop(db);
+
+    match serde_json::to_value(&decorations) {
+        Ok(value) => Ok(Some(value)),
+        Err(e) => {
+            tracing::error!("Failed to serialize decorations: {}", e);
+            Ok(Some(serde_json::json!([])))
+        }
+    }
+}
+
+/// Returns the current display language.
+async fn handle_get_current_language(backend: &Backend) -> Result<Option<Value>> {
+    let current_language = backend.state.current_language.lock().await.clone();
+
+    tracing::debug!(language = ?current_language, "Executing i18n.getCurrentLanguage");
+
+    Ok(Some(serde_json::json!({ "language": current_language })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetCurrentLanguageArgs {
+    language: Option<String>,
+}
+
+/// Set current display language used by virtual text, completion, and code actions.
+async fn handle_set_current_language(
+    backend: &Backend,
+    arguments: Option<Vec<Value>>,
+) -> Result<Option<Value>> {
+    let args = arguments.unwrap_or_default();
+
+    let parsed_args: SetCurrentLanguageArgs = if let Some(first_arg) = args.first().cloned() {
+        match serde_json::from_value(first_arg) {
+            Ok(args) => args,
+            Err(e) => {
+                tracing::warn!("Invalid arguments for i18n.setCurrentLanguage: {}", e);
+                return Ok(None);
+            }
+        }
+    } else {
+        // No arguments means reset to default
+        SetCurrentLanguageArgs { language: None }
+    };
+
+    tracing::debug!(
+        language = ?parsed_args.language,
+        "Executing i18n.setCurrentLanguage"
+    );
+
+    let mut current_language = backend.state.current_language.lock().await;
+    current_language.clone_from(&parsed_args.language);
+    drop(current_language);
+
+    backend
+        .client
+        .log_message(
+            MessageType::INFO,
+            format!("Current language set to: {:?}", parsed_args.language),
+        )
+        .await;
+
+    Ok(None)
 }

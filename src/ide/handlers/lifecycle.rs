@@ -67,10 +67,11 @@ pub async fn handle_initialize(
             execute_command_provider: Some(ExecuteCommandOptions {
                 commands: vec![
                     "i18n.editTranslation".to_string(),
-                    "i18n.getDecorations".to_string(),
-                    "i18n.setCurrentLanguage".to_string(),
                     "i18n.deleteUnusedKeys".to_string(),
                     "i18n.getKeyAtPosition".to_string(),
+                    "i18n.getDecorations".to_string(),
+                    "i18n.getCurrentLanguage".to_string(),
+                    "i18n.setCurrentLanguage".to_string(),
                 ],
                 work_done_progress_options: WorkDoneProgressOptions::default(),
             }),
