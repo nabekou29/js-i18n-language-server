@@ -60,6 +60,19 @@ returns: {
 }
 ```
 
+### `i18n.getKeyAtPosition`
+
+Returns the translation key at the given cursor position.
+
+```typescript
+arguments: [{
+  uri: string,
+  position: { line: number, character: number }
+}]
+
+returns: { key: string } | null
+```
+
 ## Server Capabilities
 
 Capabilities returned in `initialize` response:
