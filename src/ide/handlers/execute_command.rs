@@ -65,6 +65,9 @@ pub async fn handle_execute_command(
             handle_set_current_language(backend, Some(params.arguments)).await
         }
         "i18n.deleteUnusedKeys" => handle_delete_unused_keys(backend, Some(params.arguments)).await,
+        "i18n.getKeyAtPosition" => {
+            handle_get_key_at_position(backend, Some(params.arguments)).await
+        }
         _ => {
             tracing::warn!("Unknown command: {}", params.command);
             Ok(None)
@@ -430,4 +433,54 @@ async fn handle_delete_unused_keys(
         "deletedCount": result.deleted_count,
         "deletedKeys": result.deleted_keys
     })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetKeyAtPositionArgs {
+    uri: String,
+    position: Position,
+}
+
+/// Returns the translation key at the given cursor position.
+async fn handle_get_key_at_position(
+    backend: &Backend,
+    arguments: Option<Vec<Value>>,
+) -> Result<Option<Value>> {
+    let args = arguments.unwrap_or_default();
+
+    let Some(first_arg) = args.first().cloned() else {
+        tracing::warn!("Missing arguments for i18n.getKeyAtPosition");
+        return Ok(None);
+    };
+
+    let parsed_args: GetKeyAtPositionArgs = match serde_json::from_value(first_arg) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::warn!("Invalid arguments for i18n.getKeyAtPosition: {e}");
+            return Ok(None);
+        }
+    };
+
+    tracing::debug!(
+        uri = %parsed_args.uri,
+        line = parsed_args.position.line,
+        character = parsed_args.position.character,
+        "Executing i18n.getKeyAtPosition"
+    );
+
+    let Ok(uri) = Url::parse(&parsed_args.uri) else {
+        tracing::warn!("Invalid URI: {}", parsed_args.uri);
+        return Ok(None);
+    };
+
+    let Some(file_path) = Backend::uri_to_path(&uri) else {
+        return Ok(None);
+    };
+
+    let source_position = crate::types::SourcePosition::from(parsed_args.position);
+
+    let key = backend.get_key_at_position(&file_path, source_position).await;
+
+    Ok(key.map(|k| serde_json::json!({ "key": k })))
 }
