@@ -1,5 +1,8 @@
 //! Workspace indexer implementation
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -201,6 +204,13 @@ impl WorkspaceIndexer {
         // Set flag while holding lock to guarantee data exists when flag is true
         {
             let mut guard = translations.lock().await;
+
+            // Remove existing entries for the same file paths to prevent duplicates
+            // (e.g., from multiple workspace folders or concurrent reindex calls)
+            let new_file_paths: HashSet<&str> =
+                loaded_translations.iter().map(|t| t.file_path(&db).as_str()).collect();
+            guard.retain(|existing| !new_file_paths.contains(existing.file_path(&db).as_str()));
+
             guard.extend(loaded_translations);
             self.translations_indexed.store(true, Ordering::Release);
         }
