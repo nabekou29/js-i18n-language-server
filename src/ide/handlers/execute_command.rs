@@ -224,8 +224,8 @@ async fn handle_get_decorations(
     let translations = backend.state.translations.lock().await;
 
     // Priority: request arg > currentLanguage > primaryLanguages > first available
+    let current_language = backend.state.current_language.lock().await.clone();
     let language = parsed_args.language.clone().or_else(|| {
-        let current_language = backend.state.current_language.blocking_lock().clone();
         let sorted_languages = crate::ide::backend::collect_sorted_languages(
             &*db,
             &translations,
