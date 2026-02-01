@@ -295,14 +295,14 @@ jobs:
           pattern: artifacts-*
           path: npm/
           merge-multiple: true
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
       - run: |
           for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith("-npm-package.tar.gz")] | any)'); do
             pkg=$(echo "$release" | jq '.artifacts[] | select(endswith("-npm-package.tar.gz"))' --raw-output)
-            npm publish --access public --provenance "./npm/${pkg}"
+            npm publish "./npm/${pkg}"
           done
 
   announce:
