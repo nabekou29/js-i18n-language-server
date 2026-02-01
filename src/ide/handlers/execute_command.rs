@@ -169,10 +169,8 @@ async fn handle_edit_translation(
     let text_edit = create_full_file_text_edit(&original_text, result.new_text);
     apply_single_file_edit(backend, uri, text_edit).await;
 
-    backend.reload_translation_file(std::path::Path::new(&file_path)).await;
-    backend.send_diagnostics_to_opened_files().await;
-    backend.send_unused_key_diagnostics().await;
-    backend.send_decorations_changed().await;
+    // State sync (reload, diagnostics, decorations) is handled by the
+    // didChange notification that the client sends after applying the edit.
 
     Ok(None)
 }
@@ -190,7 +188,6 @@ async fn handle_delete_unused_keys(
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
     use std::collections::HashSet;
-    use std::path::Path;
 
     let args = arguments.unwrap_or_default();
 
@@ -288,9 +285,8 @@ async fn handle_delete_unused_keys(
     let text_edit = create_full_file_text_edit(&json_text, result.new_text.clone());
     apply_single_file_edit(backend, uri, text_edit).await;
 
-    backend.reload_translation_file(Path::new(&file_path)).await;
-    backend.send_unused_key_diagnostics().await;
-    backend.send_decorations_changed().await;
+    // State sync (reload, diagnostics, decorations) is handled by the
+    // didChange notification that the client sends after applying the edit.
 
     let deleted_count = result.deleted_count;
     backend
