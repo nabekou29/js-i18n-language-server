@@ -46,8 +46,50 @@ pub async fn handle_code_action(
             .await;
     }
 
-    // Source files: no code actions for now
-    Ok(Some(vec![]))
+    // Source files: only generate code actions if the client opted in
+    let code_actions_enabled = *backend.state.code_actions_enabled.lock().await;
+    if !code_actions_enabled {
+        return Ok(Some(vec![]));
+    }
+
+    let position = params.range.start;
+    let source_position = crate::types::SourcePosition::from(position);
+
+    let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
+        return Ok(Some(vec![]));
+    };
+
+    let missing_languages = crate::ide::code_actions::extract_missing_languages(diagnostics);
+
+    let (effective_language, sorted_languages) = {
+        let config = backend.config_manager.lock().await;
+        let primary_languages = config.get_settings().primary_languages.clone();
+        drop(config);
+
+        let current_language = backend.state.current_language.lock().await.clone();
+        let db = backend.state.db.lock().await;
+        let translations = backend.state.translations.lock().await;
+
+        let sorted = crate::ide::backend::collect_sorted_languages(
+            &*db,
+            &translations,
+            current_language.as_deref(),
+            primary_languages.as_deref(),
+        );
+        drop(translations);
+        drop(db);
+        let effective = sorted.first().cloned();
+        (effective, sorted)
+    };
+
+    let actions = crate::ide::code_actions::generate_code_actions(
+        &key_text,
+        &sorted_languages,
+        &missing_languages,
+        effective_language.as_deref(),
+    );
+
+    Ok(Some(actions))
 }
 
 async fn generate_translation_file_code_actions(

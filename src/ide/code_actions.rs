@@ -8,6 +8,8 @@ use jsonc_parser::cst::{
     CstRootNode,
 };
 use tower_lsp::lsp_types::{
+    CodeActionOrCommand,
+    Command,
     Diagnostic,
     NumberOrString,
 };
@@ -43,6 +45,48 @@ pub fn extract_missing_languages(diagnostics: &[Diagnostic]) -> HashSet<String> 
         .filter_map(|data| data.get("missing_languages"))
         .filter_map(|v| v.as_array())
         .flat_map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)))
+        .collect()
+}
+
+/// Generate code actions for all languages, sorted by priority (primary > missing > others).
+/// Returns commands with `{ lang, key }` args; the client handles value input.
+#[must_use]
+#[allow(clippy::implicit_hasher)]
+pub fn generate_code_actions(
+    key: &str,
+    all_languages: &[String],
+    missing_languages: &HashSet<String>,
+    primary_language: Option<&str>,
+) -> Vec<CodeActionOrCommand> {
+    let mut languages: Vec<(String, bool, bool)> = all_languages
+        .iter()
+        .map(|lang| {
+            let is_primary = primary_language == Some(lang.as_str());
+            let is_missing = missing_languages.contains(lang);
+            (lang.clone(), is_primary, is_missing)
+        })
+        .collect();
+
+    // Sort: primary > missing > others (tuple comparison in descending order)
+    languages.sort_by_key(|item| std::cmp::Reverse((item.1, item.2)));
+
+    languages
+        .into_iter()
+        .map(|(lang, _, is_missing)| {
+            let title = if is_missing {
+                format!("Add translation for {lang}")
+            } else {
+                format!("Edit translation for {lang}")
+            };
+            CodeActionOrCommand::Command(Command {
+                title,
+                command: "i18n.executeClientEditTranslation".to_string(),
+                arguments: Some(vec![serde_json::json!({
+                    "lang": lang,
+                    "key": key,
+                })]),
+            })
+        })
         .collect()
 }
 
@@ -199,7 +243,10 @@ fn cleanup_empty_objects(obj: &jsonc_parser::cst::CstObject) {
     clippy::indexing_slicing,
     clippy::expect_used,
     clippy::iter_on_single_items,
-    clippy::redundant_closure_for_method_calls
+    clippy::redundant_closure_for_method_calls,
+    clippy::panic,
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
 )]
 mod tests {
     use googletest::prelude::*;
@@ -235,6 +282,74 @@ mod tests {
         let result = extract_missing_languages(&diagnostics);
 
         expect_that!(result, is_empty());
+    }
+
+    #[googletest::test]
+    fn generate_code_actions_basic() {
+        let languages = vec!["en".to_string(), "ja".to_string()];
+        let missing = HashSet::new();
+
+        let actions = generate_code_actions("common.hello", &languages, &missing, None);
+
+        assert_that!(actions, len(eq(2)));
+        // Both are "Edit" since none are missing
+        let titles: Vec<_> = actions
+            .iter()
+            .map(|a| match a {
+                CodeActionOrCommand::Command(c) => c.title.clone(),
+                _ => panic!("expected Command"),
+            })
+            .collect();
+        assert_that!(titles, each(contains_substring("Edit translation for")));
+    }
+
+    #[googletest::test]
+    fn generate_code_actions_with_missing() {
+        let languages = vec!["en".to_string(), "ja".to_string()];
+        let missing: HashSet<String> = ["ja".to_string()].into();
+
+        let actions = generate_code_actions("common.hello", &languages, &missing, None);
+
+        let titles: Vec<_> = actions
+            .iter()
+            .map(|a| match a {
+                CodeActionOrCommand::Command(c) => c.title.clone(),
+                _ => panic!("expected Command"),
+            })
+            .collect();
+        // "ja" is missing so sorted first, then "en"
+        assert_that!(titles[0], eq("Add translation for ja"));
+        assert_that!(titles[1], eq("Edit translation for en"));
+    }
+
+    #[googletest::test]
+    fn generate_code_actions_with_primary() {
+        let languages = vec!["en".to_string(), "ja".to_string(), "zh".to_string()];
+        let missing = HashSet::new();
+
+        let actions = generate_code_actions("common.hello", &languages, &missing, Some("ja"));
+
+        let first_title = match &actions[0] {
+            CodeActionOrCommand::Command(c) => &c.title,
+            _ => panic!("expected Command"),
+        };
+        assert_that!(first_title, eq("Edit translation for ja"));
+    }
+
+    #[googletest::test]
+    fn generate_code_actions_args_format() {
+        let languages = vec!["en".to_string()];
+        let missing = HashSet::new();
+
+        let actions = generate_code_actions("greeting.hello", &languages, &missing, None);
+
+        let args = match &actions[0] {
+            CodeActionOrCommand::Command(c) => c.arguments.as_ref().unwrap(),
+            _ => panic!("expected Command"),
+        };
+        let arg = &args[0];
+        assert_that!(arg["lang"].as_str().unwrap(), eq("en"));
+        assert_that!(arg["key"].as_str().unwrap(), eq("greeting.hello"));
     }
 
     #[googletest::test]

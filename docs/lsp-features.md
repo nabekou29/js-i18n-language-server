@@ -47,6 +47,15 @@ arguments: [{
 returns: { key: string } | null
 ```
 
+### `i18n.executeClientEditTranslation`
+
+No-op on the server. Intended to be intercepted by the client to show
+a translation edit UI. Triggered via code actions (requires `experimental.i18nEditTranslationCodeAction`).
+
+```typescript
+arguments: [{ lang: string, key: string }]
+```
+
 ### `i18n.getTranslationValue`
 
 Returns the value of a translation key for a given language.
@@ -102,6 +111,27 @@ The client should call `i18n.getDecorations` to get updated decoration data.
 
 ```typescript
 params: null
+```
+
+## Client Capabilities
+
+### `experimental.i18nEditTranslationCodeAction`
+
+When set to `true` in the client's `initialize` params, the server generates
+"Add/Edit translation for {lang}" code actions on source files.
+
+The code action triggers `i18n.executeClientEditTranslation` with `{ lang, key }`.
+The client should intercept this command, prompt the user for a value,
+and then call `i18n.editTranslation` with `{ lang, key, value }`.
+
+```json
+{
+  "capabilities": {
+    "experimental": {
+      "i18nEditTranslationCodeAction": true
+    }
+  }
+}
 ```
 
 ## Server Capabilities

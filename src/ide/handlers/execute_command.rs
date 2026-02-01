@@ -66,6 +66,8 @@ pub async fn handle_execute_command(
         "i18n.getTranslationValue" => {
             handle_get_translation_value(backend, Some(params.arguments)).await
         }
+        // No-op: handled by the client (code action trigger for edit translation)
+        "i18n.executeClientEditTranslation" => Ok(None),
         "i18n.getDecorations" => handle_get_decorations(backend, Some(params.arguments)).await,
         "i18n.getCurrentLanguage" => handle_get_current_language(backend).await,
         "i18n.setCurrentLanguage" => {

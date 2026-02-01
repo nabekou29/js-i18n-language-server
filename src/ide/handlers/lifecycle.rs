@@ -49,6 +49,16 @@ pub async fn handle_initialize(
     }
     drop(config_manager);
 
+    // Read experimental client capabilities
+    let code_actions_enabled = params
+        .capabilities
+        .experimental
+        .as_ref()
+        .and_then(|v| v.get("i18nEditTranslationCodeAction"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    *backend.state.code_actions_enabled.lock().await = code_actions_enabled;
+
     Ok(InitializeResult {
         server_info: None,
         capabilities: ServerCapabilities {
@@ -70,6 +80,7 @@ pub async fn handle_initialize(
                     "i18n.deleteUnusedKeys".to_string(),
                     "i18n.getKeyAtPosition".to_string(),
                     "i18n.getTranslationValue".to_string(),
+                    "i18n.executeClientEditTranslation".to_string(),
                     "i18n.getDecorations".to_string(),
                     "i18n.getCurrentLanguage".to_string(),
                     "i18n.setCurrentLanguage".to_string(),

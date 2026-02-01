@@ -36,6 +36,8 @@ pub struct ServerState {
     pub current_language: Arc<Mutex<Option<String>>>,
     /// Updates skipped during indexing; processed after indexing completes.
     pub pending_updates: Arc<Mutex<Vec<PendingUpdate>>>,
+    /// Whether the client supports edit translation code actions (from `experimental.i18nEditTranslationCodeAction`).
+    pub code_actions_enabled: Arc<Mutex<bool>>,
 }
 
 impl ServerState {
@@ -47,6 +49,7 @@ impl ServerState {
             opened_files: Arc::new(Mutex::new(HashSet::new())),
             current_language: Arc::new(Mutex::new(None)),
             pending_updates: Arc::new(Mutex::new(Vec::new())),
+            code_actions_enabled: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -92,6 +95,7 @@ impl std::fmt::Debug for ServerState {
             .field("opened_files", &"<HashSet<Url>>")
             .field("current_language", &"<Option<String>>")
             .field("pending_updates", &"<Vec<PendingUpdate>>")
+            .field("code_actions_enabled", &"<bool>")
             .finish()
     }
 }
