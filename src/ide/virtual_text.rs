@@ -10,6 +10,15 @@ use crate::db::I18nDatabase;
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 
+/// How to truncate translation values for display.
+#[derive(Debug, Clone, Copy)]
+pub enum TruncateOption {
+    /// Truncate by character count.
+    Length(usize),
+    /// Truncate by display width (CJK = 2, ASCII = 1).
+    Width(usize),
+}
+
 /// Translation decoration info for a key usage in the document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranslationDecoration {
@@ -25,8 +34,7 @@ pub fn get_translation_decorations(
     source_file: SourceFile,
     translations: &[Translation],
     language: Option<&str>,
-    max_length: Option<usize>,
-    max_width: usize,
+    truncate: TruncateOption,
     key_separator: &str,
 ) -> Vec<TranslationDecoration> {
     let key_usages = crate::syntax::analyze_source(db, source_file, key_separator.to_string());
@@ -41,7 +49,7 @@ pub fn get_translation_decorations(
         let value = get_translation_value(db, translations, key_text, language);
 
         if let Some(value) = value {
-            let truncated_value = truncate_value(&value, max_length, max_width);
+            let truncated_value = truncate_value(&value, truncate);
             decorations.push(TranslationDecoration {
                 range,
                 key: key_text.clone(),
@@ -65,11 +73,11 @@ fn get_translation_value(
         .find_map(|t| t.keys(db).get(key_text).cloned())
 }
 
-fn truncate_value(value: &str, max_length: Option<usize>, max_width: usize) -> String {
-    max_length.map_or_else(
-        || truncate_by_width(value, max_width),
-        |max_l| truncate_by_length(value, max_l),
-    )
+fn truncate_value(value: &str, truncate: TruncateOption) -> String {
+    match truncate {
+        TruncateOption::Length(max) => truncate_by_length(value, max),
+        TruncateOption::Width(max) => truncate_by_width(value, max),
+    }
 }
 
 fn truncate_by_length(value: &str, max_length: usize) -> String {
@@ -132,26 +140,28 @@ mod tests {
 
     #[rstest]
     fn truncate_value_short_text() {
-        let result = truncate_value("Hello", Some(30), 32);
+        let result = truncate_value("Hello", TruncateOption::Length(30));
         assert_that!(result, eq("Hello"));
     }
 
     #[rstest]
     fn truncate_value_exact_length() {
-        let result = truncate_value("Hello World", Some(11), 32);
+        let result = truncate_value("Hello World", TruncateOption::Length(11));
         assert_that!(result, eq("Hello World"));
     }
 
     #[rstest]
     fn truncate_value_long_text() {
-        let result =
-            truncate_value("This is a very long message that should be truncated", Some(20), 32);
+        let result = truncate_value(
+            "This is a very long message that should be truncated",
+            TruncateOption::Length(20),
+        );
         assert_that!(result, eq("This is a very long…"));
     }
 
     #[rstest]
     fn truncate_value_japanese_text() {
-        let result = truncate_value("これは長いメッセージです", Some(10), 32);
+        let result = truncate_value("これは長いメッセージです", TruncateOption::Length(10));
         assert_that!(result, eq("これは長いメッセー…"));
     }
 
@@ -219,17 +229,17 @@ mod tests {
     }
 
     #[rstest]
-    fn truncate_value_falls_back_to_max_width() {
-        // max_length=None, max_width=8; CJK should be truncated by width
-        let result = truncate_value("こんにちは世界", None, 8);
+    fn truncate_value_width_mode() {
+        // Width mode: CJK should be truncated by display width
+        let result = truncate_value("こんにちは世界", TruncateOption::Width(8));
         // width 14, max_width 8, target 7 → "こんに" = width 6 + "…"
         assert_that!(result, eq("こんに…"));
     }
 
     #[rstest]
-    fn truncate_value_max_length_overrides_max_width() {
-        // max_length=5 takes priority over max_width=32
-        let result = truncate_value("こんにちは世界", Some(5), 32);
+    fn truncate_value_length_mode() {
+        // Length mode: truncate by character count
+        let result = truncate_value("こんにちは世界", TruncateOption::Length(5));
         // 7 chars, max_length 5 → 4 chars + "…"
         assert_that!(result, eq("こんにち…"));
     }
@@ -252,8 +262,7 @@ mod tests {
             source_file,
             &[translation],
             Some("ja"),
-            None,
-            30,
+            TruncateOption::Width(30),
             ".",
         );
 
@@ -283,8 +292,7 @@ mod tests {
             source_file,
             &[translation],
             Some("ja"),
-            Some(10),
-            32,
+            TruncateOption::Length(10),
             ".",
         );
 
@@ -310,8 +318,7 @@ mod tests {
             source_file,
             &[translation],
             Some("fr"),
-            None,
-            30,
+            TruncateOption::Width(30),
             ".",
         );
 
@@ -331,8 +338,14 @@ mod tests {
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
         );
 
-        let decorations =
-            get_translation_decorations(&db, source_file, &[translation], None, None, 30, ".");
+        let decorations = get_translation_decorations(
+            &db,
+            source_file,
+            &[translation],
+            None,
+            TruncateOption::Width(30),
+            ".",
+        );
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].value, eq("Hello"));

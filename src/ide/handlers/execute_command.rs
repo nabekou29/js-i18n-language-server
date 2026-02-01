@@ -423,13 +423,17 @@ async fn handle_get_decorations(
         sorted_languages.first().cloned()
     });
 
+    let truncate = max_length.map_or(
+        crate::ide::virtual_text::TruncateOption::Width(max_width),
+        crate::ide::virtual_text::TruncateOption::Length,
+    );
+
     let decorations = crate::ide::virtual_text::get_translation_decorations(
         &*db,
         source_file,
         &translations,
         language.as_deref(),
-        max_length,
-        max_width,
+        truncate,
         &key_separator,
     );
 
