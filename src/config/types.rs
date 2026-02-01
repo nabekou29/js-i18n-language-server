@@ -95,11 +95,14 @@ pub struct IndexingConfig {
 pub struct VirtualTextConfig {
     /// Max characters before truncation with ellipsis.
     pub max_length: usize,
+    /// Max display width (CJK = 2, ASCII = 1) before truncation.
+    /// When set, takes priority over `max_length`.
+    pub max_width: Option<usize>,
 }
 
 impl Default for VirtualTextConfig {
     fn default() -> Self {
-        Self { max_length: 30 }
+        Self { max_length: 30, max_width: None }
     }
 }
 

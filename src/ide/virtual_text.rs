@@ -26,6 +26,7 @@ pub fn get_translation_decorations(
     translations: &[Translation],
     language: Option<&str>,
     max_length: usize,
+    max_width: Option<usize>,
     key_separator: &str,
 ) -> Vec<TranslationDecoration> {
     let key_usages = crate::syntax::analyze_source(db, source_file, key_separator.to_string());
@@ -40,7 +41,7 @@ pub fn get_translation_decorations(
         let value = get_translation_value(db, translations, key_text, language);
 
         if let Some(value) = value {
-            let truncated_value = truncate_value(&value, max_length);
+            let truncated_value = truncate_value(&value, max_length, max_width);
             decorations.push(TranslationDecoration {
                 range,
                 key: key_text.clone(),
@@ -64,7 +65,14 @@ fn get_translation_value(
         .find_map(|t| t.keys(db).get(key_text).cloned())
 }
 
-fn truncate_value(value: &str, max_length: usize) -> String {
+fn truncate_value(value: &str, max_length: usize, max_width: Option<usize>) -> String {
+    max_width.map_or_else(
+        || truncate_by_length(value, max_length),
+        |max_w| truncate_by_width(value, max_w),
+    )
+}
+
+fn truncate_by_length(value: &str, max_length: usize) -> String {
     let char_count = value.chars().count();
     if char_count <= max_length {
         value.to_string()
@@ -72,6 +80,32 @@ fn truncate_value(value: &str, max_length: usize) -> String {
         let truncated: String = value.chars().take(max_length.saturating_sub(1)).collect();
         format!("{truncated}…")
     }
+}
+
+fn truncate_by_width(value: &str, max_width: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+
+    let total_width: usize = value.chars().filter_map(UnicodeWidthChar::width).sum();
+    if total_width <= max_width {
+        return value.to_string();
+    }
+
+    // Reserve width 1 for ellipsis "…"
+    let target_width = max_width.saturating_sub(1);
+    let mut current_width = 0;
+    let truncated: String = value
+        .chars()
+        .take_while(|c| {
+            let w = UnicodeWidthChar::width(*c).unwrap_or(0);
+            if current_width + w > target_width {
+                return false;
+            }
+            current_width += w;
+            true
+        })
+        .collect();
+
+    format!("{truncated}…")
 }
 
 #[cfg(test)]
@@ -98,26 +132,98 @@ mod tests {
 
     #[rstest]
     fn truncate_value_short_text() {
-        let result = truncate_value("Hello", 30);
+        let result = truncate_value("Hello", 30, None);
         assert_that!(result, eq("Hello"));
     }
 
     #[rstest]
     fn truncate_value_exact_length() {
-        let result = truncate_value("Hello World", 11);
+        let result = truncate_value("Hello World", 11, None);
         assert_that!(result, eq("Hello World"));
     }
 
     #[rstest]
     fn truncate_value_long_text() {
-        let result = truncate_value("This is a very long message that should be truncated", 20);
+        let result =
+            truncate_value("This is a very long message that should be truncated", 20, None);
         assert_that!(result, eq("This is a very long…"));
     }
 
     #[rstest]
     fn truncate_value_japanese_text() {
-        let result = truncate_value("これは長いメッセージです", 10);
+        let result = truncate_value("これは長いメッセージです", 10, None);
         assert_that!(result, eq("これは長いメッセー…"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_ascii_short() {
+        let result = truncate_by_width("Hello", 30);
+        assert_that!(result, eq("Hello"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_ascii_exact() {
+        // "Hello" = width 5
+        let result = truncate_by_width("Hello", 5);
+        assert_that!(result, eq("Hello"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_ascii_truncated() {
+        // "Hello World" = width 11, max_width 8 → 7 chars + "…"
+        let result = truncate_by_width("Hello World", 8);
+        assert_that!(result, eq("Hello W…"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_cjk_fits() {
+        // "こんにちは" = 5 chars × width 2 = width 10
+        let result = truncate_by_width("こんにちは", 10);
+        assert_that!(result, eq("こんにちは"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_cjk_truncated() {
+        // "こんにちは" = width 10, max_width 8 → target 7 → 3 CJK chars (width 6) + "…"
+        let result = truncate_by_width("こんにちは", 8);
+        assert_that!(result, eq("こんに…"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_mixed() {
+        // "Hello世界" = 5 (ASCII) + 4 (CJK) = width 9
+        let result = truncate_by_width("Hello世界", 9);
+        assert_that!(result, eq("Hello世界"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_mixed_truncated() {
+        // "Hello世界test" = 5 + 4 + 4 = width 13, max_width 10 → target 9
+        // "Hello世界" = width 9, fits
+        let result = truncate_by_width("Hello世界test", 10);
+        assert_that!(result, eq("Hello世界…"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_cjk_boundary() {
+        // max_width 7, target 6 → "こんに" = width 6
+        let result = truncate_by_width("こんにちは", 7);
+        assert_that!(result, eq("こんに…"));
+    }
+
+    #[rstest]
+    fn truncate_by_width_cjk_odd_boundary() {
+        // max_width 6, target 5 → "こん" = width 4 (next CJK would be 6, exceeds 5)
+        let result = truncate_by_width("こんにちは", 6);
+        assert_that!(result, eq("こん…"));
+    }
+
+    #[rstest]
+    fn truncate_value_max_width_overrides_max_length() {
+        // max_length=30 but max_width=8; CJK should be truncated by width
+        let result = truncate_value("こんにちは世界", 30, Some(8));
+        // width 14, max_width 8, target 7 → "こんに" = width 6 + "…"
+        assert_that!(result, eq("こんに…"));
     }
 
     #[rstest]
@@ -133,8 +239,15 @@ mod tests {
             HashMap::from([("common.hello".to_string(), "こんにちは".to_string())]),
         );
 
-        let decorations =
-            get_translation_decorations(&db, source_file, &[translation], Some("ja"), 30, ".");
+        let decorations = get_translation_decorations(
+            &db,
+            source_file,
+            &[translation],
+            Some("ja"),
+            30,
+            None,
+            ".",
+        );
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].key, eq("common.hello"));
@@ -157,8 +270,15 @@ mod tests {
             )]),
         );
 
-        let decorations =
-            get_translation_decorations(&db, source_file, &[translation], Some("ja"), 10, ".");
+        let decorations = get_translation_decorations(
+            &db,
+            source_file,
+            &[translation],
+            Some("ja"),
+            10,
+            None,
+            ".",
+        );
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].value, eq("これは非常に長いメ…"));
@@ -177,8 +297,15 @@ mod tests {
             HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
         );
 
-        let decorations =
-            get_translation_decorations(&db, source_file, &[translation], Some("fr"), 30, ".");
+        let decorations = get_translation_decorations(
+            &db,
+            source_file,
+            &[translation],
+            Some("fr"),
+            30,
+            None,
+            ".",
+        );
 
         assert_that!(decorations, is_empty());
     }
@@ -197,7 +324,7 @@ mod tests {
         );
 
         let decorations =
-            get_translation_decorations(&db, source_file, &[translation], None, 30, ".");
+            get_translation_decorations(&db, source_file, &[translation], None, 30, None, ".");
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].value, eq("Hello"));

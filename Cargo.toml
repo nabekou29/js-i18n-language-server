@@ -27,6 +27,7 @@ tree-sitter-javascript = "0.25"
 tree-sitter-json = "0.24"
 tree-sitter-typescript = "0.23"
 jsonc-parser = { version = "0.28", features = ["cst"] }
+unicode-width = "0.2.2"
 
 [dev-dependencies]
 googletest = "0.14"

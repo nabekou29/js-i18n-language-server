@@ -362,6 +362,7 @@ struct GetDecorationsArgs {
     uri: String,
     language: Option<String>,
     max_length: Option<usize>,
+    max_width: Option<usize>,
 }
 
 /// Returns translation decorations for editor extensions to display inline translations.
@@ -395,6 +396,7 @@ async fn handle_get_decorations(
     let config = backend.config_manager.lock().await;
     let settings = config.get_settings();
     let max_length = parsed_args.max_length.unwrap_or(settings.virtual_text.max_length);
+    let max_width = parsed_args.max_width.or(settings.virtual_text.max_width);
     let primary_languages = settings.primary_languages.clone();
     let key_separator = settings.key_separator.clone();
     drop(config);
@@ -427,6 +429,7 @@ async fn handle_get_decorations(
         &translations,
         language.as_deref(),
         max_length,
+        max_width,
         &key_separator,
     );
 
