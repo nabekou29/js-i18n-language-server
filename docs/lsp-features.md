@@ -15,10 +15,10 @@
 
 ### `i18n.editTranslation`
 
-Open translation file and position cursor at the key's value. If the key doesn't exist, it will be inserted.
+Edit a translation value directly. If the key doesn't exist, it will be inserted.
 
 ```typescript
-arguments: [lang: string, key: string]
+arguments: [{ lang: string, key: string, value: string }]
 ```
 
 ### `i18n.deleteUnusedKeys`

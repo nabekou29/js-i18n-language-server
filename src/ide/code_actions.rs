@@ -8,22 +8,17 @@ use jsonc_parser::cst::{
     CstRootNode,
 };
 use tower_lsp::lsp_types::{
-    CodeActionOrCommand,
-    Command,
     Diagnostic,
     NumberOrString,
-    Position,
-    Range,
 };
 
 use crate::db::I18nDatabase;
 use crate::input::translation::Translation;
 
-/// Result of CST-based key insertion, preserving original formatting.
+/// Result of CST-based key insertion or update, preserving original formatting.
 #[derive(Debug, Clone)]
-pub struct KeyInsertionResult {
+pub struct KeyEditResult {
     pub new_text: String,
-    pub cursor_range: Range,
 }
 
 /// Result of CST-based key deletion, preserving original formatting.
@@ -51,66 +46,27 @@ pub fn extract_missing_languages(diagnostics: &[Diagnostic]) -> HashSet<String> 
         .collect()
 }
 
-/// Generate code actions for all languages, sorted by priority (primary > missing > others).
-#[must_use]
-#[allow(clippy::implicit_hasher)]
-pub fn generate_code_actions(
-    key: &str,
-    all_languages: &[String],
-    missing_languages: &HashSet<String>,
-    primary_language: Option<&str>,
-) -> Vec<CodeActionOrCommand> {
-    let mut languages: Vec<(String, bool, bool)> = all_languages
-        .iter()
-        .map(|lang| {
-            let is_primary = primary_language == Some(lang.as_str());
-            let is_missing = missing_languages.contains(lang);
-            (lang.clone(), is_primary, is_missing)
-        })
-        .collect();
-
-    // Sort: primary > missing > others (tuple comparison in descending order)
-    languages.sort_by_key(|item| std::cmp::Reverse((item.1, item.2)));
-
-    languages
-        .into_iter()
-        .map(|(lang, _, is_missing)| {
-            let title = if is_missing {
-                format!("Add translation for {lang}")
-            } else {
-                format!("Edit translation for {lang}")
-            };
-            CodeActionOrCommand::Command(Command {
-                title,
-                command: "i18n.editTranslation".to_string(),
-                arguments: Some(vec![
-                    serde_json::Value::String(lang),
-                    serde_json::Value::String(key.to_string()),
-                ]),
-            })
-        })
-        .collect()
-}
-
-/// Insert a key into a JSON translation file using CST to preserve formatting.
+/// Insert a key with a value into a JSON translation file using CST to preserve formatting.
 /// Supports nested keys (e.g., `common.hello`).
 #[must_use]
 pub fn insert_key_to_json(
     db: &dyn I18nDatabase,
     translation: &Translation,
     key: &str,
+    value: &str,
     separator: &str,
-) -> Option<KeyInsertionResult> {
+) -> Option<KeyEditResult> {
     let json_text = translation.json_text(db);
-    insert_key_to_json_text(json_text, key, separator)
+    insert_key_to_json_text(json_text, key, value, separator)
 }
 
 #[must_use]
 pub fn insert_key_to_json_text(
     json_text: &str,
     key: &str,
+    value: &str,
     separator: &str,
-) -> Option<KeyInsertionResult> {
+) -> Option<KeyEditResult> {
     let root = CstRootNode::parse(json_text, &ParseOptions::default()).ok()?;
     let root_obj = root.object_value_or_set();
 
@@ -119,38 +75,40 @@ pub fn insert_key_to_json_text(
     let mut current_obj = root_obj;
     for (i, part) in key_parts.iter().enumerate() {
         if i == key_parts.len() - 1 {
-            current_obj.append(part, CstInputValue::String(String::new()));
+            current_obj.append(part, CstInputValue::String(value.to_string()));
         } else {
             current_obj = current_obj.object_value_or_set(part);
         }
     }
 
-    let new_text = root.to_string();
-    let cursor_range = find_cursor_position(&new_text, key, separator)?;
-
-    Some(KeyInsertionResult { new_text, cursor_range })
+    Some(KeyEditResult { new_text: root.to_string() })
 }
 
-/// Find cursor position inside the newly added empty string value.
-#[allow(clippy::cast_possible_truncation)]
-fn find_cursor_position(json_text: &str, key: &str, separator: &str) -> Option<Range> {
-    let leaf_key = key.split(separator).last()?;
-    let pattern = format!("\"{leaf_key}\": \"\"");
+/// Update an existing key's value in a JSON translation file using CST to preserve formatting.
+/// Supports nested keys (e.g., `common.hello`).
+#[must_use]
+pub fn update_key_in_json_text(
+    json_text: &str,
+    key: &str,
+    value: &str,
+    separator: &str,
+) -> Option<KeyEditResult> {
+    let root = CstRootNode::parse(json_text, &ParseOptions::default()).ok()?;
+    let root_obj = root.object_value()?;
 
-    // Search from end since newly added keys appear at the end
-    let pos = json_text.rfind(&pattern)?;
+    let key_parts: Vec<&str> = key.split(separator).collect();
 
-    let before = &json_text[..pos];
-    let line = before.matches('\n').count() as u32;
-    let last_newline = before.rfind('\n').map_or(0, |i| i + 1);
+    let mut current_obj = root_obj;
+    for (i, part) in key_parts.iter().enumerate() {
+        if i == key_parts.len() - 1 {
+            let prop = current_obj.get(part)?;
+            prop.set_value(CstInputValue::String(value.to_string()));
+        } else {
+            current_obj = current_obj.object_value(part)?;
+        }
+    }
 
-    // Cursor position inside `""`: offset = 1(") + leaf_key.len() + 1(") + 1(:) + 1( ) + 1(") = leaf_key.len() + 5
-    let col_start = (pos - last_newline + leaf_key.len() + 5) as u32;
-
-    Some(Range {
-        start: Position { line, character: col_start },
-        end: Position { line, character: col_start },
-    })
+    Some(KeyEditResult { new_text: root.to_string() })
 }
 
 /// Delete keys from JSON using CST to preserve formatting.
@@ -280,76 +238,16 @@ mod tests {
     }
 
     #[googletest::test]
-    fn test_generate_code_actions_basic() {
-        let all_languages = vec!["en".to_string(), "ja".to_string()];
-        let missing_languages: HashSet<String> = HashSet::new();
-
-        let actions =
-            generate_code_actions("common.hello", &all_languages, &missing_languages, None);
-
-        expect_that!(actions, len(eq(2)));
-    }
-
-    #[googletest::test]
-    fn test_generate_code_actions_with_primary() {
-        let all_languages = vec!["en".to_string(), "ja".to_string(), "zh".to_string()];
-        let missing_languages: HashSet<String> = HashSet::new();
-
-        let actions =
-            generate_code_actions("common.hello", &all_languages, &missing_languages, Some("ja"));
-
-        expect_that!(actions, len(eq(3)));
-
-        if let CodeActionOrCommand::Command(cmd) = &actions[0] {
-            expect_that!(cmd.title, contains_substring("ja"));
-        }
-    }
-
-    #[googletest::test]
-    fn test_generate_code_actions_with_missing() {
-        let all_languages = vec!["en".to_string(), "ja".to_string(), "zh".to_string()];
-        let missing_languages: HashSet<String> = ["zh"].iter().map(|s| s.to_string()).collect();
-
-        let actions =
-            generate_code_actions("common.hello", &all_languages, &missing_languages, None);
-
-        expect_that!(actions, len(eq(3)));
-
-        if let CodeActionOrCommand::Command(cmd) = &actions[0] {
-            expect_that!(cmd.title, contains_substring("zh"));
-        }
-    }
-
-    #[googletest::test]
-    fn test_generate_code_actions_priority_order() {
-        let all_languages = vec!["en".to_string(), "ja".to_string(), "zh".to_string()];
-        let missing_languages: HashSet<String> = ["zh"].iter().map(|s| s.to_string()).collect();
-
-        let actions =
-            generate_code_actions("common.hello", &all_languages, &missing_languages, Some("ja"));
-
-        if let CodeActionOrCommand::Command(cmd) = &actions[0] {
-            expect_that!(cmd.title, contains_substring("ja"));
-        }
-        if let CodeActionOrCommand::Command(cmd) = &actions[1] {
-            expect_that!(cmd.title, contains_substring("zh"));
-        }
-        if let CodeActionOrCommand::Command(cmd) = &actions[2] {
-            expect_that!(cmd.title, contains_substring("en"));
-        }
-    }
-
-    #[googletest::test]
     fn test_insert_key_flat() {
         let json = r#"{
   "hello": "world"
 }"#;
 
-        let result =
-            insert_key_to_json_text(json, "goodbye", ".").expect("insertion should succeed");
+        let result = insert_key_to_json_text(json, "goodbye", "さようなら", ".")
+            .expect("insertion should succeed");
 
         expect_that!(result.new_text, contains_substring("\"goodbye\""));
-        expect_that!(result.new_text, contains_substring("\"goodbye\": \"\""));
+        expect_that!(result.new_text, contains_substring("\"goodbye\": \"さようなら\""));
         expect_that!(result.new_text, contains_substring("\"hello\": \"world\""));
     }
 
@@ -359,12 +257,12 @@ mod tests {
   "hello": "world"
 }"#;
 
-        let result = insert_key_to_json_text(json, "common.greeting", ".")
+        let result = insert_key_to_json_text(json, "common.greeting", "こんにちは", ".")
             .expect("insertion should succeed");
 
         expect_that!(result.new_text, contains_substring("\"common\""));
         expect_that!(result.new_text, contains_substring("\"greeting\""));
-        expect_that!(result.new_text, contains_substring("\"greeting\": \"\""));
+        expect_that!(result.new_text, contains_substring("\"greeting\": \"こんにちは\""));
     }
 
     #[googletest::test]
@@ -375,10 +273,10 @@ mod tests {
   }
 }"#;
 
-        let result =
-            insert_key_to_json_text(json, "common.goodbye", ".").expect("insertion should succeed");
+        let result = insert_key_to_json_text(json, "common.goodbye", "さようなら", ".")
+            .expect("insertion should succeed");
 
-        expect_that!(result.new_text, contains_substring("\"goodbye\": \"\""));
+        expect_that!(result.new_text, contains_substring("\"goodbye\": \"さようなら\""));
         expect_that!(result.new_text, contains_substring("\"hello\": \"こんにちは\""));
     }
 
@@ -388,19 +286,48 @@ mod tests {
     "existing": "value"
 }"#;
 
-        let result = insert_key_to_json_text(json, "new", ".").expect("insertion should succeed");
+        let result = insert_key_to_json_text(json, "new", "new_value", ".")
+            .expect("insertion should succeed");
 
         expect_that!(result.new_text, contains_substring("    \"existing\""));
     }
 
     #[googletest::test]
-    fn test_insert_key_cursor_position() {
-        let json = r#"{"hello": "world"}"#;
+    fn test_update_key_value() {
+        let json = r#"{
+  "hello": "world"
+}"#;
 
-        let result = insert_key_to_json_text(json, "new", ".").expect("insertion should succeed");
+        let result =
+            update_key_in_json_text(json, "hello", "updated", ".").expect("update should succeed");
 
-        expect_that!(result.cursor_range.start.line, ge(0));
-        expect_that!(result.cursor_range.start.character, ge(0));
+        expect_that!(result.new_text, contains_substring("\"hello\": \"updated\""));
+    }
+
+    #[googletest::test]
+    fn test_update_nested_key_value() {
+        let json = r#"{
+  "common": {
+    "hello": "world"
+  }
+}"#;
+
+        let result = update_key_in_json_text(json, "common.hello", "こんにちは", ".")
+            .expect("update should succeed");
+
+        expect_that!(result.new_text, contains_substring("\"hello\": \"こんにちは\""));
+        expect_that!(result.new_text, contains_substring("\"common\""));
+    }
+
+    #[googletest::test]
+    fn test_update_nonexistent_key_returns_none() {
+        let json = r#"{
+  "hello": "world"
+}"#;
+
+        let result = update_key_in_json_text(json, "nonexistent", "value", ".");
+
+        expect_that!(result, none());
     }
 
     #[googletest::test]

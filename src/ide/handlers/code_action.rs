@@ -10,6 +10,7 @@ use tower_lsp::lsp_types::{
     CodeActionParams,
     CodeActionResponse,
     Command,
+    NumberOrString,
 };
 
 use super::super::backend::Backend;
@@ -19,10 +20,9 @@ pub async fn handle_code_action(
     params: CodeActionParams,
 ) -> Result<Option<CodeActionResponse>> {
     let uri = &params.text_document.uri;
-    let position = params.range.start;
     let diagnostics = &params.context.diagnostics;
 
-    tracing::debug!(uri = %uri, line = position.line, character = position.character, "Code Action request");
+    tracing::debug!(uri = %uri, "Code Action request");
 
     if !backend.wait_for_translations().await {
         tracing::debug!("Code Action request - translations not indexed yet");
@@ -46,47 +46,8 @@ pub async fn handle_code_action(
             .await;
     }
 
-    let source_position = crate::types::SourcePosition::from(position);
-
-    let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
-        tracing::debug!("No translation key found at position");
-        return Ok(Some(vec![]));
-    };
-
-    tracing::debug!(key = %key_text, "Found translation key for code action");
-
-    let current_language = backend.state.current_language.lock().await.clone();
-    let primary_languages =
-        backend.config_manager.lock().await.get_settings().primary_languages.clone();
-    let sorted_languages = {
-        let db = backend.state.db.lock().await;
-        let translations = backend.state.translations.lock().await;
-        crate::ide::backend::collect_sorted_languages(
-            &*db,
-            &translations,
-            current_language.as_deref(),
-            primary_languages.as_deref(),
-        )
-    };
-
-    if sorted_languages.is_empty() {
-        tracing::debug!("No translations available");
-        return Ok(Some(vec![]));
-    }
-
-    let missing_languages = crate::ide::code_actions::extract_missing_languages(diagnostics);
-    let effective_language = sorted_languages.first().cloned();
-
-    let actions = crate::ide::code_actions::generate_code_actions(
-        &key_text,
-        &sorted_languages,
-        &missing_languages,
-        effective_language.as_deref(),
-    );
-
-    tracing::debug!("Generated {} code actions for key: {}", actions.len(), key_text);
-
-    Ok(Some(actions))
+    // Source files: no code actions for now
+    Ok(Some(vec![]))
 }
 
 async fn generate_translation_file_code_actions(
@@ -148,9 +109,9 @@ async fn generate_translation_file_code_actions(
     let unused_key_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().is_some_and(|c| {
-                matches!(c, tower_lsp::lsp_types::NumberOrString::String(s) if s == "unused-translation-key")
-            })
+            d.code.as_ref().is_some_and(
+                |c| matches!(c, NumberOrString::String(s) if s == "unused-translation-key"),
+            )
         })
         .cloned()
         .collect();

@@ -10,7 +10,6 @@ use tower_lsp::lsp_types::{
     MessageType,
     Position,
     Range,
-    ShowDocumentParams,
     TextEdit,
     Url,
     WorkspaceEdit,
@@ -76,25 +75,39 @@ pub async fn handle_execute_command(
     }
 }
 
-/// Open translation file and position cursor at the key's value.
-///
-/// If the key doesn't exist, inserts a placeholder and opens the file.
-/// If the key exists, opens the file and moves cursor to value position.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EditTranslationArgs {
+    lang: String,
+    key: String,
+    value: String,
+}
+
+/// Edit a translation value directly. Inserts the key if it doesn't exist.
 async fn handle_edit_translation(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
     let args = arguments.unwrap_or_default();
 
-    let lang = args.first().and_then(|v| v.as_str());
-    let key = args.get(1).and_then(|v| v.as_str());
-
-    let (Some(lang), Some(key)) = (lang, key) else {
-        tracing::warn!("Invalid arguments for i18n.editTranslation");
+    let Some(first_arg) = args.first().cloned() else {
+        tracing::warn!("Missing arguments for i18n.editTranslation");
         return Ok(None);
     };
 
-    tracing::debug!(lang = %lang, key = %key, "Executing i18n.editTranslation");
+    let parsed_args: EditTranslationArgs = match serde_json::from_value(first_arg) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::warn!("Invalid arguments for i18n.editTranslation: {e}");
+            return Ok(None);
+        }
+    };
+
+    tracing::debug!(
+        lang = %parsed_args.lang,
+        key = %parsed_args.key,
+        "Executing i18n.editTranslation"
+    );
 
     let key_separator = {
         let config = backend.config_manager.lock().await;
@@ -104,63 +117,58 @@ async fn handle_edit_translation(
     let db = backend.state.db.lock().await;
     let translations = backend.state.translations.lock().await;
 
-    let Some(translation) = translations.iter().find(|t| t.language(&*db) == lang) else {
+    let Some(translation) = translations.iter().find(|t| t.language(&*db) == parsed_args.lang)
+    else {
         backend
             .client
-            .log_message(MessageType::WARNING, format!("Translation file not found for: {lang}"))
+            .log_message(
+                MessageType::WARNING,
+                format!("Translation file not found for: {}", parsed_args.lang),
+            )
             .await;
         return Ok(None);
     };
 
     let file_path = translation.file_path(&*db).clone();
-    let key_exists = translation.keys(&*db).contains_key(key);
+    let key_exists = translation.keys(&*db).contains_key(parsed_args.key.as_str());
+    let original_text = translation.json_text(&*db).clone();
 
-    let (insert_result, original_text, cursor_range) = if key_exists {
-        // Position cursor before closing quote
-        let range = translation.value_ranges(&*db).get(key).map(|r| {
-            // r.end points after the closing `"`, so subtract 1 to position before it
-            let cursor_char = r.end.character.saturating_sub(1);
-            Range {
-                start: Position { line: r.end.line, character: cursor_char },
-                end: Position { line: r.end.line, character: cursor_char },
-            }
-        });
-        (None, None, range)
+    let result = if key_exists {
+        crate::ide::code_actions::update_key_in_json_text(
+            &original_text,
+            &parsed_args.key,
+            &parsed_args.value,
+            &key_separator,
+        )
     } else {
-        // Key doesn't exist - insert via CST manipulation
-        let original = translation.json_text(&*db).clone();
-        let result =
-            crate::ide::code_actions::insert_key_to_json(&*db, translation, key, &key_separator);
-        let cursor = result.as_ref().map(|r| r.cursor_range);
-        (result, Some(original), cursor)
+        crate::ide::code_actions::insert_key_to_json(
+            &*db,
+            translation,
+            &parsed_args.key,
+            &parsed_args.value,
+            &key_separator,
+        )
     };
 
     drop(translations);
     drop(db);
+
+    let Some(result) = result else {
+        tracing::error!("Failed to edit translation key: {}", parsed_args.key);
+        return Ok(None);
+    };
 
     let Ok(uri) = Url::from_file_path(&file_path) else {
         tracing::error!("Failed to convert file path to URI: {}", file_path);
         return Ok(None);
     };
 
-    if let (Some(result), Some(original)) = (insert_result, original_text) {
-        let text_edit = create_full_file_text_edit(&original, result.new_text);
-        apply_single_file_edit(backend, uri.clone(), text_edit).await;
-    }
+    let text_edit = create_full_file_text_edit(&original_text, result.new_text);
+    apply_single_file_edit(backend, uri, text_edit).await;
 
-    let show_result = backend
-        .client
-        .show_document(ShowDocumentParams {
-            uri,
-            external: Some(false),
-            take_focus: Some(true),
-            selection: cursor_range,
-        })
-        .await;
-
-    if let Err(e) = show_result {
-        tracing::error!("Failed to show document: {}", e);
-    }
+    backend.reload_translation_file(std::path::Path::new(&file_path)).await;
+    backend.send_diagnostics_to_opened_files().await;
+    backend.send_unused_key_diagnostics().await;
 
     Ok(None)
 }
