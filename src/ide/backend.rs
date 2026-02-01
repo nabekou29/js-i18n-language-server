@@ -140,6 +140,32 @@ impl Backend {
             .await;
     }
 
+    /// Returns the configured key separator (e.g. `"."`).
+    pub(crate) async fn get_key_separator(&self) -> String {
+        self.config_manager.lock().await.get_settings().key_separator.clone()
+    }
+
+    /// Collects all translation keys referenced in source files.
+    pub(crate) async fn collect_used_keys(
+        &self,
+        key_separator: &str,
+    ) -> std::collections::HashSet<String> {
+        let db = self.state.db.lock().await;
+        let source_files = self.state.source_files.lock().await;
+        let source_file_vec: Vec<_> = source_files.values().copied().collect();
+        drop(source_files);
+
+        let mut keys = std::collections::HashSet::new();
+        for source_file in source_file_vec {
+            let key_usages =
+                crate::syntax::analyze_source(&*db, source_file, key_separator.to_owned());
+            for usage in key_usages {
+                keys.insert(usage.key(&*db).text(&*db).clone());
+            }
+        }
+        keys
+    }
+
     /// Notifies the client that decorations should be refreshed.
     pub(crate) async fn send_decorations_changed(&self) {
         self.client.send_notification::<DecorationsChanged>(()).await;
@@ -831,33 +857,6 @@ impl LanguageServer for Backend {
     ) -> Result<Option<serde_json::Value>> {
         handlers::execute_command::handle_execute_command(self, params).await
     }
-}
-
-/// Resolves effective language.
-///
-/// Priority:
-/// 1. `current_language` (runtime state)
-/// 2. First match in `primary_languages`
-/// 3. First available language
-#[must_use]
-pub fn resolve_effective_language(
-    current_language: Option<&str>,
-    primary_languages: Option<&[String]>,
-    available_languages: &[String],
-) -> Option<String> {
-    if let Some(current) = current_language {
-        return Some(current.to_string());
-    }
-
-    if let Some(primaries) = primary_languages {
-        for primary in primaries {
-            if available_languages.contains(primary) {
-                return Some(primary.clone());
-            }
-        }
-    }
-
-    available_languages.first().cloned()
 }
 
 /// Collects and sorts languages from translations.

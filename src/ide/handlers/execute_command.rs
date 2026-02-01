@@ -17,6 +17,22 @@ use tower_lsp::lsp_types::{
 
 use super::super::backend::Backend;
 
+/// Parse the first argument from a command's argument list.
+fn parse_command_args<T: serde::de::DeserializeOwned>(
+    arguments: Option<Vec<Value>>,
+    command_name: &str,
+) -> Option<T> {
+    let first_arg = arguments.unwrap_or_default().into_iter().next().or_else(|| {
+        tracing::warn!("Missing arguments for {command_name}");
+        None
+    })?;
+    serde_json::from_value(first_arg)
+        .map_err(|e| {
+            tracing::warn!("Invalid arguments for {command_name}: {e}");
+        })
+        .ok()
+}
+
 /// Create a `TextEdit` that replaces the entire file content
 #[allow(clippy::cast_possible_truncation)] // File content won't exceed 4 billion lines
 fn create_full_file_text_edit(original_text: &str, new_text: String) -> TextEdit {
@@ -93,19 +109,10 @@ async fn handle_edit_translation(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
-    let args = arguments.unwrap_or_default();
-
-    let Some(first_arg) = args.first().cloned() else {
-        tracing::warn!("Missing arguments for i18n.editTranslation");
+    let Some(parsed_args) =
+        parse_command_args::<EditTranslationArgs>(arguments, "i18n.editTranslation")
+    else {
         return Ok(None);
-    };
-
-    let parsed_args: EditTranslationArgs = match serde_json::from_value(first_arg) {
-        Ok(args) => args,
-        Err(e) => {
-            tracing::warn!("Invalid arguments for i18n.editTranslation: {e}");
-            return Ok(None);
-        }
     };
 
     tracing::debug!(
@@ -114,10 +121,7 @@ async fn handle_edit_translation(
         "Executing i18n.editTranslation"
     );
 
-    let key_separator = {
-        let config = backend.config_manager.lock().await;
-        config.get_settings().key_separator.clone()
-    };
+    let key_separator = backend.get_key_separator().await;
 
     let db = backend.state.db.lock().await;
     let translations = backend.state.translations.lock().await;
@@ -189,21 +193,10 @@ async fn handle_delete_unused_keys(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
-    use std::collections::HashSet;
-
-    let args = arguments.unwrap_or_default();
-
-    let Some(first_arg) = args.first().cloned() else {
-        tracing::warn!("Missing arguments for i18n.deleteUnusedKeys");
+    let Some(parsed_args) =
+        parse_command_args::<DeleteUnusedKeysArgs>(arguments, "i18n.deleteUnusedKeys")
+    else {
         return Ok(None);
-    };
-
-    let parsed_args: DeleteUnusedKeysArgs = match serde_json::from_value(first_arg) {
-        Ok(args) => args,
-        Err(e) => {
-            tracing::warn!("Invalid arguments for i18n.deleteUnusedKeys: {e}");
-            return Ok(None);
-        }
     };
 
     tracing::debug!(uri = %parsed_args.uri, "Executing i18n.deleteUnusedKeys");
@@ -218,27 +211,8 @@ async fn handle_delete_unused_keys(
         return Ok(None);
     };
 
-    let key_separator = {
-        let config = backend.config_manager.lock().await;
-        config.get_settings().key_separator.clone()
-    };
-
-    let used_keys: HashSet<String> = {
-        let db = backend.state.db.lock().await;
-        let source_files = backend.state.source_files.lock().await;
-        let source_file_vec: Vec<_> = source_files.values().copied().collect();
-        drop(source_files);
-
-        let mut keys = HashSet::new();
-        for source_file in source_file_vec {
-            let key_usages =
-                crate::syntax::analyze_source(&*db, source_file, key_separator.clone());
-            for usage in key_usages {
-                keys.insert(usage.key(&*db).text(&*db).clone());
-            }
-        }
-        keys
-    };
+    let key_separator = backend.get_key_separator().await;
+    let used_keys = backend.collect_used_keys(&key_separator).await;
 
     let (json_text, unused_keys) = {
         let db = backend.state.db.lock().await;
@@ -317,19 +291,10 @@ async fn handle_get_key_at_position(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
-    let args = arguments.unwrap_or_default();
-
-    let Some(first_arg) = args.first().cloned() else {
-        tracing::warn!("Missing arguments for i18n.getKeyAtPosition");
+    let Some(parsed_args) =
+        parse_command_args::<GetKeyAtPositionArgs>(arguments, "i18n.getKeyAtPosition")
+    else {
         return Ok(None);
-    };
-
-    let parsed_args: GetKeyAtPositionArgs = match serde_json::from_value(first_arg) {
-        Ok(args) => args,
-        Err(e) => {
-            tracing::warn!("Invalid arguments for i18n.getKeyAtPosition: {e}");
-            return Ok(None);
-        }
     };
 
     tracing::debug!(
@@ -367,19 +332,10 @@ async fn handle_get_translation_value(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
-    let args = arguments.unwrap_or_default();
-
-    let Some(first_arg) = args.first().cloned() else {
-        tracing::warn!("Missing arguments for i18n.getTranslationValue");
+    let Some(parsed_args) =
+        parse_command_args::<GetTranslationValueArgs>(arguments, "i18n.getTranslationValue")
+    else {
         return Ok(None);
-    };
-
-    let parsed_args: GetTranslationValueArgs = match serde_json::from_value(first_arg) {
-        Ok(args) => args,
-        Err(e) => {
-            tracing::warn!("Invalid arguments for i18n.getTranslationValue: {e}");
-            return Ok(None);
-        }
     };
 
     tracing::debug!(
@@ -389,8 +345,7 @@ async fn handle_get_translation_value(
     );
 
     let value = {
-        let db = backend.state.db.lock().await;
-        let translations = backend.state.translations.lock().await;
+        let (db, translations) = backend.state.lock_db_and_translations().await;
 
         translations
             .iter()
@@ -414,19 +369,10 @@ async fn handle_get_decorations(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
-    let args = arguments.unwrap_or_default();
-
-    let Some(first_arg) = args.first().cloned() else {
-        tracing::warn!("Missing arguments for i18n.getDecorations");
+    let Some(parsed_args) =
+        parse_command_args::<GetDecorationsArgs>(arguments, "i18n.getDecorations")
+    else {
         return Ok(Some(serde_json::json!([])));
-    };
-
-    let parsed_args: GetDecorationsArgs = match serde_json::from_value(first_arg) {
-        Ok(args) => args,
-        Err(e) => {
-            tracing::warn!("Invalid arguments for i18n.getDecorations: {}", e);
-            return Ok(Some(serde_json::json!([])));
-        }
     };
 
     tracing::debug!(
@@ -491,7 +437,7 @@ async fn handle_get_decorations(
     match serde_json::to_value(&decorations) {
         Ok(value) => Ok(Some(value)),
         Err(e) => {
-            tracing::error!("Failed to serialize decorations: {}", e);
+            tracing::error!("Failed to serialize decorations: {e}");
             Ok(Some(serde_json::json!([])))
         }
     }
@@ -510,8 +456,7 @@ async fn handle_get_current_language(backend: &Backend) -> Result<Option<Value>>
     let language = if let Some(lang) = current_language {
         Some(lang)
     } else {
-        let db = backend.state.db.lock().await;
-        let translations = backend.state.translations.lock().await;
+        let (db, translations) = backend.state.lock_db_and_translations().await;
         crate::ide::backend::collect_sorted_languages(
             &*db,
             &translations,
@@ -538,20 +483,9 @@ async fn handle_set_current_language(
     backend: &Backend,
     arguments: Option<Vec<Value>>,
 ) -> Result<Option<Value>> {
-    let args = arguments.unwrap_or_default();
-
-    let parsed_args: SetCurrentLanguageArgs = if let Some(first_arg) = args.first().cloned() {
-        match serde_json::from_value(first_arg) {
-            Ok(args) => args,
-            Err(e) => {
-                tracing::warn!("Invalid arguments for i18n.setCurrentLanguage: {}", e);
-                return Ok(None);
-            }
-        }
-    } else {
-        // No arguments means reset to default
-        SetCurrentLanguageArgs { language: None }
-    };
+    let parsed_args: SetCurrentLanguageArgs =
+        parse_command_args(arguments, "i18n.setCurrentLanguage")
+            .unwrap_or(SetCurrentLanguageArgs { language: None });
 
     tracing::debug!(
         language = ?parsed_args.language,

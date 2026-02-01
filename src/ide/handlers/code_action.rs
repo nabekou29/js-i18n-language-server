@@ -98,29 +98,8 @@ async fn generate_translation_file_code_actions(
     file_path: &str,
     diagnostics: &[tower_lsp::lsp_types::Diagnostic],
 ) -> Result<Option<CodeActionResponse>> {
-    use std::collections::HashSet;
-
-    let key_separator = {
-        let config = backend.config_manager.lock().await;
-        config.get_settings().key_separator.clone()
-    };
-
-    let used_keys: HashSet<String> = {
-        let db = backend.state.db.lock().await;
-        let source_files = backend.state.source_files.lock().await;
-        let source_file_vec: Vec<_> = source_files.values().copied().collect();
-        drop(source_files);
-
-        let mut keys = HashSet::new();
-        for source_file in source_file_vec {
-            let key_usages =
-                crate::syntax::analyze_source(&*db, source_file, key_separator.clone());
-            for usage in key_usages {
-                keys.insert(usage.key(&*db).text(&*db).clone());
-            }
-        }
-        keys
-    };
+    let key_separator = backend.get_key_separator().await;
+    let used_keys = backend.collect_used_keys(&key_separator).await;
 
     let unused_key_count = {
         let db = backend.state.db.lock().await;
