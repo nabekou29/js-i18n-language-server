@@ -28,8 +28,19 @@ use tower_lsp::lsp_types::{
     WorkDoneProgressEnd,
     WorkDoneProgressReport,
     WorkspaceFolder,
-    notification::Progress,
+    notification::{
+        Notification,
+        Progress,
+    },
 };
+
+/// Custom notification sent when decorations need refreshing.
+pub(crate) struct DecorationsChanged;
+
+impl Notification for DecorationsChanged {
+    type Params = ();
+    const METHOD: &'static str = "i18n/decorationsChanged";
+}
 use tower_lsp::{
     Client,
     LanguageServer,
@@ -127,6 +138,11 @@ impl Backend {
                 })),
             })
             .await;
+    }
+
+    /// Notifies the client that decorations should be refreshed.
+    pub(crate) async fn send_decorations_changed(&self) {
+        self.client.send_notification::<DecorationsChanged>(()).await;
     }
 
     /// Gets translation key text at cursor position from `SourceFile` or `Translation`.
@@ -442,6 +458,7 @@ impl Backend {
                     match index_result {
                         Ok(()) => {
                             self.send_progress_end(&token, "Reindexing complete").await;
+                            self.send_decorations_changed().await;
                             tracing::info!("Workspace reindex complete");
                         }
                         Err(error) => {

@@ -85,5 +85,6 @@ pub async fn handle_did_change_watched_files(
     if translations_changed {
         backend.send_diagnostics_to_opened_files().await;
         backend.send_unused_key_diagnostics().await;
+        backend.send_decorations_changed().await;
     }
 }

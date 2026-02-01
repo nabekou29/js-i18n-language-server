@@ -22,6 +22,7 @@ pub async fn handle_did_open(backend: &Backend, params: DidOpenTextDocumentParam
     }
 
     backend.update_and_diagnose(uri, text, true).await;
+    backend.send_decorations_changed().await;
 }
 
 pub async fn handle_did_change(backend: &Backend, params: DidChangeTextDocumentParams) {
@@ -38,10 +39,12 @@ pub async fn handle_did_change(backend: &Backend, params: DidChangeTextDocumentP
     {
         backend.update_translation_from_content(&file_path, &new_content).await;
         backend.send_diagnostics_to_opened_files().await;
+        backend.send_decorations_changed().await;
         return;
     }
 
     backend.update_and_diagnose(uri, new_content, false).await;
+    backend.send_decorations_changed().await;
 }
 
 pub async fn handle_did_save(backend: &Backend, _: DidSaveTextDocumentParams) {

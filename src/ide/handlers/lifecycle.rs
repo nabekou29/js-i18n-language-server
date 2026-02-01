@@ -207,6 +207,7 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
         backend.process_pending_updates().await;
         backend.send_diagnostics_to_opened_files().await;
         backend.send_unused_key_diagnostics().await;
+        backend.send_decorations_changed().await;
     }
 
     backend.register_file_watchers().await;

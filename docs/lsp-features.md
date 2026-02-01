@@ -93,6 +93,17 @@ Set the display language for hover, completion, and code actions.
 arguments: [{ language?: string }]  // null to reset
 ```
 
+## Custom Notifications
+
+### `i18n/decorationsChanged`
+
+Sent by the server when decorations need to be refreshed (e.g., translation changes, language changes).
+The client should call `i18n.getDecorations` to get updated decoration data.
+
+```typescript
+params: null
+```
+
 ## Server Capabilities
 
 Capabilities returned in `initialize` response:

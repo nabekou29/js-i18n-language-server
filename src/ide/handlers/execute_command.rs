@@ -172,6 +172,7 @@ async fn handle_edit_translation(
     backend.reload_translation_file(std::path::Path::new(&file_path)).await;
     backend.send_diagnostics_to_opened_files().await;
     backend.send_unused_key_diagnostics().await;
+    backend.send_decorations_changed().await;
 
     Ok(None)
 }
@@ -289,6 +290,7 @@ async fn handle_delete_unused_keys(
 
     backend.reload_translation_file(Path::new(&file_path)).await;
     backend.send_unused_key_diagnostics().await;
+    backend.send_decorations_changed().await;
 
     let deleted_count = result.deleted_count;
     backend
@@ -569,6 +571,8 @@ async fn handle_set_current_language(
             format!("Current language set to: {:?}", parsed_args.language),
         )
         .await;
+
+    backend.send_decorations_changed().await;
 
     Ok(None)
 }
