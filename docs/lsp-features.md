@@ -47,6 +47,16 @@ arguments: [{
 returns: { key: string } | null
 ```
 
+### `i18n.getTranslationValue`
+
+Returns the value of a translation key for a given language.
+
+```typescript
+arguments: [{ lang: string, key: string }]
+
+returns: { value: string } | null
+```
+
 ### `i18n.getDecorations`
 
 Returns decoration information for inline translation display.

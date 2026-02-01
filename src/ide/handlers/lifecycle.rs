@@ -69,6 +69,7 @@ pub async fn handle_initialize(
                     "i18n.editTranslation".to_string(),
                     "i18n.deleteUnusedKeys".to_string(),
                     "i18n.getKeyAtPosition".to_string(),
+                    "i18n.getTranslationValue".to_string(),
                     "i18n.getDecorations".to_string(),
                     "i18n.getCurrentLanguage".to_string(),
                     "i18n.setCurrentLanguage".to_string(),

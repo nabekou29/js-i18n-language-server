@@ -63,6 +63,9 @@ pub async fn handle_execute_command(
         "i18n.getKeyAtPosition" => {
             handle_get_key_at_position(backend, Some(params.arguments)).await
         }
+        "i18n.getTranslationValue" => {
+            handle_get_translation_value(backend, Some(params.arguments)).await
+        }
         "i18n.getDecorations" => handle_get_decorations(backend, Some(params.arguments)).await,
         "i18n.getCurrentLanguage" => handle_get_current_language(backend).await,
         "i18n.setCurrentLanguage" => {
@@ -350,6 +353,52 @@ async fn handle_get_key_at_position(
     let key = backend.get_key_at_position(&file_path, source_position).await;
 
     Ok(key.map(|k| serde_json::json!({ "key": k })))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GetTranslationValueArgs {
+    lang: String,
+    key: String,
+}
+
+/// Returns the value of a translation key for a given language.
+async fn handle_get_translation_value(
+    backend: &Backend,
+    arguments: Option<Vec<Value>>,
+) -> Result<Option<Value>> {
+    let args = arguments.unwrap_or_default();
+
+    let Some(first_arg) = args.first().cloned() else {
+        tracing::warn!("Missing arguments for i18n.getTranslationValue");
+        return Ok(None);
+    };
+
+    let parsed_args: GetTranslationValueArgs = match serde_json::from_value(first_arg) {
+        Ok(args) => args,
+        Err(e) => {
+            tracing::warn!("Invalid arguments for i18n.getTranslationValue: {e}");
+            return Ok(None);
+        }
+    };
+
+    tracing::debug!(
+        lang = %parsed_args.lang,
+        key = %parsed_args.key,
+        "Executing i18n.getTranslationValue"
+    );
+
+    let value = {
+        let db = backend.state.db.lock().await;
+        let translations = backend.state.translations.lock().await;
+
+        translations
+            .iter()
+            .find(|t| t.language(&*db) == parsed_args.lang)
+            .and_then(|t| t.keys(&*db).get(parsed_args.key.as_str()).cloned())
+    };
+
+    Ok(value.map(|v| serde_json::json!({ "value": v })))
 }
 
 #[derive(Debug, Deserialize)]
