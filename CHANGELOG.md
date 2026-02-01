@@ -1,3 +1,34 @@
+
+## [0.2.0] - 2026-02-01
+
+### Bug Fixes
+
+- Use --prepend for changelog to preserve manual entries
+- Prevent duplicate translation entries during workspace indexing
+- Replace blocking_lock with async lock to prevent deadlock
+
+### Documentation
+
+- Add i18n.getKeyAtPosition to LSP features
+
+### Features
+
+- Add i18n.getKeyAtPosition command
+- Add i18n.getCurrentLanguage command and reorder commands by category
+- Rewrite editTranslation to accept value and write directly
+- Add i18n.getTranslationValue command
+- Add language fallback resolution to getCurrentLanguage
+- Add i18n/decorationsChanged custom notification
+- Restore edit translation code actions with experimental capability gate
+- Add maxWidth for display-width-based truncation
+- Make maxWidth required with default 32, maxLength optional
+
+### Refactor
+
+- Rely on didChange for state sync after applyEdit
+- Extract helpers and eliminate duplicated code
+- Extract TruncateOption enum for truncation parameters
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

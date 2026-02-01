@@ -1,11 +1,21 @@
 [package]
 name = "js-i18n-language-server"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "Language Server for JavaScript/TypeScript i18n (i18next, next-intl, react-intl)"
 license = "MIT"
 repository = "https://github.com/nabekou29/js-i18n-language-server"
-keywords = ["lsp", "language-server", "i18n", "javascript", "typescript", "i18next", "next-intl", "react-intl", "internationalization"]
+keywords = [
+  "lsp",
+  "language-server",
+  "i18n",
+  "javascript",
+  "typescript",
+  "i18next",
+  "next-intl",
+  "react-intl",
+  "internationalization",
+]
 categories = ["development-tools"]
 readme = "README.md"
 
