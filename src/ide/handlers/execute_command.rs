@@ -395,8 +395,8 @@ async fn handle_get_decorations(
 
     let config = backend.config_manager.lock().await;
     let settings = config.get_settings();
-    let max_length = parsed_args.max_length.unwrap_or(settings.virtual_text.max_length);
-    let max_width = parsed_args.max_width.or(settings.virtual_text.max_width);
+    let max_length = parsed_args.max_length.or(settings.virtual_text.max_length);
+    let max_width = parsed_args.max_width.unwrap_or(settings.virtual_text.max_width);
     let primary_languages = settings.primary_languages.clone();
     let key_separator = settings.key_separator.clone();
     drop(config);

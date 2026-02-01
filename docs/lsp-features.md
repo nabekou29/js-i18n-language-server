@@ -75,7 +75,7 @@ arguments: [{
   uri: string,
   language?: string,
   maxLength?: number,
-  maxWidth?: number    // display-width truncation (CJK=2, ASCII=1); overrides maxLength
+  maxWidth?: number    // display-width truncation (CJK=2, ASCII=1); default 32
 }]
 
 returns: Array<{

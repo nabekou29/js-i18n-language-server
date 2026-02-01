@@ -25,8 +25,8 @@ pub fn get_translation_decorations(
     source_file: SourceFile,
     translations: &[Translation],
     language: Option<&str>,
-    max_length: usize,
-    max_width: Option<usize>,
+    max_length: Option<usize>,
+    max_width: usize,
     key_separator: &str,
 ) -> Vec<TranslationDecoration> {
     let key_usages = crate::syntax::analyze_source(db, source_file, key_separator.to_string());
@@ -65,10 +65,10 @@ fn get_translation_value(
         .find_map(|t| t.keys(db).get(key_text).cloned())
 }
 
-fn truncate_value(value: &str, max_length: usize, max_width: Option<usize>) -> String {
-    max_width.map_or_else(
-        || truncate_by_length(value, max_length),
-        |max_w| truncate_by_width(value, max_w),
+fn truncate_value(value: &str, max_length: Option<usize>, max_width: usize) -> String {
+    max_length.map_or_else(
+        || truncate_by_width(value, max_width),
+        |max_l| truncate_by_length(value, max_l),
     )
 }
 
@@ -132,26 +132,26 @@ mod tests {
 
     #[rstest]
     fn truncate_value_short_text() {
-        let result = truncate_value("Hello", 30, None);
+        let result = truncate_value("Hello", Some(30), 32);
         assert_that!(result, eq("Hello"));
     }
 
     #[rstest]
     fn truncate_value_exact_length() {
-        let result = truncate_value("Hello World", 11, None);
+        let result = truncate_value("Hello World", Some(11), 32);
         assert_that!(result, eq("Hello World"));
     }
 
     #[rstest]
     fn truncate_value_long_text() {
         let result =
-            truncate_value("This is a very long message that should be truncated", 20, None);
+            truncate_value("This is a very long message that should be truncated", Some(20), 32);
         assert_that!(result, eq("This is a very long…"));
     }
 
     #[rstest]
     fn truncate_value_japanese_text() {
-        let result = truncate_value("これは長いメッセージです", 10, None);
+        let result = truncate_value("これは長いメッセージです", Some(10), 32);
         assert_that!(result, eq("これは長いメッセー…"));
     }
 
@@ -219,11 +219,19 @@ mod tests {
     }
 
     #[rstest]
-    fn truncate_value_max_width_overrides_max_length() {
-        // max_length=30 but max_width=8; CJK should be truncated by width
-        let result = truncate_value("こんにちは世界", 30, Some(8));
+    fn truncate_value_falls_back_to_max_width() {
+        // max_length=None, max_width=8; CJK should be truncated by width
+        let result = truncate_value("こんにちは世界", None, 8);
         // width 14, max_width 8, target 7 → "こんに" = width 6 + "…"
         assert_that!(result, eq("こんに…"));
+    }
+
+    #[rstest]
+    fn truncate_value_max_length_overrides_max_width() {
+        // max_length=5 takes priority over max_width=32
+        let result = truncate_value("こんにちは世界", Some(5), 32);
+        // 7 chars, max_length 5 → 4 chars + "…"
+        assert_that!(result, eq("こんにち…"));
     }
 
     #[rstest]
@@ -244,8 +252,8 @@ mod tests {
             source_file,
             &[translation],
             Some("ja"),
-            30,
             None,
+            30,
             ".",
         );
 
@@ -275,8 +283,8 @@ mod tests {
             source_file,
             &[translation],
             Some("ja"),
-            10,
-            None,
+            Some(10),
+            32,
             ".",
         );
 
@@ -302,8 +310,8 @@ mod tests {
             source_file,
             &[translation],
             Some("fr"),
-            30,
             None,
+            30,
             ".",
         );
 
@@ -324,7 +332,7 @@ mod tests {
         );
 
         let decorations =
-            get_translation_decorations(&db, source_file, &[translation], None, 30, None, ".");
+            get_translation_decorations(&db, source_file, &[translation], None, None, 30, ".");
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].value, eq("Hello"));

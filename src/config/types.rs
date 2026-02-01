@@ -94,15 +94,15 @@ pub struct IndexingConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct VirtualTextConfig {
     /// Max characters before truncation with ellipsis.
-    pub max_length: usize,
+    /// When set, takes priority over `max_width`.
+    pub max_length: Option<usize>,
     /// Max display width (CJK = 2, ASCII = 1) before truncation.
-    /// When set, takes priority over `max_length`.
-    pub max_width: Option<usize>,
+    pub max_width: usize,
 }
 
 impl Default for VirtualTextConfig {
     fn default() -> Self {
-        Self { max_length: 30, max_width: None }
+        Self { max_length: None, max_width: 32 }
     }
 }
 
