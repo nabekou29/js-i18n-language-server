@@ -497,13 +497,34 @@ async fn handle_get_decorations(
     }
 }
 
-/// Returns the current display language.
+/// Returns the current display language with fallback resolution.
+/// Priority: currentLanguage > primaryLanguages > first available
 async fn handle_get_current_language(backend: &Backend) -> Result<Option<Value>> {
+    let primary_languages = {
+        let config = backend.config_manager.lock().await;
+        config.get_settings().primary_languages.clone()
+    };
+
     let current_language = backend.state.current_language.lock().await.clone();
 
-    tracing::debug!(language = ?current_language, "Executing i18n.getCurrentLanguage");
+    let language = if let Some(lang) = current_language {
+        Some(lang)
+    } else {
+        let db = backend.state.db.lock().await;
+        let translations = backend.state.translations.lock().await;
+        crate::ide::backend::collect_sorted_languages(
+            &*db,
+            &translations,
+            None,
+            primary_languages.as_deref(),
+        )
+        .first()
+        .cloned()
+    };
 
-    Ok(Some(serde_json::json!({ "language": current_language })))
+    tracing::debug!(language = ?language, "Executing i18n.getCurrentLanguage");
+
+    Ok(Some(serde_json::json!({ "language": language })))
 }
 
 #[derive(Debug, Deserialize)]
