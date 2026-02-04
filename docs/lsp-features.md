@@ -103,6 +103,16 @@ Set the display language for hover, completion, and code actions.
 arguments: [{ language?: string }]  // null to reset
 ```
 
+### `i18n.getAvailableLanguages`
+
+Get all available languages from translation files.
+
+```typescript
+arguments: []
+
+returns: { languages: string[] }
+```
+
 ## Custom Notifications
 
 ### `i18n/decorationsChanged`

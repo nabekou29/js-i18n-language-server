@@ -89,6 +89,7 @@ pub async fn handle_execute_command(
         "i18n.setCurrentLanguage" => {
             handle_set_current_language(backend, Some(params.arguments)).await
         }
+        "i18n.getAvailableLanguages" => handle_get_available_languages(backend).await,
         _ => {
             tracing::warn!("Unknown command: {}", params.command);
             Ok(None)
@@ -514,4 +515,26 @@ async fn handle_set_current_language(
     backend.send_decorations_changed().await;
 
     Ok(None)
+}
+
+/// Get all available languages from translation files.
+async fn handle_get_available_languages(backend: &Backend) -> Result<Option<Value>> {
+    let config = backend.config_manager.lock().await;
+    let settings = config.get_settings();
+    let primary_languages = settings.primary_languages.clone();
+    drop(config);
+
+    let current_language = backend.state.current_language.lock().await.clone();
+    let (db, translations) = backend.state.lock_db_and_translations().await;
+
+    let languages = crate::ide::backend::collect_sorted_languages(
+        &*db,
+        &translations,
+        current_language.as_deref(),
+        primary_languages.as_deref(),
+    );
+
+    tracing::debug!(languages = ?languages, "Executing i18n.getAvailableLanguages");
+
+    Ok(Some(serde_json::json!({ "languages": languages })))
 }
