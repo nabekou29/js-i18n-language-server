@@ -1,4 +1,25 @@
 
+## [0.3.0] - 2026-02-07
+
+### Documentation
+
+- Fix CHANGELOG.md
+- Remove virtualText.maxLength/maxWidth from configuration and LSP docs
+- Update configuration docs for new diagnostics structure
+- Add rationale for #[rstest] over #[googletest::test] in test rules
+
+### Features
+
+- Add i18n.getAvailableLanguages command
+- Add enabled/severity support to missing translation diagnostics
+- Add ignorePatterns to unused translation diagnostics
+- Add configurable severity to unused translation diagnostics
+
+### Refactor
+
+- Replace #[googletest::test]/expect_that! with #[rstest]/assert_that!
+
+
 ## [0.2.0] - 2026-02-01
 
 ### Bug Fixes
