@@ -88,15 +88,10 @@ impl Backend {
 
     fn create_diagnostic_options(config: &ConfigManager) -> super::diagnostics::DiagnosticOptions {
         let settings = config.get_settings();
+        let mt = &settings.diagnostics.missing_translation;
         super::diagnostics::DiagnosticOptions {
-            required_languages: settings
-                .required_languages
-                .as_ref()
-                .map(|v| v.iter().cloned().collect()),
-            optional_languages: settings
-                .optional_languages
-                .as_ref()
-                .map(|v| v.iter().cloned().collect()),
+            required_languages: mt.required_languages.as_ref().map(|v| v.iter().cloned().collect()),
+            optional_languages: mt.optional_languages.as_ref().map(|v| v.iter().cloned().collect()),
         }
     }
 
@@ -256,8 +251,8 @@ impl Backend {
     pub(crate) async fn send_unused_key_diagnostics(&self) {
         let settings = self.config_manager.lock().await.get_settings().clone();
 
-        if !settings.diagnostics.unused_keys {
-            tracing::debug!("Unused key diagnostics disabled, skipping");
+        if !settings.diagnostics.unused_translation.enabled {
+            tracing::debug!("Unused translation diagnostics disabled, skipping");
             return;
         }
 

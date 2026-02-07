@@ -62,19 +62,6 @@ pub struct I18nSettings {
 
     pub indexing: IndexingConfig,
 
-    /// Languages that require translations.
-    ///
-    /// - `None`: All detected languages are required (default)
-    /// - `Some([...])`: Only specified languages are required
-    ///
-    /// Mutually exclusive with `optional_languages`.
-    pub required_languages: Option<Vec<String>>,
-
-    /// Languages where missing translations are ignored.
-    ///
-    /// Mutually exclusive with `required_languages`.
-    pub optional_languages: Option<Vec<String>>,
-
     pub diagnostics: DiagnosticsConfig,
 
     /// Fallback language priority when `currentLanguage` is unset.
@@ -89,16 +76,57 @@ pub struct IndexingConfig {
     pub num_threads: Option<usize>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct DiagnosticsConfig {
-    pub unused_keys: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Severity {
+    Error,
+    Warning,
+    Information,
+    Hint,
 }
 
-impl Default for DiagnosticsConfig {
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MissingTranslationConfig {
+    pub enabled: bool,
+    pub severity: Severity,
+    /// Only check these languages. `None` = all detected languages.
+    /// Mutually exclusive with `optional_languages`.
+    pub required_languages: Option<Vec<String>>,
+    /// Skip these languages. Mutually exclusive with `required_languages`.
+    pub optional_languages: Option<Vec<String>>,
+}
+
+impl Default for MissingTranslationConfig {
     fn default() -> Self {
-        Self { unused_keys: true }
+        Self {
+            enabled: true,
+            severity: Severity::Warning,
+            required_languages: None,
+            optional_languages: None,
+        }
     }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UnusedTranslationConfig {
+    pub enabled: bool,
+    pub severity: Severity,
+}
+
+impl Default for UnusedTranslationConfig {
+    fn default() -> Self {
+        Self { enabled: true, severity: Severity::Hint }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+#[derive(Default)]
+pub struct DiagnosticsConfig {
+    pub missing_translation: MissingTranslationConfig,
+    pub unused_translation: UnusedTranslationConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -168,9 +196,10 @@ impl I18nSettings {
             ));
         }
 
-        if self.required_languages.is_some() && self.optional_languages.is_some() {
+        let mt = &self.diagnostics.missing_translation;
+        if mt.required_languages.is_some() && mt.optional_languages.is_some() {
             errors.push(ValidationError::new(
-                "requiredLanguages/optionalLanguages",
+                "diagnostics.missingTranslation.requiredLanguages/optionalLanguages",
                 "Cannot specify both 'requiredLanguages' and 'optionalLanguages'. Please use only one",
             ));
         }
@@ -195,8 +224,6 @@ impl Default for I18nSettings {
             namespace_separator: None,
             default_namespace: None,
             indexing: IndexingConfig::default(),
-            required_languages: None,
-            optional_languages: None,
             diagnostics: DiagnosticsConfig::default(),
             primary_languages: None,
         }
@@ -210,6 +237,127 @@ mod tests {
     use rstest::*;
 
     use super::*;
+
+    #[rstest]
+    fn validate_required_and_optional_languages_mutually_exclusive() {
+        let settings = I18nSettings {
+            diagnostics: DiagnosticsConfig {
+                missing_translation: MissingTranslationConfig {
+                    required_languages: Some(vec!["en".to_string()]),
+                    optional_languages: Some(vec!["zh".to_string()]),
+                    ..MissingTranslationConfig::default()
+                },
+                ..DiagnosticsConfig::default()
+            },
+            ..I18nSettings::default()
+        };
+        let result = settings.validate();
+
+        assert_that!(
+            result,
+            err(contains_each![all![
+                field!(
+                    ValidationError.field_path,
+                    eq("diagnostics.missingTranslation.requiredLanguages/optionalLanguages")
+                ),
+                field!(ValidationError.message, contains_substring("Cannot specify both"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn deserialize_settings_with_new_diagnostics_structure() {
+        let json = r#"{
+            "diagnostics": {
+                "missingTranslation": {
+                    "requiredLanguages": ["en", "ja"]
+                },
+                "unusedTranslation": {
+                    "enabled": false
+                }
+            }
+        }"#;
+        let settings: I18nSettings = serde_json::from_str(json).unwrap();
+
+        assert_that!(settings.diagnostics.missing_translation.required_languages, some(len(eq(2))));
+        assert_that!(settings.diagnostics.unused_translation.enabled, eq(false));
+    }
+
+    #[rstest]
+    fn deserialize_diagnostics_config_defaults() {
+        let json = "{}";
+        let config: DiagnosticsConfig = serde_json::from_str(json).unwrap();
+
+        assert_that!(config.missing_translation.enabled, eq(true));
+        assert_that!(config.missing_translation.severity, eq(Severity::Warning));
+        assert_that!(config.unused_translation.enabled, eq(true));
+        assert_that!(config.unused_translation.severity, eq(Severity::Hint));
+    }
+
+    #[rstest]
+    fn deserialize_diagnostics_config_nested() {
+        let json = r#"{
+            "missingTranslation": { "enabled": false },
+            "unusedTranslation": { "severity": "error" }
+        }"#;
+        let config: DiagnosticsConfig = serde_json::from_str(json).unwrap();
+
+        assert_that!(config.missing_translation.enabled, eq(false));
+        assert_that!(config.unused_translation.severity, eq(Severity::Error));
+    }
+
+    #[rstest]
+    fn deserialize_unused_translation_config_defaults() {
+        let json = "{}";
+        let config: UnusedTranslationConfig = serde_json::from_str(json).unwrap();
+
+        assert_that!(config.enabled, eq(true));
+        assert_that!(config.severity, eq(Severity::Hint));
+    }
+
+    #[rstest]
+    fn deserialize_unused_translation_config_custom() {
+        let json = r#"{"enabled": false, "severity": "warning"}"#;
+        let config: UnusedTranslationConfig = serde_json::from_str(json).unwrap();
+
+        assert_that!(config.enabled, eq(false));
+        assert_that!(config.severity, eq(Severity::Warning));
+    }
+
+    #[rstest]
+    fn deserialize_missing_translation_config_defaults() {
+        let json = "{}";
+        let config: MissingTranslationConfig = serde_json::from_str(json).unwrap();
+
+        assert_that!(config.enabled, eq(true));
+        assert_that!(config.severity, eq(Severity::Warning));
+        assert_that!(config.required_languages, none());
+        assert_that!(config.optional_languages, none());
+    }
+
+    #[rstest]
+    fn deserialize_missing_translation_config_full() {
+        let json = r#"{
+            "enabled": false,
+            "severity": "error",
+            "requiredLanguages": ["en", "ja"]
+        }"#;
+        let config: MissingTranslationConfig = serde_json::from_str(json).unwrap();
+
+        assert_that!(config.enabled, eq(false));
+        assert_that!(config.severity, eq(Severity::Error));
+        assert_that!(config.required_languages, some(len(eq(2))));
+    }
+
+    #[rstest]
+    #[case("\"error\"", Severity::Error)]
+    #[case("\"warning\"", Severity::Warning)]
+    #[case("\"information\"", Severity::Information)]
+    #[case("\"hint\"", Severity::Hint)]
+    fn deserialize_severity(#[case] json: &str, #[case] expected: Severity) {
+        let result: Severity = serde_json::from_str(json).unwrap();
+        assert_that!(result, eq(expected));
+    }
 
     #[rstest]
     fn validate_valid_settings() {
