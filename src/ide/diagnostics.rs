@@ -4,7 +4,6 @@ use std::collections::HashSet;
 
 use tower_lsp::lsp_types::{
     Diagnostic,
-    DiagnosticSeverity,
     DiagnosticTag,
     NumberOrString,
 };
@@ -143,6 +142,7 @@ pub fn generate_unused_key_diagnostics(
     source_files: &[SourceFile],
     key_separator: &str,
     ignore_patterns: &[String],
+    severity: Severity,
 ) -> Vec<Diagnostic> {
     let mut used_keys: HashSet<String> = HashSet::new();
     for source_file in source_files {
@@ -168,7 +168,7 @@ pub fn generate_unused_key_diagnostics(
         if !is_used && let Some(range) = key_ranges.get(key) {
             diagnostics.push(Diagnostic {
                 range: (*range).into(),
-                severity: Some(DiagnosticSeverity::HINT),
+                severity: Some(severity.to_lsp()),
                 code: Some(NumberOrString::String("unused-translation-key".to_string())),
                 code_description: None,
                 source: Some("js-i18n".to_string()),
@@ -609,8 +609,14 @@ mod tests {
             HashMap::new(),
         );
 
-        let diagnostics =
-            generate_unused_key_diagnostics(&db, translation, &[source_file], ".", &[]);
+        let diagnostics = generate_unused_key_diagnostics(
+            &db,
+            translation,
+            &[source_file],
+            ".",
+            &[],
+            Severity::Hint,
+        );
 
         expect_that!(diagnostics, len(eq(1)));
         expect_that!(
@@ -679,8 +685,14 @@ mod tests {
             HashMap::new(),
         );
 
-        let diagnostics =
-            generate_unused_key_diagnostics(&db, translation, &[source_file], ".", &[]);
+        let diagnostics = generate_unused_key_diagnostics(
+            &db,
+            translation,
+            &[source_file],
+            ".",
+            &[],
+            Severity::Hint,
+        );
 
         // hoge.fuga and hoge.fuga.piyo are used (prefix match)
         // Only other.key is detected as unused
@@ -738,6 +750,7 @@ mod tests {
             &[source_file],
             ".",
             &ignore_patterns,
+            Severity::Hint,
         );
 
         // debug.info and debug.warn are ignored, only other.unused is reported
@@ -745,6 +758,60 @@ mod tests {
         expect_that!(
             diagnostics,
             contains(field!(Diagnostic.message, contains_substring("other.unused")))
+        );
+    }
+
+    #[googletest::test]
+    fn test_generate_unused_key_diagnostics_custom_severity() {
+        let db = I18nDatabaseImpl::default();
+
+        let source_code = r#"const msg = t("used.key");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut keys = HashMap::new();
+        keys.insert("used.key".to_string(), "Used".to_string());
+        keys.insert("unused.key".to_string(), "Unused".to_string());
+
+        let mut key_ranges = HashMap::new();
+        for key in keys.keys() {
+            key_ranges.insert(
+                key.clone(),
+                crate::types::SourceRange {
+                    start: crate::types::SourcePosition { line: 1, character: 0 },
+                    end: crate::types::SourcePosition { line: 1, character: 10 },
+                },
+            );
+        }
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "en.json".to_string(),
+            keys,
+            String::new(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        let diagnostics = generate_unused_key_diagnostics(
+            &db,
+            translation,
+            &[source_file],
+            ".",
+            &[],
+            Severity::Warning,
+        );
+
+        expect_that!(diagnostics, len(eq(1)));
+        expect_that!(
+            diagnostics,
+            each(field!(Diagnostic.severity, some(eq(&DiagnosticSeverity::WARNING))))
         );
     }
 
