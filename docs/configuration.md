@@ -23,9 +23,6 @@ Configuration can be provided via:
   "diagnostics": {
     "unusedKeys": true
   },
-  "virtualText": {
-    "maxLength": 30
-  },
   "indexing": {
     "numThreads": null
   }
@@ -125,14 +122,6 @@ Fallback priority for display (hover, virtual text). The first available languag
 `boolean` (default: `true`)
 
 Report unused translation keys in JSON files.
-
----
-
-## virtualText.maxLength
-
-`number` (default: `30`)
-
-Max characters for inline virtual text display.
 
 ---
 
