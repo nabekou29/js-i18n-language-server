@@ -142,6 +142,7 @@ pub fn generate_unused_key_diagnostics(
     translation: Translation,
     source_files: &[SourceFile],
     key_separator: &str,
+    ignore_patterns: &[String],
 ) -> Vec<Diagnostic> {
     let mut used_keys: HashSet<String> = HashSet::new();
     for source_file in source_files {
@@ -151,11 +152,17 @@ pub fn generate_unused_key_diagnostics(
         }
     }
 
+    let ignore_matcher = build_ignore_matcher(ignore_patterns);
+
     let all_keys = translation.keys(db);
     let key_ranges = translation.key_ranges(db);
 
     let mut diagnostics = Vec::new();
     for key in all_keys.keys() {
+        if ignore_matcher.as_ref().is_some_and(|m| m.is_match(key)) {
+            continue;
+        }
+
         let is_used = is_key_used(key, &used_keys, key_separator);
 
         if !is_used && let Some(range) = key_ranges.get(key) {
@@ -174,6 +181,24 @@ pub fn generate_unused_key_diagnostics(
     }
 
     diagnostics
+}
+
+fn build_ignore_matcher(patterns: &[String]) -> Option<globset::GlobSet> {
+    if patterns.is_empty() {
+        return None;
+    }
+    let mut builder = globset::GlobSetBuilder::new();
+    for pattern in patterns {
+        match globset::Glob::new(pattern) {
+            Ok(glob) => {
+                builder.add(glob);
+            }
+            Err(e) => {
+                tracing::warn!("Invalid ignore pattern '{pattern}': {e}");
+            }
+        }
+    }
+    builder.build().ok()
 }
 
 /// Checks if a key is used (including prefix match and plural suffix).
@@ -584,7 +609,8 @@ mod tests {
             HashMap::new(),
         );
 
-        let diagnostics = generate_unused_key_diagnostics(&db, translation, &[source_file], ".");
+        let diagnostics =
+            generate_unused_key_diagnostics(&db, translation, &[source_file], ".", &[]);
 
         expect_that!(diagnostics, len(eq(1)));
         expect_that!(
@@ -653,7 +679,8 @@ mod tests {
             HashMap::new(),
         );
 
-        let diagnostics = generate_unused_key_diagnostics(&db, translation, &[source_file], ".");
+        let diagnostics =
+            generate_unused_key_diagnostics(&db, translation, &[source_file], ".", &[]);
 
         // hoge.fuga and hoge.fuga.piyo are used (prefix match)
         // Only other.key is detected as unused
@@ -661,6 +688,63 @@ mod tests {
         expect_that!(
             diagnostics,
             contains(field!(Diagnostic.message, contains_substring("other.key")))
+        );
+    }
+
+    #[googletest::test]
+    fn test_generate_unused_key_diagnostics_with_ignore_patterns() {
+        let db = I18nDatabaseImpl::default();
+
+        let source_code = r#"const msg = t("used.key");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut keys = HashMap::new();
+        keys.insert("used.key".to_string(), "Used".to_string());
+        keys.insert("debug.info".to_string(), "Debug Info".to_string());
+        keys.insert("debug.warn".to_string(), "Debug Warn".to_string());
+        keys.insert("other.unused".to_string(), "Other".to_string());
+
+        let mut key_ranges = HashMap::new();
+        for key in keys.keys() {
+            key_ranges.insert(
+                key.clone(),
+                crate::types::SourceRange {
+                    start: crate::types::SourcePosition { line: 1, character: 0 },
+                    end: crate::types::SourcePosition { line: 1, character: 10 },
+                },
+            );
+        }
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "en.json".to_string(),
+            keys,
+            String::new(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        let ignore_patterns = vec!["debug.*".to_string()];
+        let diagnostics = generate_unused_key_diagnostics(
+            &db,
+            translation,
+            &[source_file],
+            ".",
+            &ignore_patterns,
+        );
+
+        // debug.info and debug.warn are ignored, only other.unused is reported
+        expect_that!(diagnostics, len(eq(1)));
+        expect_that!(
+            diagnostics,
+            contains(field!(Diagnostic.message, contains_substring("other.unused")))
         );
     }
 

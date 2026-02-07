@@ -282,6 +282,7 @@ impl Backend {
                         *translation,
                         &source_file_vec,
                         key_separator,
+                        &settings.diagnostics.unused_translation.ignore_patterns,
                     );
                     let file_path = translation.file_path(&*db).clone();
                     (file_path, diagnostics)

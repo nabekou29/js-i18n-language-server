@@ -121,16 +121,18 @@ impl Default for MissingTranslationConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UnusedTranslationConfig {
     pub enabled: bool,
     pub severity: Severity,
+    /// Glob patterns for keys to exclude from unused diagnostics.
+    pub ignore_patterns: Vec<String>,
 }
 
 impl Default for UnusedTranslationConfig {
     fn default() -> Self {
-        Self { enabled: true, severity: Severity::Hint }
+        Self { enabled: true, severity: Severity::Hint, ignore_patterns: Vec::new() }
     }
 }
 
