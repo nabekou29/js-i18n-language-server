@@ -17,11 +17,19 @@ Configuration can be provided via:
   "keySeparator": ".",
   "namespaceSeparator": null,
   "defaultNamespace": null,
-  "requiredLanguages": null,
-  "optionalLanguages": null,
   "primaryLanguages": null,
   "diagnostics": {
-    "unusedKeys": true
+    "missingTranslation": {
+      "enabled": true,
+      "severity": "warning",
+      "requiredLanguages": null,
+      "optionalLanguages": null
+    },
+    "unusedTranslation": {
+      "enabled": true,
+      "severity": "hint",
+      "ignorePatterns": []
+    }
   },
   "indexing": {
     "numThreads": null
@@ -89,7 +97,31 @@ Default namespace when not specified in code.
 
 ---
 
-## requiredLanguages
+## primaryLanguages
+
+`string[]?` (default: `null`)
+
+Fallback priority for display (hover, virtual text). The first available language is used.
+
+---
+
+## diagnostics.missingTranslation
+
+Configuration for missing translation key diagnostics.
+
+### diagnostics.missingTranslation.enabled
+
+`boolean` (default: `true`)
+
+Enable or disable missing translation diagnostics.
+
+### diagnostics.missingTranslation.severity
+
+`"error" | "warning" | "information" | "hint"` (default: `"warning"`)
+
+Severity level for missing translation diagnostics.
+
+### diagnostics.missingTranslation.requiredLanguages
 
 `string[]?` (default: `null`)
 
@@ -97,9 +129,7 @@ Languages that must have translations. If `null`, all detected languages are req
 
 Mutually exclusive with `optionalLanguages`.
 
----
-
-## optionalLanguages
+### diagnostics.missingTranslation.optionalLanguages
 
 `string[]?` (default: `null`)
 
@@ -109,19 +139,38 @@ Mutually exclusive with `requiredLanguages`.
 
 ---
 
-## primaryLanguages
+## diagnostics.unusedTranslation
 
-`string[]?` (default: `null`)
+Configuration for unused translation key diagnostics.
 
-Fallback priority for display (hover, virtual text). The first available language is used.
-
----
-
-## diagnostics.unusedKeys
+### diagnostics.unusedTranslation.enabled
 
 `boolean` (default: `true`)
 
-Report unused translation keys in JSON files.
+Enable or disable unused translation diagnostics.
+
+### diagnostics.unusedTranslation.severity
+
+`"error" | "warning" | "information" | "hint"` (default: `"hint"`)
+
+Severity level for unused translation diagnostics.
+
+### diagnostics.unusedTranslation.ignorePatterns
+
+`string[]` (default: `[]`)
+
+Glob patterns for translation keys to exclude from unused key detection.
+
+Example:
+```json
+{
+  "diagnostics": {
+    "unusedTranslation": {
+      "ignorePatterns": ["debug.*", "internal.**"]
+    }
+  }
+}
+```
 
 ---
 
