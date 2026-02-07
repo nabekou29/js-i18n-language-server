@@ -90,6 +90,8 @@ impl Backend {
         let settings = config.get_settings();
         let mt = &settings.diagnostics.missing_translation;
         super::diagnostics::DiagnosticOptions {
+            enabled: mt.enabled,
+            severity: mt.severity,
             required_languages: mt.required_languages.as_ref().map(|v| v.iter().cloned().collect()),
             optional_languages: mt.optional_languages.as_ref().map(|v| v.iter().cloned().collect()),
         }

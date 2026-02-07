@@ -9,6 +9,7 @@ use tower_lsp::lsp_types::{
     NumberOrString,
 };
 
+use crate::config::Severity;
 use crate::db::I18nDatabase;
 use crate::ide::key_match::is_child_key;
 use crate::ide::plural::{
@@ -19,12 +20,25 @@ use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 use crate::syntax::analyze_source;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct DiagnosticOptions {
+    pub enabled: bool,
+    pub severity: Severity,
     /// Languages that require translations (None = all languages required)
     pub required_languages: Option<HashSet<String>>,
     /// Languages excluded from diagnostics
     pub optional_languages: Option<HashSet<String>>,
+}
+
+impl Default for DiagnosticOptions {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            severity: Severity::Warning,
+            required_languages: None,
+            optional_languages: None,
+        }
+    }
 }
 
 /// Determines which languages to check for missing translations.
@@ -56,6 +70,10 @@ pub fn generate_diagnostics(
     options: &DiagnosticOptions,
     key_separator: &str,
 ) -> Vec<Diagnostic> {
+    if !options.enabled {
+        return Vec::new();
+    }
+
     let mut diagnostics = Vec::new();
 
     tracing::debug!("Generating diagnostics for source file '{}'", source_file.uri(db));
@@ -97,7 +115,7 @@ pub fn generate_diagnostics(
 
             diagnostics.push(Diagnostic {
                 range: range.into(),
-                severity: Some(DiagnosticSeverity::WARNING),
+                severity: Some(options.severity.to_lsp()),
                 code: Some(NumberOrString::String("missing-translation".to_string())),
                 code_description: None,
                 source: Some("js-i18n".to_string()),
@@ -403,7 +421,7 @@ mod tests {
             ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
         let options = DiagnosticOptions {
             required_languages: Some(["en", "ja"].iter().map(|s| s.to_string()).collect()),
-            optional_languages: None,
+            ..DiagnosticOptions::default()
         };
 
         let target = determine_target_languages(&all_languages, &options);
@@ -419,8 +437,8 @@ mod tests {
         let all_languages: HashSet<String> =
             ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
         let options = DiagnosticOptions {
-            required_languages: None,
             optional_languages: Some(["zh"].iter().map(|s| s.to_string()).collect()),
+            ..DiagnosticOptions::default()
         };
 
         let target = determine_target_languages(&all_languages, &options);
@@ -429,6 +447,65 @@ mod tests {
         expect_that!(target, contains(eq(&"en")));
         expect_that!(target, contains(eq(&"ja")));
         expect_that!(target, not(contains(eq(&"zh"))));
+    }
+
+    #[googletest::test]
+    fn test_generate_diagnostics_disabled() {
+        let db = I18nDatabaseImpl::default();
+
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            r#"const msg = t("missing.key");"#.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "en.json".to_string(),
+            HashMap::new(),
+            String::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let options = DiagnosticOptions { enabled: false, ..DiagnosticOptions::default() };
+        let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
+
+        expect_that!(diagnostics, is_empty());
+    }
+
+    #[googletest::test]
+    fn test_generate_diagnostics_custom_severity() {
+        let db = I18nDatabaseImpl::default();
+
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            r#"const msg = t("missing.key");"#.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "en.json".to_string(),
+            HashMap::new(),
+            String::new(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let options =
+            DiagnosticOptions { severity: Severity::Error, ..DiagnosticOptions::default() };
+        let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
+
+        expect_that!(diagnostics, not(is_empty()));
+        expect_that!(
+            diagnostics,
+            each(field!(Diagnostic.severity, some(eq(&DiagnosticSeverity::ERROR))))
+        );
     }
 
     #[googletest::test]

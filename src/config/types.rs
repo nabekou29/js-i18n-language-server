@@ -85,6 +85,19 @@ pub enum Severity {
     Hint,
 }
 
+impl Severity {
+    /// Convert to LSP `DiagnosticSeverity`.
+    #[must_use]
+    pub const fn to_lsp(self) -> tower_lsp::lsp_types::DiagnosticSeverity {
+        match self {
+            Self::Error => tower_lsp::lsp_types::DiagnosticSeverity::ERROR,
+            Self::Warning => tower_lsp::lsp_types::DiagnosticSeverity::WARNING,
+            Self::Information => tower_lsp::lsp_types::DiagnosticSeverity::INFORMATION,
+            Self::Hint => tower_lsp::lsp_types::DiagnosticSeverity::HINT,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct MissingTranslationConfig {

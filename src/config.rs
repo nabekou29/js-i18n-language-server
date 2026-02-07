@@ -15,8 +15,12 @@ pub use matcher::{
 };
 pub use types::{
     ConfigError,
+    DiagnosticsConfig,
     I18nSettings,
+    MissingTranslationConfig,
     ServerSettings,
+    Severity,
     TranslationFilesConfig,
+    UnusedTranslationConfig,
     ValidationError,
 };
