@@ -458,7 +458,8 @@ mod tests {
             include_patterns: include.iter().copied().map(String::from).collect(),
             exclude_patterns: exclude.iter().copied().map(String::from).collect(),
             translation_files: crate::config::TranslationFilesConfig {
-                file_pattern: translation.to_string(),
+                include_patterns: vec![translation.to_string()],
+                ..crate::config::TranslationFilesConfig::default()
             },
             ..crate::config::I18nSettings::default()
         }

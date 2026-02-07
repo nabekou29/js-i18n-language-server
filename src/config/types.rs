@@ -147,7 +147,8 @@ pub struct DiagnosticsConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct TranslationFilesConfig {
-    pub file_pattern: String,
+    pub include_patterns: Vec<String>,
+    pub exclude_patterns: Vec<String>,
 }
 
 impl I18nSettings {
@@ -199,16 +200,29 @@ impl I18nSettings {
             }
         }
 
-        if self.translation_files.file_pattern.is_empty() {
+        if self.translation_files.include_patterns.is_empty() {
             errors.push(ValidationError::new(
-                "translationFiles.filePattern",
-                "The pattern cannot be empty. Example: \"**/{locales,messages}/**/*.json\"",
+                "translationFiles.includePatterns",
+                "At least one pattern is required. Example: [\"**/{locales,messages}/**/*.json\"]",
             ));
-        } else if let Err(e) = globset::Glob::new(&self.translation_files.file_pattern) {
-            errors.push(ValidationError::new(
-                "translationFiles.filePattern",
-                format!("Invalid glob pattern '{}': {e}", self.translation_files.file_pattern),
-            ));
+        }
+
+        for (index, pattern) in self.translation_files.include_patterns.iter().enumerate() {
+            if let Err(e) = globset::Glob::new(pattern) {
+                errors.push(ValidationError::new(
+                    format!("translationFiles.includePatterns[{index}]"),
+                    format!("Invalid glob pattern '{pattern}': {e}"),
+                ));
+            }
+        }
+
+        for (index, pattern) in self.translation_files.exclude_patterns.iter().enumerate() {
+            if let Err(e) = globset::Glob::new(pattern) {
+                errors.push(ValidationError::new(
+                    format!("translationFiles.excludePatterns[{index}]"),
+                    format!("Invalid glob pattern '{pattern}': {e}"),
+                ));
+            }
         }
 
         let mt = &self.diagnostics.missing_translation;
@@ -225,7 +239,10 @@ impl I18nSettings {
 
 impl Default for TranslationFilesConfig {
     fn default() -> Self {
-        Self { file_pattern: "**/{locales,messages}/**/*.json".to_string() }
+        Self {
+            include_patterns: vec!["**/{locales,messages}/**/*.json".to_string()],
+            exclude_patterns: vec![],
+        }
     }
 }
 
@@ -402,9 +419,10 @@ mod tests {
         assert_that!(settings.include_patterns, elements_are![eq("**/*.{js,jsx,ts,tsx}")]);
         assert_that!(settings.exclude_patterns, elements_are![eq("node_modules/**")]);
         assert_that!(
-            settings.translation_files.file_pattern,
-            eq("**/{locales,messages}/**/*.json")
+            settings.translation_files.include_patterns,
+            elements_are![eq("**/{locales,messages}/**/*.json")]
         );
+        assert_that!(settings.translation_files.exclude_patterns, is_empty());
     }
 
     #[rstest]
@@ -493,9 +511,12 @@ mod tests {
     }
 
     #[rstest]
-    fn validate_invalid_translation_file_pattern_empty() {
+    fn validate_invalid_translation_include_patterns_empty() {
         let settings = I18nSettings {
-            translation_files: TranslationFilesConfig { file_pattern: String::new() },
+            translation_files: TranslationFilesConfig {
+                include_patterns: vec![],
+                ..TranslationFilesConfig::default()
+            },
             ..I18nSettings::default()
         };
 
@@ -504,19 +525,19 @@ mod tests {
         assert_that!(
             result,
             err(elements_are![all![
-                field!(ValidationError.field_path, eq("translationFiles.filePattern")),
-                field!(ValidationError.message, contains_substring("cannot be empty"))
+                field!(ValidationError.field_path, eq("translationFiles.includePatterns")),
+                field!(ValidationError.message, contains_substring("At least one pattern"))
             ]])
         );
     }
 
     #[rstest]
-    fn validate_invalid_translation_file_pattern_invalid_glob() {
+    fn validate_invalid_translation_include_pattern_invalid_glob() {
         let settings = I18nSettings {
             translation_files: TranslationFilesConfig {
-                file_pattern: "**/{locales,messages/*.json".to_string(),
+                include_patterns: vec!["**/{locales,messages/*.json".to_string()],
+                ..TranslationFilesConfig::default()
             },
-
             ..I18nSettings::default()
         };
 
@@ -525,7 +546,28 @@ mod tests {
         assert_that!(
             result,
             err(elements_are![all![
-                field!(ValidationError.field_path, eq("translationFiles.filePattern")),
+                field!(ValidationError.field_path, eq("translationFiles.includePatterns[0]")),
+                field!(ValidationError.message, contains_substring("Invalid glob pattern"))
+            ]])
+        );
+    }
+
+    #[rstest]
+    fn validate_invalid_translation_exclude_pattern_invalid_glob() {
+        let settings = I18nSettings {
+            translation_files: TranslationFilesConfig {
+                exclude_patterns: vec!["invalid[pattern".to_string()],
+                ..TranslationFilesConfig::default()
+            },
+            ..I18nSettings::default()
+        };
+
+        let result = settings.validate();
+
+        assert_that!(
+            result,
+            err(elements_are![all![
+                field!(ValidationError.field_path, eq("translationFiles.excludePatterns[0]")),
                 field!(ValidationError.message, contains_substring("Invalid glob pattern"))
             ]])
         );

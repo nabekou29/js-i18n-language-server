@@ -10,7 +10,8 @@ Configuration can be provided via:
 ```json
 {
   "translationFiles": {
-    "filePattern": "**/{locales,messages}/**/*.json"
+    "includePatterns": ["**/{locales,messages}/**/*.json"],
+    "excludePatterns": []
   },
   "includePatterns": ["**/*.{js,jsx,ts,tsx}"],
   "excludePatterns": ["node_modules/**"],
@@ -39,11 +40,19 @@ Configuration can be provided via:
 
 ---
 
-## translationFiles.filePattern
+## translationFiles.includePatterns
 
-`string` (default: `"**/{locales,messages}/**/*.json"`)
+`string[]` (default: `["**/{locales,messages}/**/*.json"]`)
 
-Glob pattern to find translation JSON files.
+Glob patterns to find translation JSON files.
+
+---
+
+## translationFiles.excludePatterns
+
+`string[]` (default: `[]`)
+
+Glob patterns to exclude from translation file detection.
 
 ---
 

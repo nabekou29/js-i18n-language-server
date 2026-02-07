@@ -573,23 +573,25 @@ impl Backend {
 
     /// Registers file watchers for config and translation files.
     pub(crate) async fn register_file_watchers(&self) {
-        let translation_pattern = {
+        let translation_patterns = {
             let config_manager = self.config_manager.lock().await;
-            config_manager.get_settings().translation_files.file_pattern.clone()
+            config_manager.get_settings().translation_files.include_patterns.clone()
         };
 
-        let Ok(register_options) = serde_json::to_value(DidChangeWatchedFilesRegistrationOptions {
-            watchers: vec![
-                FileSystemWatcher {
-                    glob_pattern: GlobPattern::String("**/.js-i18n.json".to_string()),
-                    kind: Some(WatchKind::all()),
-                },
-                FileSystemWatcher {
-                    glob_pattern: GlobPattern::String(translation_pattern.clone()),
-                    kind: Some(WatchKind::all()),
-                },
-            ],
-        }) else {
+        let mut watchers = vec![FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/.js-i18n.json".to_string()),
+            kind: Some(WatchKind::all()),
+        }];
+        for pattern in &translation_patterns {
+            watchers.push(FileSystemWatcher {
+                glob_pattern: GlobPattern::String(pattern.clone()),
+                kind: Some(WatchKind::all()),
+            });
+        }
+
+        let Ok(register_options) =
+            serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers })
+        else {
             tracing::warn!("Failed to serialize file watcher options");
             return;
         };
@@ -601,7 +603,7 @@ impl Backend {
         };
 
         tracing::debug!(
-            pattern = %translation_pattern,
+            patterns = ?translation_patterns,
             "Registering file watcher for translation files"
         );
         if let Err(e) = self.client.register_capability(vec![registration]).await {
@@ -662,9 +664,9 @@ impl Backend {
 
         let workspace_root = file_path.parent().map(Path::to_path_buf);
 
-        let old_pattern = {
+        let old_patterns = {
             let config_manager = self.config_manager.lock().await;
-            config_manager.get_settings().translation_files.file_pattern.clone()
+            config_manager.get_settings().translation_files.include_patterns.clone()
         };
 
         match change_type {
@@ -719,16 +721,16 @@ impl Backend {
             }
         }
 
-        let new_pattern = {
+        let new_patterns = {
             let config_manager = self.config_manager.lock().await;
-            config_manager.get_settings().translation_files.file_pattern.clone()
+            config_manager.get_settings().translation_files.include_patterns.clone()
         };
 
-        if old_pattern != new_pattern {
+        if old_patterns != new_patterns {
             tracing::info!(
-                "Translation file pattern changed: '{}' -> '{}', re-registering watchers",
-                old_pattern,
-                new_pattern
+                "Translation file patterns changed: {:?} -> {:?}, re-registering watchers",
+                old_patterns,
+                new_patterns
             );
             self.register_file_watchers().await;
         }

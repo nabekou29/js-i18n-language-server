@@ -162,5 +162,5 @@ Capabilities returned in `initialize` response:
 The server watches for changes to:
 
 - `**/.js-i18n.json` - Configuration file
-- Translation files matching `translationFiles.filePattern`
+- Translation files matching `translationFiles.includePatterns`
 - Source files matching `includePatterns`

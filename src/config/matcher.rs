@@ -47,6 +47,7 @@ pub struct FileMatcher {
     source_include_set: GlobSet,
     exclude_set: GlobSet,
     translation_set: GlobSet,
+    translation_exclude_set: GlobSet,
 }
 
 impl FileMatcher {
@@ -62,11 +63,22 @@ impl FileMatcher {
         })?;
 
         let translation_set = Self::build_glob_set(
-            std::slice::from_ref(&settings.translation_files.file_pattern),
+            &settings.translation_files.include_patterns,
             |pattern, source| MatcherError::InvalidTranslationPattern { pattern, source },
         )?;
 
-        Ok(Self { workspace_root, source_include_set, exclude_set, translation_set })
+        let translation_exclude_set = Self::build_glob_set(
+            &settings.translation_files.exclude_patterns,
+            |pattern, source| MatcherError::InvalidExcludePattern { pattern, source },
+        )?;
+
+        Ok(Self {
+            workspace_root,
+            source_include_set,
+            exclude_set,
+            translation_set,
+            translation_exclude_set,
+        })
     }
 
     fn build_glob_set<F>(patterns: &[String], make_error: F) -> Result<GlobSet, MatcherError>
@@ -106,7 +118,8 @@ impl FileMatcher {
         self.source_include_set.is_match(relative_path) && !self.exclude_set.is_match(relative_path)
     }
 
-    /// Returns true if the path matches `translationFiles.filePattern` but not `excludePatterns`.
+    /// Returns true if the path matches `translationFiles.includePatterns`
+    /// but not `excludePatterns` or `translationFiles.excludePatterns`.
     ///
     /// The path must be absolute and under the workspace root.
     #[must_use]
@@ -118,12 +131,15 @@ impl FileMatcher {
         self.is_translation_file_relative(relative_path)
     }
 
-    /// Returns true if the path matches `translationFiles.filePattern` but not `excludePatterns`.
+    /// Returns true if the path matches `translationFiles.includePatterns`
+    /// but not `excludePatterns` or `translationFiles.excludePatterns`.
     ///
     /// The path must be relative to the workspace root.
     #[must_use]
     pub fn is_translation_file_relative(&self, relative_path: &Path) -> bool {
-        self.translation_set.is_match(relative_path) && !self.exclude_set.is_match(relative_path)
+        self.translation_set.is_match(relative_path)
+            && !self.exclude_set.is_match(relative_path)
+            && !self.translation_exclude_set.is_match(relative_path)
     }
 }
 
@@ -140,13 +156,14 @@ mod tests {
     fn create_settings(
         source_include: &[&str],
         exclude: &[&str],
-        translation_pattern: &str,
+        translation_patterns: &[&str],
     ) -> I18nSettings {
         I18nSettings {
             include_patterns: source_include.iter().copied().map(String::from).collect(),
             exclude_patterns: exclude.iter().copied().map(String::from).collect(),
             translation_files: crate::config::TranslationFilesConfig {
-                file_pattern: translation_pattern.to_string(),
+                include_patterns: translation_patterns.iter().copied().map(String::from).collect(),
+                ..crate::config::TranslationFilesConfig::default()
             },
             ..I18nSettings::default()
         }
@@ -170,7 +187,7 @@ mod tests {
     #[rstest]
     fn is_source_file_with_exclude_patterns() {
         let settings =
-            create_settings(&["**/*.ts"], &["**/node_modules/**", "**/dist/**"], "**/*.json");
+            create_settings(&["**/*.ts"], &["**/node_modules/**", "**/dist/**"], &["**/*.json"]);
         let matcher =
             FileMatcher::new(PathBuf::from("/workspace"), &settings).expect("valid patterns");
 
@@ -191,7 +208,7 @@ mod tests {
 
     #[rstest]
     fn is_source_file_relative_works() {
-        let settings = create_settings(&["**/*.ts"], &[], "**/*.json");
+        let settings = create_settings(&["**/*.ts"], &[], &["**/*.json"]);
         let matcher =
             FileMatcher::new(PathBuf::from("/workspace"), &settings).expect("valid patterns");
 
@@ -214,7 +231,8 @@ mod tests {
 
     #[rstest]
     fn is_translation_file_with_exclude() {
-        let settings = create_settings(&["**/*.ts"], &["**/node_modules/**"], "**/i18n/**/*.json");
+        let settings =
+            create_settings(&["**/*.ts"], &["**/node_modules/**"], &["**/i18n/**/*.json"]);
         let matcher =
             FileMatcher::new(PathBuf::from("/workspace"), &settings).expect("valid patterns");
 
@@ -233,7 +251,7 @@ mod tests {
 
     #[rstest]
     fn is_translation_file_relative_works() {
-        let settings = create_settings(&["**/*.ts"], &[], "**/locales/**/*.json");
+        let settings = create_settings(&["**/*.ts"], &[], &["**/locales/**/*.json"]);
         let matcher =
             FileMatcher::new(PathBuf::from("/workspace"), &settings).expect("valid patterns");
 
@@ -243,7 +261,7 @@ mod tests {
 
     #[rstest]
     fn new_with_invalid_source_include_pattern() {
-        let settings = create_settings(&["**/*.{js,ts"], &[], "**/*.json");
+        let settings = create_settings(&["**/*.{js,ts"], &[], &["**/*.json"]);
 
         let result = FileMatcher::new(PathBuf::from("/workspace"), &settings);
 
@@ -254,7 +272,7 @@ mod tests {
 
     #[rstest]
     fn new_with_invalid_exclude_pattern() {
-        let settings = create_settings(&["**/*.ts"], &["[invalid"], "**/*.json");
+        let settings = create_settings(&["**/*.ts"], &["[invalid"], &["**/*.json"]);
 
         let result = FileMatcher::new(PathBuf::from("/workspace"), &settings);
 
@@ -265,7 +283,7 @@ mod tests {
 
     #[rstest]
     fn new_with_invalid_translation_pattern() {
-        let settings = create_settings(&["**/*.ts"], &[], "**/*.{json");
+        let settings = create_settings(&["**/*.ts"], &[], &["**/*.{json"]);
 
         let result = FileMatcher::new(PathBuf::from("/workspace"), &settings);
 
