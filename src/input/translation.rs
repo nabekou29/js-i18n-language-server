@@ -660,7 +660,7 @@ mod tests {
 
     use super::*;
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_simple() {
         let json = json!({
             "hello": "Hello",
@@ -669,12 +669,12 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        expect_that!(result.get("hello"), some(eq(&"Hello".to_string())));
-        expect_that!(result.get("goodbye"), some(eq(&"Goodbye".to_string())));
-        expect_that!(result.len(), eq(2));
+        assert_that!(result.get("hello"), some(eq(&"Hello".to_string())));
+        assert_that!(result.get("goodbye"), some(eq(&"Goodbye".to_string())));
+        assert_that!(result.len(), eq(2));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_nested() {
         let json = json!({
             "common": {
@@ -688,13 +688,13 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        expect_that!(result.get("common.hello"), some(eq(&"Hello".to_string())));
-        expect_that!(result.get("common.goodbye"), some(eq(&"Goodbye".to_string())));
-        expect_that!(result.get("errors.notFound"), some(eq(&"Not found".to_string())));
-        expect_that!(result.len(), eq(3));
+        assert_that!(result.get("common.hello"), some(eq(&"Hello".to_string())));
+        assert_that!(result.get("common.goodbye"), some(eq(&"Goodbye".to_string())));
+        assert_that!(result.get("errors.notFound"), some(eq(&"Not found".to_string())));
+        assert_that!(result.len(), eq(3));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_deep_nested() {
         let json = json!({
             "a": {
@@ -706,11 +706,11 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        expect_that!(result.get("a.b.c"), some(eq(&"Deep value".to_string())));
-        expect_that!(result.len(), eq(1));
+        assert_that!(result.get("a.b.c"), some(eq(&"Deep value".to_string())));
+        assert_that!(result.len(), eq(1));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_custom_separator() {
         let json = json!({
             "common": {
@@ -720,10 +720,10 @@ mod tests {
 
         let result = flatten_json(&json, "_", None);
 
-        expect_that!(result.get("common_hello"), some(eq(&"Hello".to_string())));
+        assert_that!(result.get("common_hello"), some(eq(&"Hello".to_string())));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_non_string_values() {
         let json = json!({
             "number": 42,
@@ -733,9 +733,9 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        expect_that!(result.get("number"), some(eq(&"42".to_string())));
-        expect_that!(result.get("boolean"), some(eq(&"true".to_string())));
-        expect_that!(result.get("null"), some(eq(&"null".to_string())));
+        assert_that!(result.get("number"), some(eq(&"42".to_string())));
+        assert_that!(result.get("boolean"), some(eq(&"true".to_string())));
+        assert_that!(result.get("null"), some(eq(&"null".to_string())));
     }
 
     #[rstest]
@@ -777,7 +777,7 @@ mod tests {
         assert_eq!(result.as_deref(), expected);
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_extract_key_value_ranges_simple() {
         let json_text = r#"{
   "hello": "Hello",
@@ -786,30 +786,30 @@ mod tests {
 
         let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        expect_that!(key_ranges.len(), eq(2));
-        expect_that!(key_ranges.contains_key("hello"), eq(true));
-        expect_that!(key_ranges.contains_key("goodbye"), eq(true));
+        assert_that!(key_ranges.len(), eq(2));
+        assert_that!(key_ranges.contains_key("hello"), eq(true));
+        assert_that!(key_ranges.contains_key("goodbye"), eq(true));
 
         let hello_range = key_ranges.get("hello");
-        expect_that!(hello_range, some(anything()));
+        assert_that!(hello_range, some(anything()));
         if let Some(range) = hello_range {
-            expect_that!(range.start.line, eq(1));
-            expect_that!(range.start.character, eq(2));
+            assert_that!(range.start.line, eq(1));
+            assert_that!(range.start.character, eq(2));
         }
 
-        expect_that!(value_ranges.len(), eq(2));
-        expect_that!(value_ranges.contains_key("hello"), eq(true));
-        expect_that!(value_ranges.contains_key("goodbye"), eq(true));
+        assert_that!(value_ranges.len(), eq(2));
+        assert_that!(value_ranges.contains_key("hello"), eq(true));
+        assert_that!(value_ranges.contains_key("goodbye"), eq(true));
 
         let hello_value_range = value_ranges.get("hello");
-        expect_that!(hello_value_range, some(anything()));
+        assert_that!(hello_value_range, some(anything()));
         if let Some(range) = hello_value_range {
-            expect_that!(range.start.line, eq(1));
-            expect_that!(range.start.character, eq(11));
+            assert_that!(range.start.line, eq(1));
+            assert_that!(range.start.character, eq(11));
         }
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_extract_key_value_ranges_nested() {
         let json_text = r#"{
   "common": {
@@ -820,19 +820,19 @@ mod tests {
 
         let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        expect_that!(key_ranges.len(), eq(3));
-        expect_that!(key_ranges.contains_key("common"), eq(true));
-        expect_that!(key_ranges.contains_key("common.hello"), eq(true));
-        expect_that!(key_ranges.contains_key("common.goodbye"), eq(true));
+        assert_that!(key_ranges.len(), eq(3));
+        assert_that!(key_ranges.contains_key("common"), eq(true));
+        assert_that!(key_ranges.contains_key("common.hello"), eq(true));
+        assert_that!(key_ranges.contains_key("common.goodbye"), eq(true));
 
         // Object values don't have value ranges, only leaf values do
-        expect_that!(value_ranges.len(), eq(2));
-        expect_that!(value_ranges.contains_key("common"), eq(false));
-        expect_that!(value_ranges.contains_key("common.hello"), eq(true));
-        expect_that!(value_ranges.contains_key("common.goodbye"), eq(true));
+        assert_that!(value_ranges.len(), eq(2));
+        assert_that!(value_ranges.contains_key("common"), eq(false));
+        assert_that!(value_ranges.contains_key("common.hello"), eq(true));
+        assert_that!(value_ranges.contains_key("common.goodbye"), eq(true));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_extract_key_value_ranges_with_dots_in_keys() {
         // Keys containing dots are not split but concatenated with the separator
         let json_text = r#"{
@@ -846,17 +846,17 @@ mod tests {
 
         let (key_ranges, _value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        expect_that!(key_ranges.contains_key("hoge.fuga"), eq(true));
-        expect_that!(key_ranges.contains_key("hoge.fuga.piyo"), eq(true));
+        assert_that!(key_ranges.contains_key("hoge.fuga"), eq(true));
+        assert_that!(key_ranges.contains_key("hoge.fuga.piyo"), eq(true));
 
-        expect_that!(key_ranges.contains_key("hoge"), eq(true));
-        expect_that!(key_ranges.contains_key("hoge.foo.bar"), eq(true));
+        assert_that!(key_ranges.contains_key("hoge"), eq(true));
+        assert_that!(key_ranges.contains_key("hoge.foo.bar"), eq(true));
 
-        expect_that!(key_ranges.contains_key("hoge.foo"), eq(false));
-        expect_that!(key_ranges.contains_key("foo.bar"), eq(false));
+        assert_that!(key_ranges.contains_key("hoge.foo"), eq(false));
+        assert_that!(key_ranges.contains_key("foo.bar"), eq(false));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_translation_key_at_position() {
         use crate::db::I18nDatabaseImpl;
 
@@ -907,7 +907,7 @@ mod tests {
         assert_eq!(key.unwrap().text(&db), &"nested.key".to_string());
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_with_array() {
         let json = json!({
             "items": ["apple", "banana", "cherry"]
@@ -915,13 +915,13 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        expect_that!(result.get("items[0]"), some(eq(&"apple".to_string())));
-        expect_that!(result.get("items[1]"), some(eq(&"banana".to_string())));
-        expect_that!(result.get("items[2]"), some(eq(&"cherry".to_string())));
-        expect_that!(result.len(), eq(3));
+        assert_that!(result.get("items[0]"), some(eq(&"apple".to_string())));
+        assert_that!(result.get("items[1]"), some(eq(&"banana".to_string())));
+        assert_that!(result.get("items[2]"), some(eq(&"cherry".to_string())));
+        assert_that!(result.len(), eq(3));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_with_nested_array() {
         let json = json!({
             "menu": {
@@ -931,11 +931,11 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        expect_that!(result.get("menu.items[0]"), some(eq(&"item1".to_string())));
-        expect_that!(result.get("menu.items[1]"), some(eq(&"item2".to_string())));
+        assert_that!(result.get("menu.items[0]"), some(eq(&"item1".to_string())));
+        assert_that!(result.get("menu.items[1]"), some(eq(&"item2".to_string())));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_with_array_of_objects() {
         let json = json!({
             "users": [
@@ -946,11 +946,11 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        expect_that!(result.get("users[0].name"), some(eq(&"Alice".to_string())));
-        expect_that!(result.get("users[1].name"), some(eq(&"Bob".to_string())));
+        assert_that!(result.get("users[0].name"), some(eq(&"Alice".to_string())));
+        assert_that!(result.get("users[1].name"), some(eq(&"Bob".to_string())));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_flatten_json_with_nested_arrays() {
         let json = json!({
             "matrix": [
@@ -961,13 +961,13 @@ mod tests {
 
         let result = flatten_json(&json, ".", None);
 
-        expect_that!(result.get("matrix[0][0]"), some(eq(&"a".to_string())));
-        expect_that!(result.get("matrix[0][1]"), some(eq(&"b".to_string())));
-        expect_that!(result.get("matrix[1][0]"), some(eq(&"c".to_string())));
-        expect_that!(result.get("matrix[1][1]"), some(eq(&"d".to_string())));
+        assert_that!(result.get("matrix[0][0]"), some(eq(&"a".to_string())));
+        assert_that!(result.get("matrix[0][1]"), some(eq(&"b".to_string())));
+        assert_that!(result.get("matrix[1][0]"), some(eq(&"c".to_string())));
+        assert_that!(result.get("matrix[1][1]"), some(eq(&"d".to_string())));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_extract_key_value_ranges_with_array() {
         let json_text = r#"{
   "items": ["apple", "banana"]
@@ -975,15 +975,15 @@ mod tests {
 
         let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        expect_that!(key_ranges.contains_key("items"), eq(true));
-        expect_that!(key_ranges.contains_key("items[0]"), eq(true));
-        expect_that!(key_ranges.contains_key("items[1]"), eq(true));
+        assert_that!(key_ranges.contains_key("items"), eq(true));
+        assert_that!(key_ranges.contains_key("items[0]"), eq(true));
+        assert_that!(key_ranges.contains_key("items[1]"), eq(true));
 
-        expect_that!(value_ranges.contains_key("items[0]"), eq(true));
-        expect_that!(value_ranges.contains_key("items[1]"), eq(true));
+        assert_that!(value_ranges.contains_key("items[0]"), eq(true));
+        assert_that!(value_ranges.contains_key("items[1]"), eq(true));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_extract_key_value_ranges_with_array_of_objects() {
         let json_text = r#"{
   "users": [
@@ -994,13 +994,13 @@ mod tests {
 
         let (key_ranges, value_ranges) = extract_key_value_ranges(json_text, ".");
 
-        expect_that!(key_ranges.contains_key("users"), eq(true));
-        expect_that!(key_ranges.contains_key("users[0]"), eq(true));
-        expect_that!(key_ranges.contains_key("users[0].name"), eq(true));
-        expect_that!(key_ranges.contains_key("users[1]"), eq(true));
-        expect_that!(key_ranges.contains_key("users[1].name"), eq(true));
+        assert_that!(key_ranges.contains_key("users"), eq(true));
+        assert_that!(key_ranges.contains_key("users[0]"), eq(true));
+        assert_that!(key_ranges.contains_key("users[0].name"), eq(true));
+        assert_that!(key_ranges.contains_key("users[1]"), eq(true));
+        assert_that!(key_ranges.contains_key("users[1].name"), eq(true));
 
-        expect_that!(value_ranges.contains_key("users[0].name"), eq(true));
-        expect_that!(value_ranges.contains_key("users[1].name"), eq(true));
+        assert_that!(value_ranges.contains_key("users[0].name"), eq(true));
+        assert_that!(value_ranges.contains_key("users[1].name"), eq(true));
     }
 }

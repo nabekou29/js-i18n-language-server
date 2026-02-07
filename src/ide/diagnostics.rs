@@ -275,6 +275,8 @@ mod tests {
     use std::collections::HashMap;
 
     use googletest::prelude::*;
+    use rstest::*;
+    use tower_lsp::lsp_types::DiagnosticSeverity;
 
     use super::*;
     use crate::db::I18nDatabaseImpl;
@@ -284,7 +286,7 @@ mod tests {
     };
     use crate::input::translation::Translation;
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_diagnostics_with_missing_key() {
         let db = I18nDatabaseImpl::default();
 
@@ -317,16 +319,16 @@ mod tests {
         let options = DiagnosticOptions::default();
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        expect_that!(diagnostics, not(is_empty()));
-        expect_that!(
+        assert_that!(diagnostics, not(is_empty()));
+        assert_that!(
             diagnostics,
             contains(field!(Diagnostic.message, contains_substring("common.missing")))
         );
-        expect_that!(
+        assert_that!(
             diagnostics,
             each(field!(Diagnostic.severity, some(eq(&DiagnosticSeverity::WARNING))))
         );
-        expect_that!(
+        assert_that!(
             diagnostics,
             each(field!(
                 Diagnostic.code,
@@ -335,7 +337,7 @@ mod tests {
         );
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_diagnostics_all_keys_exist() {
         let db = I18nDatabaseImpl::default();
 
@@ -368,10 +370,10 @@ mod tests {
         let options = DiagnosticOptions::default();
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        expect_that!(diagnostics, is_empty());
+        assert_that!(diagnostics, is_empty());
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_diagnostics_multiple_translations() {
         let db = I18nDatabaseImpl::default();
 
@@ -423,15 +425,15 @@ mod tests {
         );
 
         // common.hello is missing in ja, errors.notFound is missing in en
-        expect_that!(diagnostics, len(eq(2)));
-        expect_that!(
+        assert_that!(diagnostics, len(eq(2)));
+        assert_that!(
             diagnostics,
             contains(all![
                 field!(Diagnostic.message, contains_substring("common.hello")),
                 field!(Diagnostic.message, contains_substring("ja"))
             ])
         );
-        expect_that!(
+        assert_that!(
             diagnostics,
             contains(all![
                 field!(Diagnostic.message, contains_substring("errors.notFound")),
@@ -440,7 +442,7 @@ mod tests {
         );
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_determine_target_languages_with_required() {
         let all_languages: HashSet<String> =
             ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
@@ -451,13 +453,13 @@ mod tests {
 
         let target = determine_target_languages(&all_languages, &options);
 
-        expect_that!(target, len(eq(2)));
-        expect_that!(target, contains(eq(&"en")));
-        expect_that!(target, contains(eq(&"ja")));
-        expect_that!(target, not(contains(eq(&"zh"))));
+        assert_that!(target, len(eq(2)));
+        assert_that!(target, contains(eq(&"en")));
+        assert_that!(target, contains(eq(&"ja")));
+        assert_that!(target, not(contains(eq(&"zh"))));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_determine_target_languages_with_optional() {
         let all_languages: HashSet<String> =
             ["en", "ja", "zh"].iter().map(|s| s.to_string()).collect();
@@ -468,13 +470,13 @@ mod tests {
 
         let target = determine_target_languages(&all_languages, &options);
 
-        expect_that!(target, len(eq(2)));
-        expect_that!(target, contains(eq(&"en")));
-        expect_that!(target, contains(eq(&"ja")));
-        expect_that!(target, not(contains(eq(&"zh"))));
+        assert_that!(target, len(eq(2)));
+        assert_that!(target, contains(eq(&"en")));
+        assert_that!(target, contains(eq(&"ja")));
+        assert_that!(target, not(contains(eq(&"zh"))));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_diagnostics_disabled() {
         let db = I18nDatabaseImpl::default();
 
@@ -498,10 +500,10 @@ mod tests {
         let options = DiagnosticOptions { enabled: false, ..DiagnosticOptions::default() };
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        expect_that!(diagnostics, is_empty());
+        assert_that!(diagnostics, is_empty());
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_diagnostics_custom_severity() {
         let db = I18nDatabaseImpl::default();
 
@@ -526,47 +528,47 @@ mod tests {
             DiagnosticOptions { severity: Severity::Error, ..DiagnosticOptions::default() };
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        expect_that!(diagnostics, not(is_empty()));
-        expect_that!(
+        assert_that!(diagnostics, not(is_empty()));
+        assert_that!(
             diagnostics,
             each(field!(Diagnostic.severity, some(eq(&DiagnosticSeverity::ERROR))))
         );
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_is_key_used_exact_match() {
         let used_keys: HashSet<String> =
             ["common.hello", "common.goodbye"].iter().map(|s| s.to_string()).collect();
 
-        expect_that!(is_key_used("common.hello", &used_keys, "."), eq(true));
-        expect_that!(is_key_used("common.goodbye", &used_keys, "."), eq(true));
-        expect_that!(is_key_used("common.missing", &used_keys, "."), eq(false));
+        assert_that!(is_key_used("common.hello", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("common.goodbye", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("common.missing", &used_keys, "."), eq(false));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_is_key_used_prefix_match() {
         // When t('hoge.fuga') is used, hoge.fuga.piyo is considered used
         let used_keys: HashSet<String> = ["hoge.fuga"].iter().map(|s| s.to_string()).collect();
 
-        expect_that!(is_key_used("hoge.fuga", &used_keys, "."), eq(true));
-        expect_that!(is_key_used("hoge.fuga.piyo", &used_keys, "."), eq(true));
-        expect_that!(is_key_used("hoge.fuga.piyo.deep", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("hoge.fuga", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("hoge.fuga.piyo", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("hoge.fuga.piyo.deep", &used_keys, "."), eq(true));
         // hoge.fugaX does not prefix match (doesn't start with hoge.fuga.)
-        expect_that!(is_key_used("hoge.fugaX", &used_keys, "."), eq(false));
-        expect_that!(is_key_used("other.key", &used_keys, "."), eq(false));
+        assert_that!(is_key_used("hoge.fugaX", &used_keys, "."), eq(false));
+        assert_that!(is_key_used("other.key", &used_keys, "."), eq(false));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_is_key_used_with_custom_separator() {
         let used_keys: HashSet<String> = ["hoge:fuga"].iter().map(|s| s.to_string()).collect();
 
-        expect_that!(is_key_used("hoge:fuga", &used_keys, ":"), eq(true));
-        expect_that!(is_key_used("hoge:fuga:piyo", &used_keys, ":"), eq(true));
+        assert_that!(is_key_used("hoge:fuga", &used_keys, ":"), eq(true));
+        assert_that!(is_key_used("hoge:fuga:piyo", &used_keys, ":"), eq(true));
         // Dot is not the separator, so no prefix match
-        expect_that!(is_key_used("hoge:fuga.piyo", &used_keys, ":"), eq(false));
+        assert_that!(is_key_used("hoge:fuga.piyo", &used_keys, ":"), eq(false));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_unused_key_diagnostics_basic() {
         let db = I18nDatabaseImpl::default();
 
@@ -618,8 +620,8 @@ mod tests {
             Severity::Hint,
         );
 
-        expect_that!(diagnostics, len(eq(1)));
-        expect_that!(
+        assert_that!(diagnostics, len(eq(1)));
+        assert_that!(
             diagnostics,
             contains(all![
                 field!(Diagnostic.message, contains_substring("common.unused")),
@@ -633,7 +635,7 @@ mod tests {
         );
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_unused_key_diagnostics_with_prefix_match() {
         let db = I18nDatabaseImpl::default();
 
@@ -696,14 +698,14 @@ mod tests {
 
         // hoge.fuga and hoge.fuga.piyo are used (prefix match)
         // Only other.key is detected as unused
-        expect_that!(diagnostics, len(eq(1)));
-        expect_that!(
+        assert_that!(diagnostics, len(eq(1)));
+        assert_that!(
             diagnostics,
             contains(field!(Diagnostic.message, contains_substring("other.key")))
         );
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_unused_key_diagnostics_with_ignore_patterns() {
         let db = I18nDatabaseImpl::default();
 
@@ -754,14 +756,14 @@ mod tests {
         );
 
         // debug.info and debug.warn are ignored, only other.unused is reported
-        expect_that!(diagnostics, len(eq(1)));
-        expect_that!(
+        assert_that!(diagnostics, len(eq(1)));
+        assert_that!(
             diagnostics,
             contains(field!(Diagnostic.message, contains_substring("other.unused")))
         );
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_unused_key_diagnostics_custom_severity() {
         let db = I18nDatabaseImpl::default();
 
@@ -808,42 +810,42 @@ mod tests {
             Severity::Warning,
         );
 
-        expect_that!(diagnostics, len(eq(1)));
-        expect_that!(
+        assert_that!(diagnostics, len(eq(1)));
+        assert_that!(
             diagnostics,
             each(field!(Diagnostic.severity, some(eq(&DiagnosticSeverity::WARNING))))
         );
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_has_keys_with_prefix() {
         let keys: HashSet<String> =
             ["nested.key", "nested.foo", "other.key"].iter().map(|s| s.to_string()).collect();
 
-        expect_that!(has_keys_with_prefix("nested", &keys, "."), eq(true));
-        expect_that!(has_keys_with_prefix("other", &keys, "."), eq(true));
-        expect_that!(has_keys_with_prefix("missing", &keys, "."), eq(false));
+        assert_that!(has_keys_with_prefix("nested", &keys, "."), eq(true));
+        assert_that!(has_keys_with_prefix("other", &keys, "."), eq(true));
+        assert_that!(has_keys_with_prefix("missing", &keys, "."), eq(false));
         // "nest" is not a prefix of "nested.key" (requires separator)
-        expect_that!(has_keys_with_prefix("nest", &keys, "."), eq(false));
+        assert_that!(has_keys_with_prefix("nest", &keys, "."), eq(false));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_key_exists_or_has_children() {
         let keys: HashSet<String> =
             ["nested.key", "nested.foo", "single"].iter().map(|s| s.to_string()).collect();
 
-        expect_that!(key_exists_or_has_children("single", &keys, "."), eq(true));
-        expect_that!(key_exists_or_has_children("nested.key", &keys, "."), eq(true));
+        assert_that!(key_exists_or_has_children("single", &keys, "."), eq(true));
+        assert_that!(key_exists_or_has_children("nested.key", &keys, "."), eq(true));
 
         // Reverse prefix match (child keys exist)
-        expect_that!(key_exists_or_has_children("nested", &keys, "."), eq(true));
+        assert_that!(key_exists_or_has_children("nested", &keys, "."), eq(true));
 
-        expect_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
+        assert_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
         // "singl" is not a prefix of "single" (requires separator)
-        expect_that!(key_exists_or_has_children("singl", &keys, "."), eq(false));
+        assert_that!(key_exists_or_has_children("singl", &keys, "."), eq(false));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_diagnostics_with_reverse_prefix_match() {
         let db = I18nDatabaseImpl::default();
 
@@ -875,10 +877,10 @@ mod tests {
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
         // Since nested.key exists, nested is valid (no diagnostics)
-        expect_that!(diagnostics, is_empty());
+        assert_that!(diagnostics, is_empty());
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_generate_diagnostics_no_reverse_prefix_match() {
         let db = I18nDatabaseImpl::default();
 
@@ -908,44 +910,44 @@ mod tests {
         let options = DiagnosticOptions::default();
         let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
 
-        expect_that!(diagnostics, len(eq(1)));
-        expect_that!(
+        assert_that!(diagnostics, len(eq(1)));
+        assert_that!(
             diagnostics,
             contains(field!(Diagnostic.message, contains_substring("missing")))
         );
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_is_key_used_with_array_prefix() {
         // When t('items') is used, items[0] is considered used
         let used_keys: HashSet<String> = ["items"].iter().map(|s| s.to_string()).collect();
 
-        expect_that!(is_key_used("items", &used_keys, "."), eq(true));
-        expect_that!(is_key_used("items[0]", &used_keys, "."), eq(true));
-        expect_that!(is_key_used("items[0].name", &used_keys, "."), eq(true));
-        expect_that!(is_key_used("items[1]", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("items", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("items[0]", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("items[0].name", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("items[1]", &used_keys, "."), eq(true));
         // itemsX does not match (no separator/bracket)
-        expect_that!(is_key_used("itemsX", &used_keys, "."), eq(false));
+        assert_that!(is_key_used("itemsX", &used_keys, "."), eq(false));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_has_keys_with_prefix_with_array() {
         let keys: HashSet<String> =
             ["items[0]", "items[1]", "other.key"].iter().map(|s| s.to_string()).collect();
 
-        expect_that!(has_keys_with_prefix("items", &keys, "."), eq(true));
-        expect_that!(has_keys_with_prefix("other", &keys, "."), eq(true));
-        expect_that!(has_keys_with_prefix("missing", &keys, "."), eq(false));
+        assert_that!(has_keys_with_prefix("items", &keys, "."), eq(true));
+        assert_that!(has_keys_with_prefix("other", &keys, "."), eq(true));
+        assert_that!(has_keys_with_prefix("missing", &keys, "."), eq(false));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_key_exists_or_has_children_with_array() {
         let keys: HashSet<String> =
             ["items[0]", "items[1]", "single"].iter().map(|s| s.to_string()).collect();
 
-        expect_that!(key_exists_or_has_children("single", &keys, "."), eq(true));
+        assert_that!(key_exists_or_has_children("single", &keys, "."), eq(true));
         // Array children exist
-        expect_that!(key_exists_or_has_children("items", &keys, "."), eq(true));
-        expect_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
+        assert_that!(key_exists_or_has_children("items", &keys, "."), eq(true));
+        assert_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
     }
 }

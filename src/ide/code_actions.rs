@@ -250,10 +250,11 @@ fn cleanup_empty_objects(obj: &jsonc_parser::cst::CstObject) {
 )]
 mod tests {
     use googletest::prelude::*;
+    use rstest::*;
 
     use super::*;
 
-    #[googletest::test]
+    #[rstest]
     fn test_extract_missing_languages() {
         let diagnostics = vec![Diagnostic {
             code: Some(NumberOrString::String("missing-translation".to_string())),
@@ -266,12 +267,12 @@ mod tests {
 
         let result = extract_missing_languages(&diagnostics);
 
-        expect_that!(result, len(eq(2)));
-        expect_that!(result, contains(eq(&"ja".to_string())));
-        expect_that!(result, contains(eq(&"zh".to_string())));
+        assert_that!(result, len(eq(2)));
+        assert_that!(result, contains(eq(&"ja".to_string())));
+        assert_that!(result, contains(eq(&"zh".to_string())));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_extract_missing_languages_empty() {
         let diagnostics = vec![Diagnostic {
             code: Some(NumberOrString::String("other-diagnostic".to_string())),
@@ -281,10 +282,10 @@ mod tests {
 
         let result = extract_missing_languages(&diagnostics);
 
-        expect_that!(result, is_empty());
+        assert_that!(result, is_empty());
     }
 
-    #[googletest::test]
+    #[rstest]
     fn generate_code_actions_basic() {
         let languages = vec!["en".to_string(), "ja".to_string()];
         let missing = HashSet::new();
@@ -303,7 +304,7 @@ mod tests {
         assert_that!(titles, each(contains_substring("Edit translation for")));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn generate_code_actions_with_missing() {
         let languages = vec!["en".to_string(), "ja".to_string()];
         let missing: HashSet<String> = ["ja".to_string()].into();
@@ -322,7 +323,7 @@ mod tests {
         assert_that!(titles[1], eq("Edit translation for en"));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn generate_code_actions_with_primary() {
         let languages = vec!["en".to_string(), "ja".to_string(), "zh".to_string()];
         let missing = HashSet::new();
@@ -336,7 +337,7 @@ mod tests {
         assert_that!(first_title, eq("Edit translation for ja"));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn generate_code_actions_args_format() {
         let languages = vec!["en".to_string()];
         let missing = HashSet::new();
@@ -352,7 +353,7 @@ mod tests {
         assert_that!(arg["key"].as_str().unwrap(), eq("greeting.hello"));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_insert_key_flat() {
         let json = r#"{
   "hello": "world"
@@ -361,12 +362,12 @@ mod tests {
         let result = insert_key_to_json_text(json, "goodbye", "さようなら", ".")
             .expect("insertion should succeed");
 
-        expect_that!(result.new_text, contains_substring("\"goodbye\""));
-        expect_that!(result.new_text, contains_substring("\"goodbye\": \"さようなら\""));
-        expect_that!(result.new_text, contains_substring("\"hello\": \"world\""));
+        assert_that!(result.new_text, contains_substring("\"goodbye\""));
+        assert_that!(result.new_text, contains_substring("\"goodbye\": \"さようなら\""));
+        assert_that!(result.new_text, contains_substring("\"hello\": \"world\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_insert_key_nested_new_parent() {
         let json = r#"{
   "hello": "world"
@@ -375,12 +376,12 @@ mod tests {
         let result = insert_key_to_json_text(json, "common.greeting", "こんにちは", ".")
             .expect("insertion should succeed");
 
-        expect_that!(result.new_text, contains_substring("\"common\""));
-        expect_that!(result.new_text, contains_substring("\"greeting\""));
-        expect_that!(result.new_text, contains_substring("\"greeting\": \"こんにちは\""));
+        assert_that!(result.new_text, contains_substring("\"common\""));
+        assert_that!(result.new_text, contains_substring("\"greeting\""));
+        assert_that!(result.new_text, contains_substring("\"greeting\": \"こんにちは\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_insert_key_nested_existing_parent() {
         let json = r#"{
   "common": {
@@ -391,11 +392,11 @@ mod tests {
         let result = insert_key_to_json_text(json, "common.goodbye", "さようなら", ".")
             .expect("insertion should succeed");
 
-        expect_that!(result.new_text, contains_substring("\"goodbye\": \"さようなら\""));
-        expect_that!(result.new_text, contains_substring("\"hello\": \"こんにちは\""));
+        assert_that!(result.new_text, contains_substring("\"goodbye\": \"さようなら\""));
+        assert_that!(result.new_text, contains_substring("\"hello\": \"こんにちは\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_insert_key_preserves_formatting() {
         let json = r#"{
     "existing": "value"
@@ -404,10 +405,10 @@ mod tests {
         let result = insert_key_to_json_text(json, "new", "new_value", ".")
             .expect("insertion should succeed");
 
-        expect_that!(result.new_text, contains_substring("    \"existing\""));
+        assert_that!(result.new_text, contains_substring("    \"existing\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_update_key_value() {
         let json = r#"{
   "hello": "world"
@@ -416,10 +417,10 @@ mod tests {
         let result =
             update_key_in_json_text(json, "hello", "updated", ".").expect("update should succeed");
 
-        expect_that!(result.new_text, contains_substring("\"hello\": \"updated\""));
+        assert_that!(result.new_text, contains_substring("\"hello\": \"updated\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_update_nested_key_value() {
         let json = r#"{
   "common": {
@@ -430,11 +431,11 @@ mod tests {
         let result = update_key_in_json_text(json, "common.hello", "こんにちは", ".")
             .expect("update should succeed");
 
-        expect_that!(result.new_text, contains_substring("\"hello\": \"こんにちは\""));
-        expect_that!(result.new_text, contains_substring("\"common\""));
+        assert_that!(result.new_text, contains_substring("\"hello\": \"こんにちは\""));
+        assert_that!(result.new_text, contains_substring("\"common\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_update_nonexistent_key_returns_none() {
         let json = r#"{
   "hello": "world"
@@ -442,10 +443,10 @@ mod tests {
 
         let result = update_key_in_json_text(json, "nonexistent", "value", ".");
 
-        expect_that!(result, none());
+        assert_that!(result, none());
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_delete_single_key() {
         let json = r#"{
   "hello": "world",
@@ -454,12 +455,12 @@ mod tests {
         let result = delete_keys_from_json_text(json, &["unused".to_string()], ".")
             .expect("deletion should succeed");
 
-        expect_that!(result.deleted_count, eq(1));
-        expect_that!(result.new_text, not(contains_substring("\"unused\"")));
-        expect_that!(result.new_text, contains_substring("\"hello\""));
+        assert_that!(result.deleted_count, eq(1));
+        assert_that!(result.new_text, not(contains_substring("\"unused\"")));
+        assert_that!(result.new_text, contains_substring("\"hello\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_delete_nested_key() {
         let json = r#"{
   "common": {
@@ -470,13 +471,13 @@ mod tests {
         let result = delete_keys_from_json_text(json, &["common.unused".to_string()], ".")
             .expect("deletion should succeed");
 
-        expect_that!(result.deleted_count, eq(1));
-        expect_that!(result.new_text, not(contains_substring("\"unused\"")));
-        expect_that!(result.new_text, contains_substring("\"used\""));
-        expect_that!(result.new_text, contains_substring("\"common\""));
+        assert_that!(result.deleted_count, eq(1));
+        assert_that!(result.new_text, not(contains_substring("\"unused\"")));
+        assert_that!(result.new_text, contains_substring("\"used\""));
+        assert_that!(result.new_text, contains_substring("\"common\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_delete_cleanup_empty_parent() {
         let json = r#"{
   "used": "value",
@@ -487,11 +488,11 @@ mod tests {
         let result = delete_keys_from_json_text(json, &["empty_parent.unused".to_string()], ".")
             .expect("deletion should succeed");
 
-        expect_that!(result.new_text, not(contains_substring("\"empty_parent\"")));
-        expect_that!(result.new_text, contains_substring("\"used\""));
+        assert_that!(result.new_text, not(contains_substring("\"empty_parent\"")));
+        assert_that!(result.new_text, contains_substring("\"used\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_delete_preserves_formatting() {
         let json = r#"{
     "used": "value",
@@ -500,10 +501,10 @@ mod tests {
         let result = delete_keys_from_json_text(json, &["unused".to_string()], ".")
             .expect("deletion should succeed");
 
-        expect_that!(result.new_text, contains_substring("    \"used\""));
+        assert_that!(result.new_text, contains_substring("    \"used\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_delete_multiple_keys() {
         let json = r#"{
   "a": "1",
@@ -513,13 +514,13 @@ mod tests {
         let result = delete_keys_from_json_text(json, &["a".to_string(), "c".to_string()], ".")
             .expect("deletion should succeed");
 
-        expect_that!(result.deleted_count, eq(2));
-        expect_that!(result.new_text, not(contains_substring("\"a\"")));
-        expect_that!(result.new_text, not(contains_substring("\"c\"")));
-        expect_that!(result.new_text, contains_substring("\"b\""));
+        assert_that!(result.deleted_count, eq(2));
+        assert_that!(result.new_text, not(contains_substring("\"a\"")));
+        assert_that!(result.new_text, not(contains_substring("\"c\"")));
+        assert_that!(result.new_text, contains_substring("\"b\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_delete_nonexistent_key() {
         let json = r#"{
   "hello": "world"
@@ -527,11 +528,11 @@ mod tests {
         let result = delete_keys_from_json_text(json, &["nonexistent".to_string()], ".")
             .expect("deletion should succeed");
 
-        expect_that!(result.deleted_count, eq(0));
-        expect_that!(result.new_text, contains_substring("\"hello\""));
+        assert_that!(result.deleted_count, eq(0));
+        assert_that!(result.new_text, contains_substring("\"hello\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_delete_deeply_nested_cleanup() {
         let json = r#"{
   "keep": "value",
@@ -544,19 +545,19 @@ mod tests {
         let result = delete_keys_from_json_text(json, &["deep.nested.unused".to_string()], ".")
             .expect("deletion should succeed");
 
-        expect_that!(result.new_text, not(contains_substring("\"deep\"")));
-        expect_that!(result.new_text, not(contains_substring("\"nested\"")));
-        expect_that!(result.new_text, contains_substring("\"keep\""));
+        assert_that!(result.new_text, not(contains_substring("\"deep\"")));
+        assert_that!(result.new_text, not(contains_substring("\"nested\"")));
+        assert_that!(result.new_text, contains_substring("\"keep\""));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_delete_empty_keys_list() {
         let json = r#"{
   "hello": "world"
 }"#;
         let result = delete_keys_from_json_text(json, &[], ".").expect("deletion should succeed");
 
-        expect_that!(result.deleted_count, eq(0));
-        expect_that!(result.new_text, contains_substring("\"hello\""));
+        assert_that!(result.deleted_count, eq(0));
+        assert_that!(result.new_text, contains_substring("\"hello\""));
     }
 }

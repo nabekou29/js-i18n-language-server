@@ -12,8 +12,10 @@ paths: "src/**/*.rs"
 
 ## Framework
 
-- **rstest** - `#[rstest]`, `#[case]`, `#[fixture]`
-- **googletest** - `assert_that!`, `eq()`, `len()`, `some()`, `none()`
+- **rstest** - `#[rstest]`, `#[case]`, `#[fixture]` (test attribute)
+- **googletest** - `assert_that!`, `eq()`, `len()`, `some()`, `none()` (matchers only)
+
+Always use `#[rstest]` as the test attribute. Do not use `#[googletest::test]` or `expect_that!`.
 
 ## In-Source Tests
 

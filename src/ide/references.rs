@@ -56,6 +56,7 @@ mod tests {
     use std::path::PathBuf;
 
     use googletest::prelude::*;
+    use rstest::*;
 
     use super::*;
     use crate::db::I18nDatabaseImpl;
@@ -65,7 +66,7 @@ mod tests {
     };
     use crate::interned::TransKey;
 
-    #[googletest::test]
+    #[rstest]
     fn test_find_references_single_file() {
         let db = I18nDatabaseImpl::default();
 
@@ -87,14 +88,14 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let locations = find_references(&db, key, &source_files, ".");
 
-        expect_that!(locations.len(), eq(2));
+        assert_that!(locations.len(), eq(2));
 
         for location in &locations {
-            expect_that!(location.uri.path(), eq("/test.ts"));
+            assert_that!(location.uri.path(), eq("/test.ts"));
         }
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_find_references_multiple_files() {
         let db = I18nDatabaseImpl::default();
 
@@ -121,10 +122,10 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let locations = find_references(&db, key, &source_files, ".");
 
-        expect_that!(locations.len(), eq(2));
+        assert_that!(locations.len(), eq(2));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_find_references_no_match() {
         let db = I18nDatabaseImpl::default();
 
@@ -142,10 +143,10 @@ mod tests {
         let key = TransKey::new(&db, "common.nonexistent".to_string());
         let locations = find_references(&db, key, &source_files, ".");
 
-        expect_that!(locations, is_empty());
+        assert_that!(locations, is_empty());
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_find_references_empty_files() {
         let db = I18nDatabaseImpl::default();
 
@@ -153,10 +154,10 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let locations = find_references(&db, key, &source_files, ".");
 
-        expect_that!(locations, is_empty());
+        assert_that!(locations, is_empty());
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_find_references_plural_suffix() {
         let db = I18nDatabaseImpl::default();
 
@@ -177,10 +178,10 @@ mod tests {
         let key = TransKey::new(&db, "items_one".to_string());
         let locations = find_references(&db, key, &source_files, ".");
 
-        expect_that!(locations.len(), eq(2));
+        assert_that!(locations.len(), eq(2));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_find_references_ordinal_plural_suffix() {
         let db = I18nDatabaseImpl::default();
 
@@ -198,10 +199,10 @@ mod tests {
         let key = TransKey::new(&db, "place_ordinal_one".to_string());
         let locations = find_references(&db, key, &source_files, ".");
 
-        expect_that!(locations.len(), eq(1));
+        assert_that!(locations.len(), eq(1));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn test_find_references_base_key_no_extra_matches() {
         let db = I18nDatabaseImpl::default();
 
@@ -222,6 +223,6 @@ mod tests {
         let key = TransKey::new(&db, "items".to_string());
         let locations = find_references(&db, key, &source_files, ".");
 
-        expect_that!(locations.len(), eq(1));
+        assert_that!(locations.len(), eq(1));
     }
 }

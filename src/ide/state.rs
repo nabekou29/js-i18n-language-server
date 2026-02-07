@@ -110,50 +110,51 @@ mod tests {
     use std::path::PathBuf;
 
     use googletest::prelude::*;
+    use rstest::*;
 
     use super::*;
 
-    #[googletest::test]
+    #[rstest]
     fn new_creates_empty_state() {
         let db = I18nDatabaseImpl::default();
         let state = ServerState::new(db);
 
-        expect_that!(Arc::strong_count(&state.db), eq(1));
-        expect_that!(Arc::strong_count(&state.source_files), eq(1));
-        expect_that!(Arc::strong_count(&state.translations), eq(1));
-        expect_that!(Arc::strong_count(&state.opened_files), eq(1));
-        expect_that!(Arc::strong_count(&state.current_language), eq(1));
+        assert_that!(Arc::strong_count(&state.db), eq(1));
+        assert_that!(Arc::strong_count(&state.source_files), eq(1));
+        assert_that!(Arc::strong_count(&state.translations), eq(1));
+        assert_that!(Arc::strong_count(&state.opened_files), eq(1));
+        assert_that!(Arc::strong_count(&state.current_language), eq(1));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn clone_shares_state() {
         let db = I18nDatabaseImpl::default();
         let state1 = ServerState::new(db);
         let state2 = state1.clone();
 
-        expect_that!(Arc::strong_count(&state1.db), eq(2));
-        expect_that!(Arc::strong_count(&state1.source_files), eq(2));
-        expect_that!(Arc::strong_count(&state1.translations), eq(2));
-        expect_that!(Arc::strong_count(&state1.opened_files), eq(2));
-        expect_that!(Arc::strong_count(&state1.current_language), eq(2));
+        assert_that!(Arc::strong_count(&state1.db), eq(2));
+        assert_that!(Arc::strong_count(&state1.source_files), eq(2));
+        assert_that!(Arc::strong_count(&state1.translations), eq(2));
+        assert_that!(Arc::strong_count(&state1.opened_files), eq(2));
+        assert_that!(Arc::strong_count(&state1.current_language), eq(2));
 
-        expect_that!(Arc::ptr_eq(&state1.db, &state2.db), eq(true));
-        expect_that!(Arc::ptr_eq(&state1.source_files, &state2.source_files), eq(true));
+        assert_that!(Arc::ptr_eq(&state1.db, &state2.db), eq(true));
+        assert_that!(Arc::ptr_eq(&state1.source_files, &state2.source_files), eq(true));
     }
 
-    #[googletest::test]
+    #[rstest]
     fn debug_impl_works() {
         let db = I18nDatabaseImpl::default();
         let state = ServerState::new(db);
 
         let debug_str = format!("{state:?}");
 
-        expect_that!(debug_str, contains_substring("ServerState"));
-        expect_that!(debug_str, contains_substring("db"));
-        expect_that!(debug_str, contains_substring("source_files"));
-        expect_that!(debug_str, contains_substring("translations"));
-        expect_that!(debug_str, contains_substring("opened_files"));
-        expect_that!(debug_str, contains_substring("current_language"));
+        assert_that!(debug_str, contains_substring("ServerState"));
+        assert_that!(debug_str, contains_substring("db"));
+        assert_that!(debug_str, contains_substring("source_files"));
+        assert_that!(debug_str, contains_substring("translations"));
+        assert_that!(debug_str, contains_substring("opened_files"));
+        assert_that!(debug_str, contains_substring("current_language"));
     }
 
     #[tokio::test]
