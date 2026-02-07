@@ -16,6 +16,8 @@ paths: "src/**/*.rs"
 - **googletest** - `assert_that!`, `eq()`, `len()`, `some()`, `none()` (matchers only)
 
 Always use `#[rstest]` as the test attribute. Do not use `#[googletest::test]` or `expect_that!`.
+- `#[rstest]` provides `#[case]` parameterization and `#[fixture]`, which `#[googletest::test]` lacks
+- `expect_that!` requires `#[googletest::test]` to work correctly; under `#[rstest]` failures are silently ignored
 
 ## In-Source Tests
 
