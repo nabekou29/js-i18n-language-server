@@ -8,7 +8,7 @@
 | `textDocument/hover` | Show translation values for a key |
 | `textDocument/definition` | Jump to key definition in JSON file |
 | `textDocument/references` | Find all usages of a key |
-| `textDocument/codeAction` | Quick fixes for missing translations |
+| `textDocument/codeAction` | Quick fixes for missing translations, delete translation key |
 | `textDocument/rename` | Rename translation key across all files |
 | `textDocument/prepareRename` | Validate rename and return key range |
 | `textDocument/publishDiagnostics` | Report missing translations and unused keys |

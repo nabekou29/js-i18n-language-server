@@ -46,12 +46,6 @@ pub async fn handle_code_action(
             .await;
     }
 
-    // Source files: only generate code actions if the client opted in
-    let code_actions_enabled = *backend.state.code_actions_enabled.lock().await;
-    if !code_actions_enabled {
-        return Ok(Some(vec![]));
-    }
-
     let position = params.range.start;
     let source_position = crate::types::SourcePosition::from(position);
 
@@ -59,35 +53,58 @@ pub async fn handle_code_action(
         return Ok(Some(vec![]));
     };
 
-    let missing_languages = crate::ide::code_actions::extract_missing_languages(diagnostics);
+    let mut actions: Vec<CodeActionOrCommand> = Vec::new();
 
-    let (effective_language, sorted_languages) = {
-        let config = backend.config_manager.lock().await;
-        let primary_languages = config.get_settings().primary_languages.clone();
-        drop(config);
-
-        let current_language = backend.state.current_language.lock().await.clone();
+    // Delete key action (always available, no client opt-in needed)
+    {
+        let settings = backend.config_manager.lock().await.get_settings().clone();
         let db = backend.state.db.lock().await;
         let translations = backend.state.translations.lock().await;
-
-        let sorted = crate::ide::backend::collect_sorted_languages(
+        if let Some(action) = crate::ide::code_actions::generate_delete_key_code_action(
             &*db,
+            &key_text,
             &translations,
-            current_language.as_deref(),
-            primary_languages.as_deref(),
-        );
-        drop(translations);
-        drop(db);
-        let effective = sorted.first().cloned();
-        (effective, sorted)
-    };
+            &settings.key_separator,
+            settings.namespace_separator.as_deref(),
+        ) {
+            actions.push(action);
+        }
+    }
 
-    let actions = crate::ide::code_actions::generate_code_actions(
-        &key_text,
-        &sorted_languages,
-        &missing_languages,
-        effective_language.as_deref(),
-    );
+    // Edit/Add translation actions (requires client opt-in)
+    let code_actions_enabled = *backend.state.code_actions_enabled.lock().await;
+    if code_actions_enabled {
+        let missing_languages = crate::ide::code_actions::extract_missing_languages(diagnostics);
+
+        let (effective_language, sorted_languages) = {
+            let config = backend.config_manager.lock().await;
+            let primary_languages = config.get_settings().primary_languages.clone();
+            drop(config);
+
+            let current_language = backend.state.current_language.lock().await.clone();
+            let db = backend.state.db.lock().await;
+            let translations = backend.state.translations.lock().await;
+
+            let sorted = crate::ide::backend::collect_sorted_languages(
+                &*db,
+                &translations,
+                current_language.as_deref(),
+                primary_languages.as_deref(),
+            );
+            drop(translations);
+            drop(db);
+            let effective = sorted.first().cloned();
+            (effective, sorted)
+        };
+
+        let edit_actions = crate::ide::code_actions::generate_code_actions(
+            &key_text,
+            &sorted_languages,
+            &missing_languages,
+            effective_language.as_deref(),
+        );
+        actions.extend(edit_actions);
+    }
 
     Ok(Some(actions))
 }

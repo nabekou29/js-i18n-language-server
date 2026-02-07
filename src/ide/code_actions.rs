@@ -1,5 +1,6 @@
 //! Code action generation for translation keys
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 use jsonc_parser::ParseOptions;
@@ -8,14 +9,20 @@ use jsonc_parser::cst::{
     CstRootNode,
 };
 use tower_lsp::lsp_types::{
+    CodeAction,
+    CodeActionKind,
     CodeActionOrCommand,
     Command,
     Diagnostic,
     NumberOrString,
+    TextEdit,
+    Url,
+    WorkspaceEdit,
 };
 
 use crate::db::I18nDatabase;
 use crate::input::translation::Translation;
+use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 
 /// Result of CST-based key insertion or update, preserving original formatting.
 #[derive(Debug, Clone)]
@@ -326,6 +333,64 @@ fn cleanup_empty_objects(obj: &jsonc_parser::cst::CstObject) {
             break;
         }
     }
+}
+
+/// Generate a code action to delete a translation key from all translation files.
+/// Returns `None` if the key is not found in any translation.
+#[must_use]
+pub fn generate_delete_key_code_action(
+    db: &dyn I18nDatabase,
+    key: &str,
+    translations: &[Translation],
+    key_separator: &str,
+    namespace_separator: Option<&str>,
+) -> Option<CodeActionOrCommand> {
+    let (ns, key_part) = parse_key_with_namespace(key, namespace_separator);
+
+    let target_translations: Vec<&Translation> = if let Some(ref ns) = ns {
+        translations.iter().filter(|t| t.namespace(db).as_ref().is_some_and(|n| n == ns)).collect()
+    } else {
+        translations.iter().collect()
+    };
+
+    let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+
+    for translation in &target_translations {
+        let json_text = translation.json_text(db);
+        let result = delete_keys_from_json_text(json_text, &[key_part.clone()], key_separator);
+        if let Some(result) = result {
+            if result.deleted_count == 0 {
+                continue;
+            }
+            let file_path = translation.file_path(db);
+            if let Ok(uri) = Url::from_file_path(file_path.as_str()) {
+                let line_count = json_text.lines().count() as u32;
+                let last_line_len = json_text.lines().last().map_or(0, |l| l.len()) as u32;
+                let edit = TextEdit {
+                    range: tower_lsp::lsp_types::Range {
+                        start: tower_lsp::lsp_types::Position { line: 0, character: 0 },
+                        end: tower_lsp::lsp_types::Position {
+                            line: line_count.saturating_sub(1),
+                            character: last_line_len,
+                        },
+                    },
+                    new_text: result.new_text,
+                };
+                changes.entry(uri).or_default().push(edit);
+            }
+        }
+    }
+
+    if changes.is_empty() {
+        return None;
+    }
+
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
+        title: format!("Delete '{key_part}' from all translations"),
+        kind: Some(CodeActionKind::REFACTOR),
+        edit: Some(WorkspaceEdit { changes: Some(changes), ..Default::default() }),
+        ..Default::default()
+    }))
 }
 
 #[cfg(test)]
@@ -827,5 +892,188 @@ mod tests {
         let result = rename_key_in_json_text(json, "a.b", "a.b.c", ".");
 
         assert_that!(result, none());
+    }
+
+    // === generate_delete_key_code_action tests ===
+
+    use crate::db::I18nDatabaseImpl;
+
+    fn create_test_translation(
+        db: &I18nDatabaseImpl,
+        language: &str,
+        namespace: Option<&str>,
+        file_path: &str,
+        keys: HashMap<String, String>,
+        json_text: &str,
+    ) -> Translation {
+        Translation::new(
+            db,
+            language.to_string(),
+            namespace.map(String::from),
+            file_path.to_string(),
+            keys,
+            json_text.to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+
+    #[rstest]
+    fn delete_key_action_basic() {
+        let db = I18nDatabaseImpl::default();
+        let json_en = r#"{
+  "hello": "Hello",
+  "world": "World"
+}"#;
+        let en = create_test_translation(
+            &db,
+            "en",
+            None,
+            "/locales/en.json",
+            HashMap::from([
+                ("hello".to_string(), "Hello".to_string()),
+                ("world".to_string(), "World".to_string()),
+            ]),
+            json_en,
+        );
+
+        let result = generate_delete_key_code_action(&db, "hello", &[en], ".", None);
+
+        assert_that!(result, some(anything()));
+        let action = match result.unwrap() {
+            CodeActionOrCommand::CodeAction(a) => a,
+            _ => panic!("expected CodeAction"),
+        };
+        assert_that!(action.title, eq("Delete 'hello' from all translations"));
+        assert_that!(action.kind.as_ref(), some(eq(&CodeActionKind::REFACTOR)));
+
+        let edit = action.edit.expect("should have workspace edit");
+        let changes = edit.changes.expect("should have changes");
+        let en_uri = Url::from_file_path("/locales/en.json").unwrap();
+        let en_edits = &changes[&en_uri];
+        assert_that!(en_edits.len(), eq(1));
+        assert_that!(en_edits[0].new_text, not(contains_substring("\"hello\"")));
+        assert_that!(en_edits[0].new_text, contains_substring("\"world\""));
+    }
+
+    #[rstest]
+    fn delete_key_action_multiple_languages() {
+        let db = I18nDatabaseImpl::default();
+        let json_en = r#"{ "hello": "Hello" }"#;
+        let json_ja = r#"{ "hello": "こんにちは" }"#;
+
+        let en = create_test_translation(
+            &db,
+            "en",
+            None,
+            "/locales/en.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            json_en,
+        );
+        let ja = create_test_translation(
+            &db,
+            "ja",
+            None,
+            "/locales/ja.json",
+            HashMap::from([("hello".to_string(), "こんにちは".to_string())]),
+            json_ja,
+        );
+
+        let result = generate_delete_key_code_action(&db, "hello", &[en, ja], ".", None);
+
+        let action = match result.unwrap() {
+            CodeActionOrCommand::CodeAction(a) => a,
+            _ => panic!("expected CodeAction"),
+        };
+        let changes = action.edit.unwrap().changes.unwrap();
+        assert_that!(changes.len(), eq(2));
+    }
+
+    #[rstest]
+    fn delete_key_action_not_found_returns_none() {
+        let db = I18nDatabaseImpl::default();
+        let json = r#"{ "hello": "Hello" }"#;
+        let en = create_test_translation(
+            &db,
+            "en",
+            None,
+            "/locales/en.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            json,
+        );
+
+        let result = generate_delete_key_code_action(&db, "nonexistent", &[en], ".", None);
+
+        assert_that!(result, none());
+    }
+
+    #[rstest]
+    fn delete_key_action_with_namespace() {
+        let db = I18nDatabaseImpl::default();
+        let common_json = r#"{ "hello": "Hello" }"#;
+        let errors_json = r#"{ "hello": "Error Hello" }"#;
+
+        let common = create_test_translation(
+            &db,
+            "en",
+            Some("common"),
+            "/locales/en/common.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            common_json,
+        );
+        let errors = create_test_translation(
+            &db,
+            "en",
+            Some("errors"),
+            "/locales/en/errors.json",
+            HashMap::from([("hello".to_string(), "Error Hello".to_string())]),
+            errors_json,
+        );
+
+        let result =
+            generate_delete_key_code_action(&db, "common:hello", &[common, errors], ".", Some(":"));
+
+        let action = match result.unwrap() {
+            CodeActionOrCommand::CodeAction(a) => a,
+            _ => panic!("expected CodeAction"),
+        };
+        // Title should show key_part without namespace
+        assert_that!(action.title, eq("Delete 'hello' from all translations"));
+        let changes = action.edit.unwrap().changes.unwrap();
+        // Only common namespace should be affected
+        assert_that!(changes.len(), eq(1));
+        let common_uri = Url::from_file_path("/locales/en/common.json").unwrap();
+        assert!(changes.contains_key(&common_uri));
+    }
+
+    #[rstest]
+    fn delete_key_action_nested_key() {
+        let db = I18nDatabaseImpl::default();
+        let json = r#"{
+  "common": {
+    "hello": "Hello"
+  }
+}"#;
+        let en = create_test_translation(
+            &db,
+            "en",
+            None,
+            "/locales/en.json",
+            HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
+            json,
+        );
+
+        let result = generate_delete_key_code_action(&db, "common.hello", &[en], ".", None);
+
+        let action = match result.unwrap() {
+            CodeActionOrCommand::CodeAction(a) => a,
+            _ => panic!("expected CodeAction"),
+        };
+        let changes = action.edit.unwrap().changes.unwrap();
+        let en_uri = Url::from_file_path("/locales/en.json").unwrap();
+        let new_text = &changes[&en_uri][0].new_text;
+        // Nested key deleted, empty parent cleaned up
+        assert_that!(new_text, not(contains_substring("\"common\"")));
+        assert_that!(new_text, not(contains_substring("\"hello\"")));
     }
 }
