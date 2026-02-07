@@ -362,8 +362,6 @@ async fn handle_get_translation_value(
 struct GetDecorationsArgs {
     uri: String,
     language: Option<String>,
-    max_length: Option<usize>,
-    max_width: Option<usize>,
 }
 
 /// Returns translation decorations for editor extensions to display inline translations.
@@ -380,7 +378,6 @@ async fn handle_get_decorations(
     tracing::debug!(
         uri = %parsed_args.uri,
         language = ?parsed_args.language,
-        max_length = ?parsed_args.max_length,
         "Executing i18n.getDecorations"
     );
 
@@ -396,8 +393,6 @@ async fn handle_get_decorations(
 
     let config = backend.config_manager.lock().await;
     let settings = config.get_settings();
-    let max_length = parsed_args.max_length.or(settings.virtual_text.max_length);
-    let max_width = parsed_args.max_width.unwrap_or(settings.virtual_text.max_width);
     let primary_languages = settings.primary_languages.clone();
     let key_separator = settings.key_separator.clone();
     drop(config);
@@ -424,17 +419,11 @@ async fn handle_get_decorations(
         sorted_languages.first().cloned()
     });
 
-    let truncate = max_length.map_or(
-        crate::ide::virtual_text::TruncateOption::Width(max_width),
-        crate::ide::virtual_text::TruncateOption::Length,
-    );
-
     let decorations = crate::ide::virtual_text::get_translation_decorations(
         &*db,
         source_file,
         &translations,
         language.as_deref(),
-        truncate,
         &key_separator,
     );
 

@@ -75,7 +75,6 @@ pub struct I18nSettings {
     /// Mutually exclusive with `required_languages`.
     pub optional_languages: Option<Vec<String>>,
 
-    pub virtual_text: VirtualTextConfig,
     pub diagnostics: DiagnosticsConfig,
 
     /// Fallback language priority when `currentLanguage` is unset.
@@ -88,22 +87,6 @@ pub struct IndexingConfig {
     /// Parallel thread count for indexing.
     /// Default: 40% of CPU cores (minimum 1).
     pub num_threads: Option<usize>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct VirtualTextConfig {
-    /// Max characters before truncation with ellipsis.
-    /// When set, takes priority over `max_width`.
-    pub max_length: Option<usize>,
-    /// Max display width (CJK = 2, ASCII = 1) before truncation.
-    pub max_width: usize,
-}
-
-impl Default for VirtualTextConfig {
-    fn default() -> Self {
-        Self { max_length: None, max_width: 32 }
-    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -214,7 +197,6 @@ impl Default for I18nSettings {
             indexing: IndexingConfig::default(),
             required_languages: None,
             optional_languages: None,
-            virtual_text: VirtualTextConfig::default(),
             diagnostics: DiagnosticsConfig::default(),
             primary_languages: None,
         }
