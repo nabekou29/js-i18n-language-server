@@ -9,6 +9,8 @@
 | `textDocument/definition` | Jump to key definition in JSON file |
 | `textDocument/references` | Find all usages of a key |
 | `textDocument/codeAction` | Quick fixes for missing translations |
+| `textDocument/rename` | Rename translation key across all files |
+| `textDocument/prepareRename` | Validate rename and return key range |
 | `textDocument/publishDiagnostics` | Report missing translations and unused keys |
 
 ## Custom Commands
@@ -154,6 +156,7 @@ Capabilities returned in `initialize` response:
 | `hoverProvider` | true |
 | `definitionProvider` | true |
 | `referencesProvider` | true |
+| `renameProvider` | `prepareProvider: true` |
 | `codeActionProvider` | true |
 | `executeCommandProvider` | `i18n.*` commands |
 

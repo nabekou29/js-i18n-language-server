@@ -1,0 +1,305 @@
+//! Rename support for translation keys.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use tower_lsp::lsp_types::{
+    TextEdit,
+    Url,
+    WorkspaceEdit,
+};
+
+use crate::db::I18nDatabase;
+use crate::ide::code_actions::rename_key_in_json_text;
+use crate::input::source::SourceFile;
+use crate::input::translation::Translation;
+use crate::interned::TransKey;
+use crate::syntax::analyze_source;
+use crate::syntax::analyzer::extractor::parse_key_with_namespace;
+
+/// Computes workspace edits for renaming a translation key.
+///
+/// Updates both translation JSON files and source file references.
+/// Supports namespace-prefixed keys (e.g., `"ns:key"`); namespace changes are rejected.
+#[must_use]
+pub fn compute_rename_edits(
+    db: &dyn I18nDatabase,
+    old_key: &str,
+    new_key: &str,
+    translations: &[Translation],
+    source_files: &HashMap<PathBuf, SourceFile>,
+    key_separator: &str,
+    namespace_separator: Option<&str>,
+) -> WorkspaceEdit {
+    let (old_ns, old_key_part) = parse_key_with_namespace(old_key, namespace_separator);
+    let (new_ns, new_key_part) = parse_key_with_namespace(new_key, namespace_separator);
+
+    // Reject namespace change
+    if old_ns != new_ns {
+        return WorkspaceEdit::default();
+    }
+
+    let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
+
+    // Filter translations by namespace
+    let target_translations: Vec<&Translation> = if let Some(ref ns) = old_ns {
+        translations.iter().filter(|t| t.namespace(db).as_ref().is_some_and(|n| n == ns)).collect()
+    } else {
+        translations.iter().collect()
+    };
+
+    // Translation file edits
+    for translation in &target_translations {
+        let json_text = translation.json_text(db);
+        if let Some(result) =
+            rename_key_in_json_text(json_text, &old_key_part, &new_key_part, key_separator)
+        {
+            let file_path = translation.file_path(db);
+            if let Ok(uri) = Url::from_file_path(file_path.as_str()) {
+                let line_count = json_text.lines().count() as u32;
+                let last_line_len = json_text.lines().last().map_or(0, |l| l.len()) as u32;
+                let edit = TextEdit {
+                    range: tower_lsp::lsp_types::Range {
+                        start: tower_lsp::lsp_types::Position { line: 0, character: 0 },
+                        end: tower_lsp::lsp_types::Position {
+                            line: line_count.saturating_sub(1),
+                            character: last_line_len,
+                        },
+                    },
+                    new_text: result.new_text,
+                };
+                changes.entry(uri).or_default().push(edit);
+            }
+        }
+    }
+
+    // Source file edits: find references and replace key text
+    let old_trans_key = TransKey::new(db, old_key.to_string());
+    for source_file in source_files.values() {
+        let usages = analyze_source(db, *source_file, key_separator.to_string());
+        let uri_str = source_file.uri(db);
+        let Ok(uri) = uri_str.parse::<Url>() else {
+            continue;
+        };
+
+        for usage in &usages {
+            let usage_key_text = usage.key(db).text(db);
+            if usage_key_text != old_trans_key.text(db) {
+                continue;
+            }
+
+            // Shrink range by 1 char on each side to exclude string quotes
+            let range = usage.range(db);
+            let adjusted_range = tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: range.start.line,
+                    character: range.start.character + 1,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: range.end.line,
+                    character: range.end.character.saturating_sub(1),
+                },
+            };
+
+            let edit = TextEdit { range: adjusted_range, new_text: new_key.to_string() };
+            changes.entry(uri.clone()).or_default().push(edit);
+        }
+    }
+
+    WorkspaceEdit { changes: Some(changes), ..Default::default() }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::expect_used)]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    use googletest::prelude::*;
+    use rstest::*;
+
+    use super::*;
+    use crate::db::I18nDatabaseImpl;
+    use crate::input::source::{
+        ProgrammingLanguage,
+        SourceFile,
+    };
+    use crate::input::translation::Translation;
+
+    fn create_test_translation(
+        db: &I18nDatabaseImpl,
+        language: &str,
+        namespace: Option<&str>,
+        file_path: &str,
+        keys: HashMap<String, String>,
+        json_text: &str,
+    ) -> Translation {
+        Translation::new(
+            db,
+            language.to_string(),
+            namespace.map(String::from),
+            file_path.to_string(),
+            keys,
+            json_text.to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+
+    #[rstest]
+    fn rename_updates_translation_files() {
+        let db = I18nDatabaseImpl::default();
+
+        let json_en = r#"{
+  "hello": "Hello",
+  "world": "World"
+}"#;
+        let json_ja = r#"{
+  "hello": "こんにちは",
+  "world": "世界"
+}"#;
+
+        let en = create_test_translation(
+            &db,
+            "en",
+            None,
+            "/locales/en.json",
+            HashMap::from([
+                ("hello".to_string(), "Hello".to_string()),
+                ("world".to_string(), "World".to_string()),
+            ]),
+            json_en,
+        );
+        let ja = create_test_translation(
+            &db,
+            "ja",
+            None,
+            "/locales/ja.json",
+            HashMap::from([
+                ("hello".to_string(), "こんにちは".to_string()),
+                ("world".to_string(), "世界".to_string()),
+            ]),
+            json_ja,
+        );
+        let translations = vec![en, ja];
+
+        let result = compute_rename_edits(
+            &db,
+            "hello",
+            "greeting",
+            &translations,
+            &HashMap::new(),
+            ".",
+            None,
+        );
+
+        let changes = result.changes.unwrap();
+        assert_that!(changes.len(), eq(2));
+
+        let en_uri = Url::from_file_path("/locales/en.json").unwrap();
+        let en_edits = &changes[&en_uri];
+        assert_that!(en_edits.len(), eq(1));
+        assert_that!(en_edits[0].new_text, contains_substring("\"greeting\": \"Hello\""));
+        assert_that!(en_edits[0].new_text, not(contains_substring("\"hello\"")));
+
+        let ja_uri = Url::from_file_path("/locales/ja.json").unwrap();
+        let ja_edits = &changes[&ja_uri];
+        assert_that!(ja_edits.len(), eq(1));
+        assert_that!(ja_edits[0].new_text, contains_substring("\"greeting\": \"こんにちは\""));
+    }
+
+    #[rstest]
+    fn rename_updates_source_references() {
+        let db = I18nDatabaseImpl::default();
+
+        let source_code = r#"const msg = t("common.hello");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "file:///src/app.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut source_files = HashMap::new();
+        source_files.insert(PathBuf::from("/src/app.ts"), source_file);
+
+        let result = compute_rename_edits(
+            &db,
+            "common.hello",
+            "common.greeting",
+            &[],
+            &source_files,
+            ".",
+            None,
+        );
+
+        let changes = result.changes.unwrap();
+        let source_uri: Url = "file:///src/app.ts".parse().unwrap();
+        let edits = &changes[&source_uri];
+        assert_that!(edits.len(), eq(1));
+        assert_that!(edits[0].new_text, eq("common.greeting"));
+    }
+
+    #[rstest]
+    fn rename_with_namespace_filters_translations() {
+        let db = I18nDatabaseImpl::default();
+
+        let common_json = r#"{
+  "hello": "Hello"
+}"#;
+        let errors_json = r#"{
+  "hello": "Error Hello"
+}"#;
+
+        let common = create_test_translation(
+            &db,
+            "en",
+            Some("common"),
+            "/locales/en/common.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            common_json,
+        );
+        let errors = create_test_translation(
+            &db,
+            "en",
+            Some("errors"),
+            "/locales/en/errors.json",
+            HashMap::from([("hello".to_string(), "Error Hello".to_string())]),
+            errors_json,
+        );
+        let translations = vec![common, errors];
+
+        let result = compute_rename_edits(
+            &db,
+            "common:hello",
+            "common:greeting",
+            &translations,
+            &HashMap::new(),
+            ".",
+            Some(":"),
+        );
+
+        let changes = result.changes.unwrap();
+        // Only common namespace should be updated
+        assert_that!(changes.len(), eq(1));
+        let common_uri = Url::from_file_path("/locales/en/common.json").unwrap();
+        assert!(changes.contains_key(&common_uri));
+    }
+
+    #[rstest]
+    fn rename_rejects_namespace_change() {
+        let db = I18nDatabaseImpl::default();
+
+        let result = compute_rename_edits(
+            &db,
+            "common:hello",
+            "errors:hello",
+            &[],
+            &HashMap::new(),
+            ".",
+            Some(":"),
+        );
+
+        assert_that!(result.changes.unwrap_or_default(), is_empty());
+    }
+}

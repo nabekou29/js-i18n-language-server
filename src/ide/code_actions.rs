@@ -155,6 +155,97 @@ pub fn update_key_in_json_text(
     Some(KeyEditResult { new_text: root.to_string() })
 }
 
+/// Rename a key in JSON using CST to preserve formatting and property order.
+/// Uses pivot object strategy: finds common prefix of old/new paths, operates below the pivot.
+#[must_use]
+pub fn rename_key_in_json_text(
+    json_text: &str,
+    old_key: &str,
+    new_key: &str,
+    separator: &str,
+) -> Option<KeyEditResult> {
+    if old_key == new_key {
+        return None;
+    }
+
+    let old_parts: Vec<&str> = old_key.split(separator).collect();
+    let new_parts: Vec<&str> = new_key.split(separator).collect();
+
+    // Reject if one key is a prefix of the other
+    let common_len = old_parts.iter().zip(new_parts.iter()).take_while(|(a, b)| a == b).count();
+    if common_len == old_parts.len() || common_len == new_parts.len() {
+        return None;
+    }
+
+    let root = CstRootNode::parse(json_text, &ParseOptions::default()).ok()?;
+    let root_obj = root.object_value()?;
+
+    // Read value at old_key path
+    let value = {
+        let mut current = root_obj.clone();
+        let mut val = None;
+        for (i, part) in old_parts.iter().enumerate() {
+            if i == old_parts.len() - 1 {
+                let prop = current.get(part)?;
+                val = prop
+                    .value()
+                    .and_then(|v| v.as_string_lit())
+                    .and_then(|s| s.decoded_value().ok());
+            } else {
+                current = current.object_value(part)?;
+            }
+        }
+        val?
+    };
+
+    // Check new_key doesn't already exist
+    {
+        let mut current = root_obj.clone();
+        let mut exists = false;
+        for (i, part) in new_parts.iter().enumerate() {
+            if i == new_parts.len() - 1 {
+                if current.get(part).is_some() {
+                    exists = true;
+                }
+            } else {
+                match current.object_value(part) {
+                    Some(child) => current = child,
+                    None => break,
+                }
+            }
+        }
+        if exists {
+            return None;
+        }
+    }
+
+    // Navigate to pivot object (at common prefix)
+    let mut pivot = root_obj.clone();
+    for part in &old_parts[..common_len] {
+        pivot = pivot.object_value(part)?;
+    }
+
+    // Delete old suffix from pivot
+    let old_suffix_key: String = old_parts[common_len..].join(separator);
+    delete_single_key(&pivot, &old_suffix_key, separator);
+
+    // Cleanup empty objects under pivot (pivot itself is preserved)
+    cleanup_empty_objects(&pivot);
+
+    // Insert new suffix with preserved value
+    let new_suffix = &new_parts[common_len..];
+    let mut current = pivot;
+    for (i, part) in new_suffix.iter().enumerate() {
+        if i == new_suffix.len() - 1 {
+            current.append(part, CstInputValue::String(value.clone()));
+        } else {
+            current = current.object_value_or_set(part);
+        }
+    }
+
+    Some(KeyEditResult { new_text: root.to_string() })
+}
+
 /// Delete keys from JSON using CST to preserve formatting.
 /// Empty parent objects are recursively removed after deletion.
 #[must_use]
@@ -559,5 +650,182 @@ mod tests {
 
         assert_that!(result.deleted_count, eq(0));
         assert_that!(result.new_text, contains_substring("\"hello\""));
+    }
+
+    // === rename_key_in_json_text tests ===
+
+    #[rstest]
+    fn rename_key_same_parent() {
+        // Case 1: a.b → a.c (pivot = a)
+        let json = r#"{
+  "a": {
+    "b": "hello",
+    "x": "other"
+  }
+}"#;
+
+        let result =
+            rename_key_in_json_text(json, "a.b", "a.c", ".").expect("rename should succeed");
+
+        assert_that!(result.new_text, not(contains_substring("\"b\"")));
+        assert_that!(result.new_text, contains_substring("\"c\": \"hello\""));
+        assert_that!(result.new_text, contains_substring("\"x\": \"other\""));
+        assert_that!(result.new_text, contains_substring("\"a\""));
+    }
+
+    #[rstest]
+    fn rename_key_different_parent_empty() {
+        // Case 2: a.b → c.d (pivot = root, a becomes empty)
+        let json = r#"{
+  "a": {
+    "b": "hello"
+  }
+}"#;
+
+        let result =
+            rename_key_in_json_text(json, "a.b", "c.d", ".").expect("rename should succeed");
+
+        assert_that!(result.new_text, not(contains_substring("\"a\"")));
+        assert_that!(result.new_text, contains_substring("\"c\""));
+        assert_that!(result.new_text, contains_substring("\"d\": \"hello\""));
+    }
+
+    #[rstest]
+    fn rename_key_different_parent_with_siblings() {
+        // Case 3: a.b → c.d (pivot = root, a has sibling x)
+        let json = r#"{
+  "a": {
+    "b": "hello",
+    "x": "other"
+  }
+}"#;
+
+        let result =
+            rename_key_in_json_text(json, "a.b", "c.d", ".").expect("rename should succeed");
+
+        assert_that!(result.new_text, contains_substring("\"a\""));
+        assert_that!(result.new_text, contains_substring("\"x\": \"other\""));
+        assert_that!(result.new_text, not(contains_substring("\"b\"")));
+        assert_that!(result.new_text, contains_substring("\"c\""));
+        assert_that!(result.new_text, contains_substring("\"d\": \"hello\""));
+    }
+
+    #[rstest]
+    fn rename_key_deep_nested_no_siblings_preserves_order() {
+        // Case 4: a.b.c → a.b.d (pivot = a.b, no siblings)
+        // Key point: a and a.b positions must be preserved
+        let json = r#"{
+  "x": "first",
+  "a": {
+    "b": {
+      "c": "hello"
+    }
+  },
+  "y": "last"
+}"#;
+
+        let result =
+            rename_key_in_json_text(json, "a.b.c", "a.b.d", ".").expect("rename should succeed");
+
+        assert_that!(result.new_text, contains_substring("\"d\": \"hello\""));
+        assert_that!(result.new_text, not(contains_substring("\"c\"")));
+        // Verify order is preserved: x before a, a before y
+        let x_pos = result.new_text.find("\"x\"").unwrap();
+        let a_pos = result.new_text.find("\"a\"").unwrap();
+        let y_pos = result.new_text.find("\"y\"").unwrap();
+        assert!(x_pos < a_pos, "x should come before a");
+        assert!(a_pos < y_pos, "a should come before y");
+    }
+
+    #[rstest]
+    fn rename_key_deep_nested_with_siblings() {
+        // Case 5: a.b.c → a.b.d (pivot = a.b, c has sibling x)
+        let json = r#"{
+  "a": {
+    "b": {
+      "c": "hello",
+      "x": "other"
+    }
+  }
+}"#;
+
+        let result =
+            rename_key_in_json_text(json, "a.b.c", "a.b.d", ".").expect("rename should succeed");
+
+        assert_that!(result.new_text, not(contains_substring("\"c\"")));
+        assert_that!(result.new_text, contains_substring("\"d\": \"hello\""));
+        assert_that!(result.new_text, contains_substring("\"x\": \"other\""));
+    }
+
+    #[rstest]
+    fn rename_key_mid_path_diverge() {
+        // Case 6: a.b.c → a.x.y (pivot = a)
+        let json = r#"{
+  "a": {
+    "b": {
+      "c": "hello"
+    }
+  }
+}"#;
+
+        let result =
+            rename_key_in_json_text(json, "a.b.c", "a.x.y", ".").expect("rename should succeed");
+
+        assert_that!(result.new_text, contains_substring("\"a\""));
+        assert_that!(result.new_text, not(contains_substring("\"b\"")));
+        assert_that!(result.new_text, contains_substring("\"x\""));
+        assert_that!(result.new_text, contains_substring("\"y\": \"hello\""));
+    }
+
+    #[rstest]
+    fn rename_key_flat() {
+        // Simple flat key rename: a → b
+        let json = r#"{
+  "a": "hello",
+  "x": "other"
+}"#;
+
+        let result = rename_key_in_json_text(json, "a", "b", ".").expect("rename should succeed");
+
+        assert_that!(result.new_text, not(contains_substring("\"a\"")));
+        assert_that!(result.new_text, contains_substring("\"b\": \"hello\""));
+        assert_that!(result.new_text, contains_substring("\"x\": \"other\""));
+    }
+
+    #[rstest]
+    fn rename_key_same_key_returns_none() {
+        let json = r#"{ "a": "hello" }"#;
+
+        let result = rename_key_in_json_text(json, "a", "a", ".");
+
+        assert_that!(result, none());
+    }
+
+    #[rstest]
+    fn rename_key_old_not_found_returns_none() {
+        let json = r#"{ "a": "hello" }"#;
+
+        let result = rename_key_in_json_text(json, "nonexistent", "b", ".");
+
+        assert_that!(result, none());
+    }
+
+    #[rstest]
+    fn rename_key_new_already_exists_returns_none() {
+        let json = r#"{ "a": "hello", "b": "world" }"#;
+
+        let result = rename_key_in_json_text(json, "a", "b", ".");
+
+        assert_that!(result, none());
+    }
+
+    #[rstest]
+    fn rename_key_prefix_relation_returns_none() {
+        // old key is prefix of new key
+        let json = r#"{ "a": { "b": "hello" } }"#;
+
+        let result = rename_key_in_json_text(json, "a.b", "a.b.c", ".");
+
+        assert_that!(result, none());
     }
 }

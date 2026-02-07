@@ -1,4 +1,4 @@
-//! LSP feature handlers: completion, hover, `goto_definition`, references.
+//! LSP feature handlers: completion, hover, `goto_definition`, references, rename.
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
@@ -12,7 +12,11 @@ use tower_lsp::lsp_types::{
     Location,
     MarkupContent,
     MarkupKind,
+    PrepareRenameResponse,
     ReferenceParams,
+    RenameParams,
+    TextDocumentPositionParams,
+    WorkspaceEdit,
 };
 
 use super::super::backend::Backend;
@@ -238,4 +242,105 @@ pub async fn handle_references(
     tracing::debug!("Found {} references for key: {}", locations.len(), key_text);
 
     if locations.is_empty() { Ok(None) } else { Ok(Some(locations)) }
+}
+
+pub async fn handle_prepare_rename(
+    backend: &Backend,
+    params: TextDocumentPositionParams,
+) -> Result<Option<PrepareRenameResponse>> {
+    let uri = params.text_document.uri;
+    let position = params.position;
+
+    tracing::debug!(uri = %uri, line = position.line, character = position.character, "Prepare rename request");
+
+    if !backend.workspace_indexer.is_indexing_completed() {
+        return Ok(None);
+    }
+
+    let Some(file_path) = Backend::uri_to_path(&uri) else {
+        return Ok(None);
+    };
+
+    let source_file = {
+        let source_files = backend.state.source_files.lock().await;
+        source_files.get(&file_path).copied()
+    };
+
+    let Some(source_file) = source_file else {
+        return Ok(None);
+    };
+
+    let db = backend.state.db.lock().await;
+    let key_separator = backend.config_manager.lock().await.get_settings().key_separator.clone();
+    let source_position = crate::types::SourcePosition::from(position);
+
+    let usages = crate::syntax::analyze_source(&*db, source_file, key_separator);
+
+    for usage in usages {
+        let range = usage.range(&*db);
+        if range.contains(source_position) {
+            let key_text = usage.key(&*db).text(&*db).clone();
+
+            // Shrink range by 1 char on each side to exclude string quotes
+            let content_range = tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: range.start.line,
+                    character: range.start.character + 1,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: range.end.line,
+                    character: range.end.character.saturating_sub(1),
+                },
+            };
+
+            return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+                range: content_range,
+                placeholder: key_text,
+            }));
+        }
+    }
+
+    Ok(None)
+}
+
+pub async fn handle_rename(
+    backend: &Backend,
+    params: RenameParams,
+) -> Result<Option<WorkspaceEdit>> {
+    let uri = params.text_document_position.text_document.uri;
+    let position = params.text_document_position.position;
+    let new_name = params.new_name;
+
+    tracing::debug!(uri = %uri, new_name = %new_name, "Rename request");
+
+    if !backend.workspace_indexer.is_indexing_completed() {
+        return Ok(None);
+    }
+
+    let Some(file_path) = Backend::uri_to_path(&uri) else {
+        return Ok(None);
+    };
+
+    let source_position = crate::types::SourcePosition::from(position);
+
+    let Some(old_key) = backend.get_key_at_position(&file_path, source_position).await else {
+        return Ok(None);
+    };
+
+    let settings = backend.config_manager.lock().await.get_settings().clone();
+    let db = backend.state.db.lock().await;
+    let translations = backend.state.translations.lock().await;
+    let source_files = backend.state.source_files.lock().await;
+
+    let edit = crate::ide::rename::compute_rename_edits(
+        &*db,
+        &old_key,
+        &new_name,
+        &translations,
+        &source_files,
+        &settings.key_separator,
+        settings.namespace_separator.as_deref(),
+    );
+
+    Ok(Some(edit))
 }

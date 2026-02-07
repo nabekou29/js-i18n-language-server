@@ -73,6 +73,10 @@ pub async fn handle_initialize(
             }),
             definition_provider: Some(OneOf::Left(true)),
             references_provider: Some(OneOf::Left(true)),
+            rename_provider: Some(OneOf::Right(tower_lsp::lsp_types::RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: WorkDoneProgressOptions::default(),
+            })),
             code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
             execute_command_provider: Some(ExecuteCommandOptions {
                 commands: vec![

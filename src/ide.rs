@@ -11,5 +11,6 @@ pub mod key_match;
 pub mod namespace;
 pub mod plural;
 pub mod references;
+pub mod rename;
 pub mod state;
 pub mod virtual_text;

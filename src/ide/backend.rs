@@ -845,6 +845,20 @@ impl LanguageServer for Backend {
         handlers::features::handle_references(self, params).await
     }
 
+    async fn prepare_rename(
+        &self,
+        params: tower_lsp::lsp_types::TextDocumentPositionParams,
+    ) -> Result<Option<tower_lsp::lsp_types::PrepareRenameResponse>> {
+        handlers::features::handle_prepare_rename(self, params).await
+    }
+
+    async fn rename(
+        &self,
+        params: tower_lsp::lsp_types::RenameParams,
+    ) -> Result<Option<tower_lsp::lsp_types::WorkspaceEdit>> {
+        handlers::features::handle_rename(self, params).await
+    }
+
     async fn code_action(
         &self,
         params: tower_lsp::lsp_types::CodeActionParams,
