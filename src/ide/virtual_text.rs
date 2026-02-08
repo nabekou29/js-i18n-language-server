@@ -7,6 +7,7 @@ use serde::{
 use tower_lsp::lsp_types::Range;
 
 use crate::db::I18nDatabase;
+use crate::ide::plural::find_plural_variants;
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 
@@ -52,10 +53,23 @@ fn get_translation_value(
     key_text: &str,
     language: Option<&str>,
 ) -> Option<String> {
-    translations
-        .iter()
-        .filter(|t| language.is_none_or(|lang| t.language(db) == lang))
-        .find_map(|t| t.keys(db).get(key_text).cloned())
+    translations.iter().filter(|t| language.is_none_or(|lang| t.language(db) == lang)).find_map(
+        |t| {
+            let keys = t.keys(db);
+
+            if let Some(value) = keys.get(key_text) {
+                return Some(value.clone());
+            }
+
+            // Plural fallback: prefer _other variant, then first available
+            let variants = find_plural_variants(key_text, keys);
+            variants
+                .iter()
+                .find(|(k, _)| k.ends_with("_other"))
+                .or_else(|| variants.first())
+                .map(|(_, value)| value.to_string())
+        },
+    )
 }
 
 #[cfg(test)]
@@ -163,5 +177,83 @@ mod tests {
 
         assert_that!(decorations, len(eq(1)));
         assert_that!(decorations[0].value, eq("Hello"));
+    }
+
+    #[rstest]
+    fn get_decorations_plural_fallback_other() {
+        let db = I18nDatabaseImpl::default();
+
+        let source_file = create_source_file(&db, r#"const msg = t("items");"#);
+
+        let translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([
+                ("items_one".to_string(), "{{count}} item".to_string()),
+                ("items_other".to_string(), "{{count}} items".to_string()),
+            ]),
+        );
+
+        let decorations =
+            get_translation_decorations(&db, source_file, &[translation], Some("en"), ".");
+
+        assert_that!(decorations, len(eq(1)));
+        assert_that!(decorations[0].key, eq("items"));
+        // Prefers _other as representative value
+        assert_that!(decorations[0].value, eq("{{count}} items"));
+    }
+
+    #[rstest]
+    fn get_decorations_plural_fallback_ordinal() {
+        let db = I18nDatabaseImpl::default();
+
+        let source_file = create_source_file(&db, r#"const msg = t("place");"#);
+
+        let translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([
+                ("place_ordinal_one".to_string(), "{{count}}st".to_string()),
+                ("place_ordinal_two".to_string(), "{{count}}nd".to_string()),
+                ("place_ordinal_few".to_string(), "{{count}}rd".to_string()),
+                ("place_ordinal_other".to_string(), "{{count}}th".to_string()),
+            ]),
+        );
+
+        let decorations =
+            get_translation_decorations(&db, source_file, &[translation], Some("en"), ".");
+
+        assert_that!(decorations, len(eq(1)));
+        assert_that!(decorations[0].key, eq("place"));
+        // Falls back to _ordinal_other
+        assert_that!(decorations[0].value, eq("{{count}}th"));
+    }
+
+    #[rstest]
+    fn get_decorations_plural_fallback_no_other() {
+        let db = I18nDatabaseImpl::default();
+
+        let source_file = create_source_file(&db, r#"const msg = t("items");"#);
+
+        // Only _one and _few exist (no _other)
+        let translation = create_translation(
+            &db,
+            "en",
+            "/test/locales/en.json",
+            HashMap::from([
+                ("items_one".to_string(), "{{count}} item".to_string()),
+                ("items_few".to_string(), "{{count}} items (few)".to_string()),
+            ]),
+        );
+
+        let decorations =
+            get_translation_decorations(&db, source_file, &[translation], Some("en"), ".");
+
+        assert_that!(decorations, len(eq(1)));
+        assert_that!(decorations[0].key, eq("items"));
+        // Falls back to first available variant
+        assert_that!(decorations[0].value, eq("{{count}} item"));
     }
 }
