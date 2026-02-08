@@ -22,6 +22,7 @@ use tower_lsp::lsp_types::{
     WorkDoneProgressEnd,
     WorkDoneProgressOptions,
     WorkDoneProgressReport,
+    WorkspaceFolder,
     notification::Progress,
 };
 
@@ -56,6 +57,22 @@ pub async fn handle_initialize(
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     *backend.state.code_actions_enabled.lock().await = code_actions_enabled;
+
+    // Store workspace folders from initialize params to avoid
+    // querying client at runtime (which returns ALL workspace folders).
+    let workspace_folders = params.workspace_folders.unwrap_or_else(|| {
+        params
+            .root_uri
+            .as_ref()
+            .map(|uri| {
+                vec![WorkspaceFolder {
+                    uri: uri.clone(),
+                    name: uri.path().rsplit('/').next().unwrap_or("root").to_string(),
+                }]
+            })
+            .unwrap_or_default()
+    });
+    *backend.state.workspace_folders.lock().await = workspace_folders;
 
     Ok(InitializeResult {
         server_info: None,
@@ -99,7 +116,8 @@ pub async fn handle_initialize(
 pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
     backend.client.log_message(MessageType::INFO, "initialized!").await;
 
-    if let Ok(workspace_folders) = backend.get_workspace_folders().await {
+    let workspace_folders = backend.get_workspace_folders().await;
+    {
         backend
             .client
             .log_message(MessageType::INFO, format!("Workspace folders: {workspace_folders:?}"))

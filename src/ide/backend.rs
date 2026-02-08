@@ -402,12 +402,9 @@ impl Backend {
         self.send_unused_key_diagnostics().await;
     }
 
-    /// Gets workspace folders from client.
-    ///
-    /// # Errors
-    /// Returns error on client communication failure.
-    pub(crate) async fn get_workspace_folders(&self) -> Result<Vec<WorkspaceFolder>> {
-        self.client.workspace_folders().await.map(Option::unwrap_or_default)
+    /// Returns workspace folders stored during `initialize`.
+    pub(crate) async fn get_workspace_folders(&self) -> Vec<WorkspaceFolder> {
+        self.state.workspace_folders.lock().await.clone()
     }
 
     /// Reindexes workspace with new Salsa database and clears old cache.
@@ -417,80 +414,77 @@ impl Backend {
 
         self.reset_state().await;
 
-        if let Ok(workspace_folders) = self.get_workspace_folders().await {
-            for folder in workspace_folders {
-                if let Ok(workspace_path) = folder.uri.to_file_path() {
-                    let token = NumberOrString::String("workspace-reindexing".to_string());
+        for folder in self.get_workspace_folders().await {
+            if let Ok(workspace_path) = folder.uri.to_file_path() {
+                let token = NumberOrString::String("workspace-reindexing".to_string());
 
-                    self.send_progress_begin(
-                        &token,
-                        "Reindexing Workspace",
-                        "Configuration changed, reindexing...",
+                self.send_progress_begin(
+                    &token,
+                    "Reindexing Workspace",
+                    "Configuration changed, reindexing...",
+                )
+                .await;
+
+                let config_manager = self.config_manager.lock().await;
+                let db = self.state.db.lock().await.clone();
+                let source_files = self.state.source_files.clone();
+
+                let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<(u32, u32)>(100);
+
+                let progress_task = {
+                    let client = self.client.clone();
+                    let token = token.clone();
+                    tokio::spawn(async move {
+                        while let Some((current, total)) = progress_rx.recv().await {
+                            let percentage = (current * 100).checked_div(total).unwrap_or(0);
+                            client
+                                .send_notification::<Progress>(ProgressParams {
+                                    token: token.clone(),
+                                    value: ProgressParamsValue::WorkDone(WorkDoneProgress::Report(
+                                        WorkDoneProgressReport {
+                                            cancellable: Some(false),
+                                            message: Some(format!(
+                                                "Processing files: {current}/{total}"
+                                            )),
+                                            percentage: Some(percentage),
+                                        },
+                                    )),
+                                })
+                                .await;
+                        }
+                    })
+                };
+
+                let progress_callback = move |current: u32, total: u32| {
+                    let _ = progress_tx.try_send((current, total));
+                };
+
+                let index_result = self
+                    .workspace_indexer
+                    .index_workspace(
+                        db,
+                        &workspace_path,
+                        &config_manager,
+                        source_files,
+                        self.state.translations.clone(),
+                        Some(progress_callback),
                     )
                     .await;
 
-                    let config_manager = self.config_manager.lock().await;
-                    let db = self.state.db.lock().await.clone();
-                    let source_files = self.state.source_files.clone();
+                drop(config_manager);
 
-                    let (progress_tx, mut progress_rx) =
-                        tokio::sync::mpsc::channel::<(u32, u32)>(100);
+                let _ = progress_task.await;
 
-                    let progress_task = {
-                        let client = self.client.clone();
-                        let token = token.clone();
-                        tokio::spawn(async move {
-                            while let Some((current, total)) = progress_rx.recv().await {
-                                let percentage = (current * 100).checked_div(total).unwrap_or(0);
-                                client
-                                    .send_notification::<Progress>(ProgressParams {
-                                        token: token.clone(),
-                                        value: ProgressParamsValue::WorkDone(
-                                            WorkDoneProgress::Report(WorkDoneProgressReport {
-                                                cancellable: Some(false),
-                                                message: Some(format!(
-                                                    "Processing files: {current}/{total}"
-                                                )),
-                                                percentage: Some(percentage),
-                                            }),
-                                        ),
-                                    })
-                                    .await;
-                            }
-                        })
-                    };
-
-                    let progress_callback = move |current: u32, total: u32| {
-                        let _ = progress_tx.try_send((current, total));
-                    };
-
-                    let index_result = self
-                        .workspace_indexer
-                        .index_workspace(
-                            db,
-                            &workspace_path,
-                            &config_manager,
-                            source_files,
-                            self.state.translations.clone(),
-                            Some(progress_callback),
-                        )
-                        .await;
-
-                    drop(config_manager);
-
-                    let _ = progress_task.await;
-
-                    match index_result {
-                        Ok(()) => {
-                            self.send_progress_end(&token, "Reindexing complete").await;
-                            self.send_decorations_changed().await;
-                            tracing::info!("Workspace reindex complete");
-                        }
-                        Err(error) => {
-                            self.send_progress_end(&token, &format!("Reindexing failed: {error}"))
-                                .await;
-                            tracing::error!("Workspace reindex failed: {}", error);
-                        }
+                match index_result {
+                    Ok(()) => {
+                        self.send_progress_end(&token, "Reindexing complete").await;
+                        self.send_decorations_changed().await;
+                        tracing::info!("Workspace reindex complete");
+                    }
+                    Err(error) => {
+                        self.send_progress_end(&token, &format!("Reindexing failed: {error}"))
+                            .await;
+                        tracing::error!("Workspace reindex failed: {}", error);
                     }
                 }
             }

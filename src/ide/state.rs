@@ -11,6 +11,7 @@ use tokio::sync::{
     Mutex,
     MutexGuard,
 };
+use tower_lsp::lsp_types::WorkspaceFolder;
 
 use crate::db::I18nDatabaseImpl;
 use crate::input::source::SourceFile;
@@ -38,6 +39,9 @@ pub struct ServerState {
     pub pending_updates: Arc<Mutex<Vec<PendingUpdate>>>,
     /// Whether the client supports edit translation code actions (from `experimental.i18nEditTranslationCodeAction`).
     pub code_actions_enabled: Arc<Mutex<bool>>,
+    /// Workspace folders from `initialize` params (not from runtime LSP request).
+    /// Ensures each server only indexes its assigned folders in multi-server setups.
+    pub workspace_folders: Arc<Mutex<Vec<WorkspaceFolder>>>,
 }
 
 impl ServerState {
@@ -50,6 +54,7 @@ impl ServerState {
             current_language: Arc::new(Mutex::new(None)),
             pending_updates: Arc::new(Mutex::new(Vec::new())),
             code_actions_enabled: Arc::new(Mutex::new(false)),
+            workspace_folders: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -96,6 +101,7 @@ impl std::fmt::Debug for ServerState {
             .field("current_language", &"<Option<String>>")
             .field("pending_updates", &"<Vec<PendingUpdate>>")
             .field("code_actions_enabled", &"<bool>")
+            .field("workspace_folders", &"<Vec<WorkspaceFolder>>")
             .finish()
     }
 }

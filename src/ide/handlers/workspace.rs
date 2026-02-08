@@ -15,8 +15,15 @@ pub async fn handle_did_change_configuration(
 ) {
     backend.client.log_message(MessageType::INFO, "configuration changed!").await;
 
-    if let Ok(new_settings) = serde_json::from_value::<crate::config::I18nSettings>(params.settings)
-    {
+    let new_settings = serde_json::from_value::<crate::config::I18nSettings>(
+        params.settings.clone(),
+    )
+    .or_else(|_| {
+        serde_json::from_value::<crate::config::ServerSettings>(params.settings)
+            .map(|wrapped| wrapped.js_i18n)
+    });
+
+    if let Ok(new_settings) = new_settings {
         let mut config_manager = backend.config_manager.lock().await;
         match config_manager.update_settings(new_settings) {
             Ok(()) => {
