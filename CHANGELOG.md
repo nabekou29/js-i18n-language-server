@@ -1,4 +1,26 @@
 
+## [0.4.0] - 2026-02-08
+
+### Bug Fixes
+
+- Resolve all clippy lint errors
+
+### Documentation
+
+- Condense comments.md rules
+
+### Features
+
+- Add translation key rename support via LSP textDocument/rename
+- Add delete translation key action
+- Support rename and delete key code action from JSON translation files
+- Add plural fallback to decoration values
+
+### Refactor
+
+- Extract shared helpers and fix lock ordering
+
+
 ## [0.3.0] - 2026-02-07
 
 ### Documentation
