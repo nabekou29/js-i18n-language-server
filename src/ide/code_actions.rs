@@ -185,6 +185,7 @@ pub fn update_key_in_json_text(
 /// Rename a key in JSON using CST to preserve formatting and property order.
 /// Uses pivot object strategy: finds common prefix of old/new paths, operates below the pivot.
 #[must_use]
+#[allow(clippy::redundant_clone, clippy::indexing_slicing)]
 pub fn rename_key_in_json_text(
     json_text: &str,
     old_key: &str,
@@ -247,7 +248,7 @@ pub fn rename_key_in_json_text(
     }
 
     // Navigate to pivot object (at common prefix)
-    let mut pivot = root_obj.clone();
+    let mut pivot = root_obj;
     for part in &old_parts[..common_len] {
         pivot = pivot.object_value(part)?;
     }
@@ -373,7 +374,8 @@ pub fn generate_delete_key_code_action(
 
     for translation in &target_translations {
         let json_text = translation.json_text(db);
-        let result = delete_keys_from_json_text(json_text, &[key_part.clone()], key_separator);
+        let result =
+            delete_keys_from_json_text(json_text, std::slice::from_ref(&key_part), key_separator);
         if let Some(result) = result {
             if result.deleted_count == 0 {
                 continue;
@@ -926,9 +928,8 @@ mod tests {
         let result = generate_delete_key_code_action(&db, "hello", &[en], ".", None);
 
         assert_that!(result, some(anything()));
-        let action = match result.unwrap() {
-            CodeActionOrCommand::CodeAction(a) => a,
-            _ => panic!("expected CodeAction"),
+        let CodeActionOrCommand::CodeAction(action) = result.unwrap() else {
+            panic!("expected CodeAction")
         };
         assert_that!(action.title, eq("Delete 'hello' from all translations"));
         assert_that!(action.kind.as_ref(), some(eq(&CodeActionKind::REFACTOR)));
@@ -967,9 +968,8 @@ mod tests {
 
         let result = generate_delete_key_code_action(&db, "hello", &[en, ja], ".", None);
 
-        let action = match result.unwrap() {
-            CodeActionOrCommand::CodeAction(a) => a,
-            _ => panic!("expected CodeAction"),
+        let CodeActionOrCommand::CodeAction(action) = result.unwrap() else {
+            panic!("expected CodeAction")
         };
         let changes = action.edit.unwrap().changes.unwrap();
         assert_that!(changes.len(), eq(2));
@@ -1019,9 +1019,8 @@ mod tests {
         let result =
             generate_delete_key_code_action(&db, "common:hello", &[common, errors], ".", Some(":"));
 
-        let action = match result.unwrap() {
-            CodeActionOrCommand::CodeAction(a) => a,
-            _ => panic!("expected CodeAction"),
+        let CodeActionOrCommand::CodeAction(action) = result.unwrap() else {
+            panic!("expected CodeAction")
         };
         // Title should show key_part without namespace
         assert_that!(action.title, eq("Delete 'hello' from all translations"));
@@ -1051,9 +1050,8 @@ mod tests {
 
         let result = generate_delete_key_code_action(&db, "common.hello", &[en], ".", None);
 
-        let action = match result.unwrap() {
-            CodeActionOrCommand::CodeAction(a) => a,
-            _ => panic!("expected CodeAction"),
+        let CodeActionOrCommand::CodeAction(action) = result.unwrap() else {
+            panic!("expected CodeAction")
         };
         let changes = action.edit.unwrap().changes.unwrap();
         let en_uri = Url::from_file_path("/locales/en.json").unwrap();

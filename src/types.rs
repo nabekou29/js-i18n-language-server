@@ -56,7 +56,7 @@ impl SourceRange {
     /// Returns an `lsp_types::Range` with surrounding quotes excluded
     /// (shrunk by 1 character on each side).
     #[must_use]
-    pub fn to_unquoted_range(&self) -> lsp_types::Range {
+    pub const fn to_unquoted_range(&self) -> lsp_types::Range {
         lsp_types::Range {
             start: lsp_types::Position {
                 line: self.start.line,

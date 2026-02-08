@@ -292,17 +292,16 @@ pub async fn handle_prepare_rename(
 
         if let Some(translation) =
             translations.iter().find(|t| t.file_path(&*db) == file_path_str.as_ref())
+            && let Some(key) = translation.key_at_position(&*db, source_position)
         {
-            if let Some(key) = translation.key_at_position(&*db, source_position) {
-                let key_text = key.text(&*db).clone();
+            let key_text = key.text(&*db).clone();
 
-                // Look up key range in key_ranges
-                if let Some(range) = translation.key_ranges(&*db).get(&key_text) {
-                    return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
-                        range: range.to_unquoted_range(),
-                        placeholder: key_text,
-                    }));
-                }
+            // Look up key range in key_ranges
+            if let Some(range) = translation.key_ranges(&*db).get(&key_text) {
+                return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+                    range: range.to_unquoted_range(),
+                    placeholder: key_text,
+                }));
             }
         }
     }
@@ -348,6 +347,8 @@ pub async fn handle_rename(
         &settings.key_separator,
         settings.namespace_separator.as_deref(),
     );
+    drop(db);
+    drop(translations);
 
     Ok(Some(edit))
 }

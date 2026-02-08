@@ -26,6 +26,7 @@ use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 /// Updates both translation JSON files and source file references.
 /// Supports namespace-prefixed keys (e.g., `"ns:key"`); namespace changes are rejected.
 #[must_use]
+#[allow(clippy::implicit_hasher)]
 pub fn compute_rename_edits(
     db: &dyn I18nDatabase,
     old_key: &str,
