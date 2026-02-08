@@ -3,19 +3,11 @@
 use tower_lsp::lsp_types::{
     DidChangeConfigurationParams,
     DidChangeWatchedFilesParams,
-    DidChangeWorkspaceFoldersParams,
     FileChangeType,
     MessageType,
 };
 
 use super::super::backend::Backend;
-
-pub async fn handle_did_change_workspace_folders(
-    backend: &Backend,
-    _: DidChangeWorkspaceFoldersParams,
-) {
-    backend.client.log_message(MessageType::INFO, "workspace folders changed!").await;
-}
 
 pub async fn handle_did_change_configuration(
     backend: &Backend,

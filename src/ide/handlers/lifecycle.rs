@@ -22,8 +22,6 @@ use tower_lsp::lsp_types::{
     WorkDoneProgressEnd,
     WorkDoneProgressOptions,
     WorkDoneProgressReport,
-    WorkspaceFoldersServerCapabilities,
-    WorkspaceServerCapabilities,
     notification::Progress,
 };
 
@@ -91,13 +89,7 @@ pub async fn handle_initialize(
                 ],
                 work_done_progress_options: WorkDoneProgressOptions::default(),
             }),
-            workspace: Some(WorkspaceServerCapabilities {
-                workspace_folders: Some(WorkspaceFoldersServerCapabilities {
-                    supported: Some(true),
-                    change_notifications: Some(OneOf::Left(true)),
-                }),
-                file_operations: None,
-            }),
+            workspace: None,
             ..ServerCapabilities::default()
         },
     })

@@ -792,13 +792,6 @@ impl LanguageServer for Backend {
     // Workspace
     // -------------------------------------------------------------------------
 
-    async fn did_change_workspace_folders(
-        &self,
-        params: tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams,
-    ) {
-        handlers::workspace::handle_did_change_workspace_folders(self, params).await;
-    }
-
     async fn did_change_configuration(
         &self,
         params: tower_lsp::lsp_types::DidChangeConfigurationParams,
