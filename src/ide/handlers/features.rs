@@ -266,37 +266,66 @@ pub async fn handle_prepare_rename(
         source_files.get(&file_path).copied()
     };
 
-    let Some(source_file) = source_file else {
-        return Ok(None);
-    };
-
     let db = backend.state.db.lock().await;
     let key_separator = backend.config_manager.lock().await.get_settings().key_separator.clone();
     let source_position = crate::types::SourcePosition::from(position);
 
-    let usages = crate::syntax::analyze_source(&*db, source_file, key_separator);
+    if let Some(source_file) = source_file {
+        let usages = crate::syntax::analyze_source(&*db, source_file, key_separator);
 
-    for usage in usages {
-        let range = usage.range(&*db);
-        if range.contains(source_position) {
-            let key_text = usage.key(&*db).text(&*db).clone();
+        for usage in usages {
+            let range = usage.range(&*db);
+            if range.contains(source_position) {
+                let key_text = usage.key(&*db).text(&*db).clone();
 
-            // Shrink range by 1 char on each side to exclude string quotes
-            let content_range = tower_lsp::lsp_types::Range {
-                start: tower_lsp::lsp_types::Position {
-                    line: range.start.line,
-                    character: range.start.character + 1,
-                },
-                end: tower_lsp::lsp_types::Position {
-                    line: range.end.line,
-                    character: range.end.character.saturating_sub(1),
-                },
-            };
+                // Shrink range by 1 char on each side to exclude string quotes
+                let content_range = tower_lsp::lsp_types::Range {
+                    start: tower_lsp::lsp_types::Position {
+                        line: range.start.line,
+                        character: range.start.character + 1,
+                    },
+                    end: tower_lsp::lsp_types::Position {
+                        line: range.end.line,
+                        character: range.end.character.saturating_sub(1),
+                    },
+                };
 
-            return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
-                range: content_range,
-                placeholder: key_text,
-            }));
+                return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+                    range: content_range,
+                    placeholder: key_text,
+                }));
+            }
+        }
+    } else {
+        // Translation file: find key at cursor position
+        let translations = backend.state.translations.lock().await;
+        let file_path_str = file_path.to_string_lossy();
+
+        if let Some(translation) =
+            translations.iter().find(|t| t.file_path(&*db) == file_path_str.as_ref())
+        {
+            if let Some(key) = translation.key_at_position(&*db, source_position) {
+                let key_text = key.text(&*db).clone();
+
+                // Look up key range in key_ranges
+                if let Some(range) = translation.key_ranges(&*db).get(&key_text) {
+                    let content_range = tower_lsp::lsp_types::Range {
+                        start: tower_lsp::lsp_types::Position {
+                            line: range.start.line,
+                            character: range.start.character + 1,
+                        },
+                        end: tower_lsp::lsp_types::Position {
+                            line: range.end.line,
+                            character: range.end.character.saturating_sub(1),
+                        },
+                    };
+
+                    return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+                        range: content_range,
+                        placeholder: key_text,
+                    }));
+                }
+            }
         }
     }
 

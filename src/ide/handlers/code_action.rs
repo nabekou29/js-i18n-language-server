@@ -42,8 +42,14 @@ pub async fn handle_code_action(
 
     if is_translation_file {
         let file_path_str = file_path.to_string_lossy();
-        return generate_translation_file_code_actions(backend, uri, &file_path_str, diagnostics)
-            .await;
+        return generate_translation_file_code_actions(
+            backend,
+            uri,
+            &file_path_str,
+            diagnostics,
+            params.range.start,
+        )
+        .await;
     }
 
     let position = params.range.start;
@@ -114,11 +120,15 @@ async fn generate_translation_file_code_actions(
     uri: &tower_lsp::lsp_types::Url,
     file_path: &str,
     diagnostics: &[tower_lsp::lsp_types::Diagnostic],
+    position: tower_lsp::lsp_types::Position,
 ) -> Result<Option<CodeActionResponse>> {
     let key_separator = backend.get_key_separator().await;
     let used_keys = backend.collect_used_keys(&key_separator).await;
 
-    let unused_key_count = {
+    let mut actions: Vec<CodeActionOrCommand> = Vec::new();
+
+    {
+        let settings = backend.config_manager.lock().await.get_settings().clone();
         let db = backend.state.db.lock().await;
         let translations = backend.state.translations.lock().await;
 
@@ -127,53 +137,67 @@ async fn generate_translation_file_code_actions(
             return Ok(Some(vec![]));
         };
 
+        // Delete key at cursor position
+        let source_position = crate::types::SourcePosition::from(position);
+        if let Some(key) = translation.key_at_position(&*db, source_position) {
+            let key_text = key.text(&*db).clone();
+            if let Some(action) = crate::ide::code_actions::generate_delete_key_code_action(
+                &*db,
+                &key_text,
+                &translations,
+                &settings.key_separator,
+                settings.namespace_separator.as_deref(),
+            ) {
+                actions.push(action);
+            }
+        }
+
+        // Delete unused keys
         let all_keys = translation.keys(&*db).clone();
         drop(translations);
         drop(db);
 
-        all_keys
+        let unused_key_count = all_keys
             .keys()
             .filter(|key| !crate::ide::diagnostics::is_key_used(key, &used_keys, &key_separator))
-            .count()
-    };
+            .count();
 
-    if unused_key_count == 0 {
-        tracing::debug!("No unused translation keys");
-        return Ok(Some(vec![]));
+        if unused_key_count > 0 {
+            tracing::debug!(unused_key_count, "Found unused translation keys");
+
+            let unused_key_diagnostics: Vec<_> = diagnostics
+                .iter()
+                .filter(|d| {
+                    d.code.as_ref().is_some_and(
+                        |c| matches!(c, NumberOrString::String(s) if s == "unused-translation-key"),
+                    )
+                })
+                .cloned()
+                .collect();
+
+            let action = CodeAction {
+                title: format!("Delete {unused_key_count} unused translation key(s)"),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: if unused_key_diagnostics.is_empty() {
+                    None
+                } else {
+                    Some(unused_key_diagnostics)
+                },
+                is_preferred: Some(true),
+                disabled: None,
+                edit: None,
+                command: Some(Command {
+                    title: format!("Delete {unused_key_count} unused translation key(s)"),
+                    command: "i18n.deleteUnusedKeys".to_string(),
+                    arguments: Some(vec![serde_json::json!({
+                        "uri": uri.to_string()
+                    })]),
+                }),
+                data: None,
+            };
+            actions.push(CodeActionOrCommand::CodeAction(action));
+        }
     }
 
-    tracing::debug!(unused_key_count, "Found unused translation keys");
-
-    let unused_key_diagnostics: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| {
-            d.code.as_ref().is_some_and(
-                |c| matches!(c, NumberOrString::String(s) if s == "unused-translation-key"),
-            )
-        })
-        .cloned()
-        .collect();
-
-    let action = CodeAction {
-        title: format!("Delete {unused_key_count} unused translation key(s)"),
-        kind: Some(CodeActionKind::QUICKFIX),
-        diagnostics: if unused_key_diagnostics.is_empty() {
-            None
-        } else {
-            Some(unused_key_diagnostics)
-        },
-        is_preferred: Some(true),
-        disabled: None,
-        edit: None,
-        command: Some(Command {
-            title: format!("Delete {unused_key_count} unused translation key(s)"),
-            command: "i18n.deleteUnusedKeys".to_string(),
-            arguments: Some(vec![serde_json::json!({
-                "uri": uri.to_string()
-            })]),
-        }),
-        data: None,
-    };
-
-    Ok(Some(vec![CodeActionOrCommand::CodeAction(action)]))
+    Ok(Some(actions))
 }
