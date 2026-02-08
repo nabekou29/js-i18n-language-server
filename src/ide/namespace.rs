@@ -36,6 +36,18 @@ pub fn filter_translations_by_namespace<'a>(
     )
 }
 
+/// Filters translations by a single explicit namespace.
+///
+/// Simpler API for callers that only have a namespace from `parse_key_with_namespace`.
+#[must_use]
+pub fn filter_by_namespace<'a>(
+    db: &dyn I18nDatabase,
+    translations: &'a [Translation],
+    namespace: Option<&str>,
+) -> Vec<&'a Translation> {
+    filter_translations_by_namespace(db, translations, namespace, None, None, None)
+}
+
 #[must_use]
 pub fn resolve_namespace<'a>(
     explicit_namespace: Option<&'a str>,
@@ -154,6 +166,51 @@ mod tests {
 
         let filtered = filter_translations_by_namespace(&db, &translations, None, None, None, None);
 
+        assert_that!(filtered.len(), eq(2));
+    }
+
+    #[rstest]
+    fn filter_by_namespace_some(db: I18nDatabaseImpl) {
+        let common = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("common"),
+            "/locales/en/common.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+        );
+        let errors = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("errors"),
+            "/locales/en/errors.json",
+            HashMap::from([("notFound".to_string(), "Not Found".to_string())]),
+        );
+        let translations = vec![common, errors];
+
+        let filtered = filter_by_namespace(&db, &translations, Some("common"));
+        assert_that!(filtered.len(), eq(1));
+        assert_that!(filtered[0].namespace(&db).as_deref(), some(eq("common")));
+    }
+
+    #[rstest]
+    fn filter_by_namespace_none_returns_all(db: I18nDatabaseImpl) {
+        let common = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("common"),
+            "/locales/en/common.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+        );
+        let errors = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("errors"),
+            "/locales/en/errors.json",
+            HashMap::from([("notFound".to_string(), "Not Found".to_string())]),
+        );
+        let translations = vec![common, errors];
+
+        let filtered = filter_by_namespace(&db, &translations, None);
         assert_that!(filtered.len(), eq(2));
     }
 

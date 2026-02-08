@@ -21,8 +21,28 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::db::I18nDatabase;
+use crate::ide::namespace::filter_by_namespace;
 use crate::input::translation::Translation;
 use crate::syntax::analyzer::extractor::parse_key_with_namespace;
+
+/// Create a `TextEdit` that replaces the entire file content.
+#[allow(clippy::cast_possible_truncation)]
+#[must_use]
+pub(crate) fn create_full_file_text_edit(original_text: &str, new_text: String) -> TextEdit {
+    let line_count = original_text.lines().count();
+    let last_line = original_text.lines().last().unwrap_or("");
+
+    TextEdit {
+        range: tower_lsp::lsp_types::Range {
+            start: tower_lsp::lsp_types::Position { line: 0, character: 0 },
+            end: tower_lsp::lsp_types::Position {
+                line: line_count.saturating_sub(1) as u32,
+                character: last_line.len() as u32,
+            },
+        },
+        new_text,
+    }
+}
 
 /// Result of CST-based key insertion or update, preserving original formatting.
 #[derive(Debug, Clone)]
@@ -347,11 +367,7 @@ pub fn generate_delete_key_code_action(
 ) -> Option<CodeActionOrCommand> {
     let (ns, key_part) = parse_key_with_namespace(key, namespace_separator);
 
-    let target_translations: Vec<&Translation> = if let Some(ref ns) = ns {
-        translations.iter().filter(|t| t.namespace(db).as_ref().is_some_and(|n| n == ns)).collect()
-    } else {
-        translations.iter().collect()
-    };
+    let target_translations = filter_by_namespace(db, translations, ns.as_deref());
 
     let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
 
@@ -364,18 +380,7 @@ pub fn generate_delete_key_code_action(
             }
             let file_path = translation.file_path(db);
             if let Ok(uri) = Url::from_file_path(file_path.as_str()) {
-                let line_count = json_text.lines().count() as u32;
-                let last_line_len = json_text.lines().last().map_or(0, |l| l.len()) as u32;
-                let edit = TextEdit {
-                    range: tower_lsp::lsp_types::Range {
-                        start: tower_lsp::lsp_types::Position { line: 0, character: 0 },
-                        end: tower_lsp::lsp_types::Position {
-                            line: line_count.saturating_sub(1),
-                            character: last_line_len,
-                        },
-                    },
-                    new_text: result.new_text,
-                };
+                let edit = create_full_file_text_edit(json_text, result.new_text);
                 changes.entry(uri).or_default().push(edit);
             }
         }
@@ -897,26 +902,7 @@ mod tests {
     // === generate_delete_key_code_action tests ===
 
     use crate::db::I18nDatabaseImpl;
-
-    fn create_test_translation(
-        db: &I18nDatabaseImpl,
-        language: &str,
-        namespace: Option<&str>,
-        file_path: &str,
-        keys: HashMap<String, String>,
-        json_text: &str,
-    ) -> Translation {
-        Translation::new(
-            db,
-            language.to_string(),
-            namespace.map(String::from),
-            file_path.to_string(),
-            keys,
-            json_text.to_string(),
-            HashMap::new(),
-            HashMap::new(),
-        )
-    }
+    use crate::test_utils::create_translation_with_json;
 
     #[rstest]
     fn delete_key_action_basic() {
@@ -925,7 +911,7 @@ mod tests {
   "hello": "Hello",
   "world": "World"
 }"#;
-        let en = create_test_translation(
+        let en = create_translation_with_json(
             &db,
             "en",
             None,
@@ -962,7 +948,7 @@ mod tests {
         let json_en = r#"{ "hello": "Hello" }"#;
         let json_ja = r#"{ "hello": "こんにちは" }"#;
 
-        let en = create_test_translation(
+        let en = create_translation_with_json(
             &db,
             "en",
             None,
@@ -970,7 +956,7 @@ mod tests {
             HashMap::from([("hello".to_string(), "Hello".to_string())]),
             json_en,
         );
-        let ja = create_test_translation(
+        let ja = create_translation_with_json(
             &db,
             "ja",
             None,
@@ -993,7 +979,7 @@ mod tests {
     fn delete_key_action_not_found_returns_none() {
         let db = I18nDatabaseImpl::default();
         let json = r#"{ "hello": "Hello" }"#;
-        let en = create_test_translation(
+        let en = create_translation_with_json(
             &db,
             "en",
             None,
@@ -1013,7 +999,7 @@ mod tests {
         let common_json = r#"{ "hello": "Hello" }"#;
         let errors_json = r#"{ "hello": "Error Hello" }"#;
 
-        let common = create_test_translation(
+        let common = create_translation_with_json(
             &db,
             "en",
             Some("common"),
@@ -1021,7 +1007,7 @@ mod tests {
             HashMap::from([("hello".to_string(), "Hello".to_string())]),
             common_json,
         );
-        let errors = create_test_translation(
+        let errors = create_translation_with_json(
             &db,
             "en",
             Some("errors"),
@@ -1054,7 +1040,7 @@ mod tests {
     "hello": "Hello"
   }
 }"#;
-        let en = create_test_translation(
+        let en = create_translation_with_json(
             &db,
             "en",
             None,

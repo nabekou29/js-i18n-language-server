@@ -9,7 +9,6 @@ use tower_lsp::lsp_types::{
     ExecuteCommandParams,
     MessageType,
     Position,
-    Range,
     TextEdit,
     Url,
     WorkspaceEdit,
@@ -33,23 +32,7 @@ fn parse_command_args<T: serde::de::DeserializeOwned>(
         .ok()
 }
 
-/// Create a `TextEdit` that replaces the entire file content
-#[allow(clippy::cast_possible_truncation)] // File content won't exceed 4 billion lines
-fn create_full_file_text_edit(original_text: &str, new_text: String) -> TextEdit {
-    let line_count = original_text.lines().count();
-    let last_line = original_text.lines().last().unwrap_or("");
-
-    TextEdit {
-        range: Range {
-            start: Position { line: 0, character: 0 },
-            end: Position {
-                line: line_count.saturating_sub(1) as u32,
-                character: last_line.len() as u32,
-            },
-        },
-        new_text,
-    }
-}
+use crate::ide::code_actions::create_full_file_text_edit;
 
 /// Apply a workspace edit with a single file change
 async fn apply_single_file_edit(backend: &Backend, uri: Url, text_edit: TextEdit) {

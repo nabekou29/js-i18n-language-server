@@ -49,10 +49,15 @@ pub async fn handle_completion(
         return Ok(None);
     };
 
+    // Acquire config before db to respect lock ordering (config_manager → db → translations)
+    let (key_separator, primary_languages) = {
+        let settings = backend.config_manager.lock().await.get_settings().clone();
+        (settings.key_separator, settings.primary_languages)
+    };
+
     let db = backend.state.db.lock().await;
     let text = source_file.text(&*db);
     let language = source_file.language(&*db);
-    let key_separator = backend.config_manager.lock().await.get_settings().key_separator.clone();
 
     // Use tree-sitter based extraction (supports renamed functions, ignores comments)
     let completion_context = crate::ide::completion::extract_completion_context_tree_sitter(
@@ -79,8 +84,6 @@ pub async fn handle_completion(
         if context.partial_key.is_empty() { None } else { Some(context.partial_key.as_str()) };
 
     let current_language = backend.state.current_language.lock().await.clone();
-    let primary_languages =
-        backend.config_manager.lock().await.get_settings().primary_languages.clone();
     let sorted_languages = crate::ide::backend::collect_sorted_languages(
         &*db,
         &translations,
@@ -192,8 +195,7 @@ pub async fn handle_goto_definition(
     };
 
     let locations = {
-        let key_separator =
-            backend.config_manager.lock().await.get_settings().key_separator.clone();
+        let key_separator = backend.get_key_separator().await;
         let db = backend.state.db.lock().await;
         let key = crate::interned::TransKey::new(&*db, key_text);
         let translations = backend.state.translations.lock().await;
@@ -231,11 +233,10 @@ pub async fn handle_references(
     };
 
     let locations = {
+        let key_separator = backend.get_key_separator().await;
         let db = backend.state.db.lock().await;
         let key = crate::interned::TransKey::new(&*db, key_text.clone());
         let source_files = backend.state.source_files.lock().await;
-        let key_separator =
-            backend.config_manager.lock().await.get_settings().key_separator.clone();
         crate::ide::references::find_references(&*db, key, &source_files, &key_separator)
     };
 
@@ -266,8 +267,8 @@ pub async fn handle_prepare_rename(
         source_files.get(&file_path).copied()
     };
 
+    let key_separator = backend.get_key_separator().await;
     let db = backend.state.db.lock().await;
-    let key_separator = backend.config_manager.lock().await.get_settings().key_separator.clone();
     let source_position = crate::types::SourcePosition::from(position);
 
     if let Some(source_file) = source_file {
@@ -278,20 +279,8 @@ pub async fn handle_prepare_rename(
             if range.contains(source_position) {
                 let key_text = usage.key(&*db).text(&*db).clone();
 
-                // Shrink range by 1 char on each side to exclude string quotes
-                let content_range = tower_lsp::lsp_types::Range {
-                    start: tower_lsp::lsp_types::Position {
-                        line: range.start.line,
-                        character: range.start.character + 1,
-                    },
-                    end: tower_lsp::lsp_types::Position {
-                        line: range.end.line,
-                        character: range.end.character.saturating_sub(1),
-                    },
-                };
-
                 return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
-                    range: content_range,
+                    range: range.to_unquoted_range(),
                     placeholder: key_text,
                 }));
             }
@@ -309,19 +298,8 @@ pub async fn handle_prepare_rename(
 
                 // Look up key range in key_ranges
                 if let Some(range) = translation.key_ranges(&*db).get(&key_text) {
-                    let content_range = tower_lsp::lsp_types::Range {
-                        start: tower_lsp::lsp_types::Position {
-                            line: range.start.line,
-                            character: range.start.character + 1,
-                        },
-                        end: tower_lsp::lsp_types::Position {
-                            line: range.end.line,
-                            character: range.end.character.saturating_sub(1),
-                        },
-                    };
-
                     return Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
-                        range: content_range,
+                        range: range.to_unquoted_range(),
                         placeholder: key_text,
                     }));
                 }

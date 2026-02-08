@@ -182,23 +182,8 @@ impl I18nSettings {
             ));
         }
 
-        for (index, pattern) in self.include_patterns.iter().enumerate() {
-            if let Err(e) = globset::Glob::new(pattern) {
-                errors.push(ValidationError::new(
-                    format!("includePatterns[{index}]"),
-                    format!("Invalid glob pattern '{pattern}': {e}"),
-                ));
-            }
-        }
-
-        for (index, pattern) in self.exclude_patterns.iter().enumerate() {
-            if let Err(e) = globset::Glob::new(pattern) {
-                errors.push(ValidationError::new(
-                    format!("excludePatterns[{index}]"),
-                    format!("Invalid glob pattern '{pattern}': {e}"),
-                ));
-            }
-        }
+        validate_glob_patterns(&self.include_patterns, "includePatterns", &mut errors);
+        validate_glob_patterns(&self.exclude_patterns, "excludePatterns", &mut errors);
 
         if self.translation_files.include_patterns.is_empty() {
             errors.push(ValidationError::new(
@@ -207,23 +192,16 @@ impl I18nSettings {
             ));
         }
 
-        for (index, pattern) in self.translation_files.include_patterns.iter().enumerate() {
-            if let Err(e) = globset::Glob::new(pattern) {
-                errors.push(ValidationError::new(
-                    format!("translationFiles.includePatterns[{index}]"),
-                    format!("Invalid glob pattern '{pattern}': {e}"),
-                ));
-            }
-        }
-
-        for (index, pattern) in self.translation_files.exclude_patterns.iter().enumerate() {
-            if let Err(e) = globset::Glob::new(pattern) {
-                errors.push(ValidationError::new(
-                    format!("translationFiles.excludePatterns[{index}]"),
-                    format!("Invalid glob pattern '{pattern}': {e}"),
-                ));
-            }
-        }
+        validate_glob_patterns(
+            &self.translation_files.include_patterns,
+            "translationFiles.includePatterns",
+            &mut errors,
+        );
+        validate_glob_patterns(
+            &self.translation_files.exclude_patterns,
+            "translationFiles.excludePatterns",
+            &mut errors,
+        );
 
         let mt = &self.diagnostics.missing_translation;
         if mt.required_languages.is_some() && mt.optional_languages.is_some() {
@@ -234,6 +212,21 @@ impl I18nSettings {
         }
 
         if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+}
+
+fn validate_glob_patterns(
+    patterns: &[String],
+    field_prefix: &str,
+    errors: &mut Vec<ValidationError>,
+) {
+    for (index, pattern) in patterns.iter().enumerate() {
+        if let Err(e) = globset::Glob::new(pattern) {
+            errors.push(ValidationError::new(
+                format!("{field_prefix}[{index}]"),
+                format!("Invalid glob pattern '{pattern}': {e}"),
+            ));
+        }
     }
 }
 

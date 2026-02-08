@@ -10,7 +10,11 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::db::I18nDatabase;
-use crate::ide::code_actions::rename_key_in_json_text;
+use crate::ide::code_actions::{
+    create_full_file_text_edit,
+    rename_key_in_json_text,
+};
+use crate::ide::namespace::filter_by_namespace;
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
@@ -41,12 +45,7 @@ pub fn compute_rename_edits(
 
     let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
 
-    // Filter translations by namespace
-    let target_translations: Vec<&Translation> = if let Some(ref ns) = old_ns {
-        translations.iter().filter(|t| t.namespace(db).as_ref().is_some_and(|n| n == ns)).collect()
-    } else {
-        translations.iter().collect()
-    };
+    let target_translations = filter_by_namespace(db, translations, old_ns.as_deref());
 
     // Translation file edits
     for translation in &target_translations {
@@ -56,18 +55,7 @@ pub fn compute_rename_edits(
         {
             let file_path = translation.file_path(db);
             if let Ok(uri) = Url::from_file_path(file_path.as_str()) {
-                let line_count = json_text.lines().count() as u32;
-                let last_line_len = json_text.lines().last().map_or(0, |l| l.len()) as u32;
-                let edit = TextEdit {
-                    range: tower_lsp::lsp_types::Range {
-                        start: tower_lsp::lsp_types::Position { line: 0, character: 0 },
-                        end: tower_lsp::lsp_types::Position {
-                            line: line_count.saturating_sub(1),
-                            character: last_line_len,
-                        },
-                    },
-                    new_text: result.new_text,
-                };
+                let edit = create_full_file_text_edit(json_text, result.new_text);
                 changes.entry(uri).or_default().push(edit);
             }
         }
@@ -88,20 +76,8 @@ pub fn compute_rename_edits(
                 continue;
             }
 
-            // Shrink range by 1 char on each side to exclude string quotes
             let range = usage.range(db);
-            let adjusted_range = tower_lsp::lsp_types::Range {
-                start: tower_lsp::lsp_types::Position {
-                    line: range.start.line,
-                    character: range.start.character + 1,
-                },
-                end: tower_lsp::lsp_types::Position {
-                    line: range.end.line,
-                    character: range.end.character.saturating_sub(1),
-                },
-            };
-
-            let edit = TextEdit { range: adjusted_range, new_text: new_key.to_string() };
+            let edit = TextEdit { range: range.to_unquoted_range(), new_text: new_key.to_string() };
             changes.entry(uri.clone()).or_default().push(edit);
         }
     }
@@ -124,27 +100,7 @@ mod tests {
         ProgrammingLanguage,
         SourceFile,
     };
-    use crate::input::translation::Translation;
-
-    fn create_test_translation(
-        db: &I18nDatabaseImpl,
-        language: &str,
-        namespace: Option<&str>,
-        file_path: &str,
-        keys: HashMap<String, String>,
-        json_text: &str,
-    ) -> Translation {
-        Translation::new(
-            db,
-            language.to_string(),
-            namespace.map(String::from),
-            file_path.to_string(),
-            keys,
-            json_text.to_string(),
-            HashMap::new(),
-            HashMap::new(),
-        )
-    }
+    use crate::test_utils::create_translation_with_json;
 
     #[rstest]
     fn rename_updates_translation_files() {
@@ -159,7 +115,7 @@ mod tests {
   "world": "世界"
 }"#;
 
-        let en = create_test_translation(
+        let en = create_translation_with_json(
             &db,
             "en",
             None,
@@ -170,7 +126,7 @@ mod tests {
             ]),
             json_en,
         );
-        let ja = create_test_translation(
+        let ja = create_translation_with_json(
             &db,
             "ja",
             None,
@@ -251,7 +207,7 @@ mod tests {
   "hello": "Error Hello"
 }"#;
 
-        let common = create_test_translation(
+        let common = create_translation_with_json(
             &db,
             "en",
             Some("common"),
@@ -259,7 +215,7 @@ mod tests {
             HashMap::from([("hello".to_string(), "Hello".to_string())]),
             common_json,
         );
-        let errors = create_test_translation(
+        let errors = create_translation_with_json(
             &db,
             "en",
             Some("errors"),

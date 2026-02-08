@@ -179,7 +179,7 @@ impl Backend {
             source_files.get(file_path).copied()
         };
 
-        let key_separator = self.config_manager.lock().await.get_settings().key_separator.clone();
+        let key_separator = self.get_key_separator().await;
         let db = self.state.db.lock().await;
 
         if let Some(source_file) = source_file {

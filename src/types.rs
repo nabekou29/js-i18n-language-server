@@ -53,6 +53,22 @@ impl SourceRange {
         Self { start: node.start_position().into(), end: node.end_position().into() }
     }
 
+    /// Returns an `lsp_types::Range` with surrounding quotes excluded
+    /// (shrunk by 1 character on each side).
+    #[must_use]
+    pub fn to_unquoted_range(&self) -> lsp_types::Range {
+        lsp_types::Range {
+            start: lsp_types::Position {
+                line: self.start.line,
+                character: self.start.character + 1,
+            },
+            end: lsp_types::Position {
+                line: self.end.line,
+                character: self.end.character.saturating_sub(1),
+            },
+        }
+    }
+
     /// Checks if a position is within this range.
     #[must_use]
     pub const fn contains(&self, position: SourcePosition) -> bool {
@@ -104,6 +120,24 @@ mod tests {
         #[case] expected: bool,
     ) {
         assert_that!(range.contains(position), eq(expected));
+    }
+
+    #[rstest]
+    fn to_unquoted_range_shrinks_by_one() {
+        let r = range(5, 10, 5, 20);
+        let content = r.to_unquoted_range();
+        assert_that!(content.start.line, eq(5));
+        assert_that!(content.start.character, eq(11));
+        assert_that!(content.end.line, eq(5));
+        assert_that!(content.end.character, eq(19));
+    }
+
+    #[rstest]
+    fn to_unquoted_range_saturates_at_zero() {
+        let r = range(3, 0, 3, 5);
+        let content = r.to_unquoted_range();
+        assert_that!(content.start.character, eq(1));
+        assert_that!(content.end.character, eq(4));
     }
 
     #[rstest]
