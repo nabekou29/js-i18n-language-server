@@ -15,6 +15,7 @@ use tower_lsp::lsp_types::{
     ProgressParams,
     ProgressParamsValue,
     ServerCapabilities,
+    ServerInfo,
     TextDocumentSyncCapability,
     TextDocumentSyncKind,
     WorkDoneProgress,
@@ -75,7 +76,10 @@ pub async fn handle_initialize(
     *backend.state.workspace_folders.lock().await = workspace_folders;
 
     Ok(InitializeResult {
-        server_info: None,
+        server_info: Some(ServerInfo {
+            name: "js-i18n-language-server".to_string(),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        }),
         capabilities: ServerCapabilities {
             text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
             hover_provider: Some(HoverProviderCapability::Simple(true)),
