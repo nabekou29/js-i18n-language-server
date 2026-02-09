@@ -78,7 +78,7 @@ pub fn generate_hover_content(
     sort_translations_by_priority(&mut translations_found, current_language, primary_languages);
 
     for (language, value) in translations_found {
-        let _ = writeln!(content, "**{language}**: {value}");
+        let _ = write!(content, "**{language}**: {value}\n\n");
     }
 
     Some(content)
@@ -86,13 +86,14 @@ pub fn generate_hover_content(
 
 /// Format plural variants into a display string
 fn format_plural_variants(variants: &[(&str, &str)], base_key: &str) -> String {
-    let mut result = String::from("(plural)\n");
+    // Use trailing two spaces + \n for markdown soft line breaks
+    let mut result = String::from("(plural)  \n");
 
     for (key, value) in variants {
         // Display only the suffix part after stripping the base key
         let suffix = key.strip_prefix(base_key).unwrap_or(key);
         let truncated_value = truncate_string(value, MAX_NESTED_VALUE_LENGTH);
-        let _ = writeln!(result, "  `{suffix}`: {truncated_value}");
+        let _ = writeln!(result, "`{suffix}`: {truncated_value}  ");
     }
 
     result.trim_end().to_string()
@@ -103,6 +104,7 @@ fn format_nested_keys(nested_keys: &[(&String, &String)], parent_key: &str) -> S
     let mut sorted_keys: Vec<_> = nested_keys.iter().collect();
     sorted_keys.sort_by_key(|(a, _)| *a);
 
+    // Use trailing two spaces + \n for markdown soft line breaks
     let display_keys: Vec<String> = sorted_keys
         .iter()
         .take(MAX_NESTED_KEYS_DISPLAY)
@@ -111,15 +113,15 @@ fn format_nested_keys(nested_keys: &[(&String, &String)], parent_key: &str) -> S
             let relative_key = k.strip_prefix(parent_key).unwrap_or(k);
             let truncated_value = truncate_string(v, MAX_NESTED_VALUE_LENGTH);
             // Wrap key name in backticks (escapes Markdown special characters)
-            format!("  `{relative_key}`: {truncated_value}")
+            format!("`{relative_key}`: {truncated_value}")
         })
         .collect();
 
-    let mut result = format!("{{...}}\n{}", display_keys.join("\n"));
+    let mut result = format!("{{...}}  \n{}", display_keys.join("  \n"));
 
     if nested_keys.len() > MAX_NESTED_KEYS_DISPLAY {
         let remaining = nested_keys.len() - MAX_NESTED_KEYS_DISPLAY;
-        let _ = write!(result, "\n  ... and {remaining} more");
+        let _ = write!(result, "  \n... and {remaining} more");
     }
 
     result
