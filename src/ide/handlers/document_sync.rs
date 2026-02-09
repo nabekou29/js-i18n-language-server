@@ -14,6 +14,9 @@ pub async fn handle_did_open(backend: &Backend, params: DidOpenTextDocumentParam
     backend.client.log_message(MessageType::INFO, "file opened!").await;
 
     let uri = params.text_document.uri.clone();
+    if uri.scheme() != "file" {
+        return;
+    }
     let text = params.text_document.text;
 
     {
@@ -27,6 +30,9 @@ pub async fn handle_did_open(backend: &Backend, params: DidOpenTextDocumentParam
 
 pub async fn handle_did_change(backend: &Backend, params: DidChangeTextDocumentParams) {
     let uri = params.text_document.uri;
+    if uri.scheme() != "file" {
+        return;
+    }
 
     let Some(change) = params.content_changes.into_iter().next_back() else {
         return;
@@ -55,6 +61,9 @@ pub async fn handle_did_close(backend: &Backend, params: DidCloseTextDocumentPar
     backend.client.log_message(MessageType::INFO, "file closed!").await;
 
     let uri = params.text_document.uri;
+    if uri.scheme() != "file" {
+        return;
+    }
 
     {
         let mut opened_files = backend.state.opened_files.lock().await;

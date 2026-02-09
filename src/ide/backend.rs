@@ -73,10 +73,10 @@ impl std::fmt::Debug for Backend {
 }
 
 impl Backend {
-    /// Converts URI to file path. Returns `None` with warning log on failure.
+    /// Converts URI to file path. Returns `None` with debug log on failure.
     pub(crate) fn uri_to_path(uri: &tower_lsp::lsp_types::Url) -> Option<PathBuf> {
         uri.to_file_path().ok().or_else(|| {
-            tracing::warn!("Failed to convert URI to file path: {}", uri);
+            tracing::debug!("Failed to convert URI to file path: {}", uri);
             None
         })
     }
