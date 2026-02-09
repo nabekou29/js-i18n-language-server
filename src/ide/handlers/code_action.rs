@@ -148,6 +148,10 @@ async fn generate_translation_file_code_actions(
                 &settings.key_separator,
                 settings.namespace_separator.as_deref(),
             ) {
+                let is_unused =
+                    !crate::ide::diagnostics::is_key_used(&key_text, &used_keys, &key_separator);
+                let action =
+                    promote_to_quickfix_if_unused(action, is_unused, diagnostics, position);
                 actions.push(action);
             }
         }
@@ -178,14 +182,8 @@ async fn generate_translation_file_code_actions(
             let action = CodeAction {
                 title: format!("Delete {unused_key_count} unused translation key(s)"),
                 kind: Some(CodeActionKind::QUICKFIX),
-                diagnostics: if unused_key_diagnostics.is_empty() {
-                    None
-                } else {
-                    Some(unused_key_diagnostics)
-                },
+                diagnostics: (!unused_key_diagnostics.is_empty()).then_some(unused_key_diagnostics),
                 is_preferred: Some(true),
-                disabled: None,
-                edit: None,
                 command: Some(Command {
                     title: format!("Delete {unused_key_count} unused translation key(s)"),
                     command: "i18n.deleteUnusedKeys".to_string(),
@@ -193,11 +191,47 @@ async fn generate_translation_file_code_actions(
                         "uri": uri.to_string()
                     })]),
                 }),
-                data: None,
+                ..Default::default()
             };
             actions.push(CodeActionOrCommand::CodeAction(action));
         }
     }
 
     Ok(Some(actions))
+}
+
+/// Promote a delete-key action to QUICKFIX when the key is unused,
+/// so it appears alongside the "Delete N unused key(s)" action in the Quick Fix menu.
+fn promote_to_quickfix_if_unused(
+    action: CodeActionOrCommand,
+    is_unused: bool,
+    diagnostics: &[tower_lsp::lsp_types::Diagnostic],
+    position: tower_lsp::lsp_types::Position,
+) -> CodeActionOrCommand {
+    let CodeActionOrCommand::CodeAction(mut ca) = action else {
+        return action;
+    };
+
+    if !is_unused {
+        return CodeActionOrCommand::CodeAction(ca);
+    }
+
+    ca.kind = Some(CodeActionKind::QUICKFIX);
+
+    let matching_diag: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code.as_ref().is_some_and(
+                |c| matches!(c, NumberOrString::String(s) if s == "unused-translation-key"),
+            ) && d.range.start <= position
+                && position <= d.range.end
+        })
+        .cloned()
+        .collect();
+
+    if !matching_diag.is_empty() {
+        ca.diagnostics = Some(matching_diag);
+    }
+
+    CodeActionOrCommand::CodeAction(ca)
 }
