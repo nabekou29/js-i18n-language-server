@@ -188,3 +188,33 @@ Example:
 `number?` (default: 40% of CPU cores)
 
 Number of parallel threads for workspace indexing.
+
+---
+
+## Logging
+
+Server logs are written to stderr. VS Code displays them in the Output panel.
+
+### --log-level
+
+CLI argument to set the log level filter. Takes priority over environment variables.
+
+Simple values (`info`, `debug`, `warn`, `error`, `trace`) are auto-scoped to the server crate.
+Raw tracing filter syntax is also supported.
+
+Examples:
+- `--log-level info` → `js_i18n_language_server=info`
+- `--log-level debug` → `js_i18n_language_server=debug`
+- `--log-level "js_i18n_language_server=info,tower=debug"` → raw filter
+
+### JS_I18N_LOG
+
+Environment variable with the same syntax as `--log-level`. Used when `--log-level` is not specified.
+
+### JS_I18N_LOG_FILE
+
+Environment variable to redirect logs to a file instead of stderr. Takes priority over `--log-file`.
+
+### Default
+
+`js_i18n_language_server=warn` (errors and warnings only)

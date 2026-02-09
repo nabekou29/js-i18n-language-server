@@ -4,7 +4,6 @@ use tower_lsp::lsp_types::{
     DidChangeConfigurationParams,
     DidChangeWatchedFilesParams,
     FileChangeType,
-    MessageType,
 };
 
 use super::super::backend::Backend;
@@ -13,7 +12,7 @@ pub async fn handle_did_change_configuration(
     backend: &Backend,
     params: DidChangeConfigurationParams,
 ) {
-    backend.client.log_message(MessageType::INFO, "configuration changed!").await;
+    tracing::info!(settings = %params.settings, "didChangeConfiguration received");
 
     let new_settings = serde_json::from_value::<crate::config::I18nSettings>(
         params.settings.clone(),
@@ -28,21 +27,12 @@ pub async fn handle_did_change_configuration(
         match config_manager.update_settings(new_settings) {
             Ok(()) => {
                 drop(config_manager);
-                backend
-                    .client
-                    .log_message(MessageType::INFO, "Configuration updated successfully")
-                    .await;
+                tracing::info!("configuration updated successfully");
 
                 backend.reindex_workspace().await;
             }
             Err(error) => {
-                backend
-                    .client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("Configuration validation error: {error}"),
-                    )
-                    .await;
+                tracing::error!(%error, "configuration validation error");
             }
         }
     }

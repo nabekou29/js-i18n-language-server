@@ -5,14 +5,11 @@ use tower_lsp::lsp_types::{
     DidCloseTextDocumentParams,
     DidOpenTextDocumentParams,
     DidSaveTextDocumentParams,
-    MessageType,
 };
 
 use super::super::backend::Backend;
 
 pub async fn handle_did_open(backend: &Backend, params: DidOpenTextDocumentParams) {
-    backend.client.log_message(MessageType::INFO, "file opened!").await;
-
     let uri = params.text_document.uri.clone();
     if uri.scheme() != "file" {
         return;
@@ -53,13 +50,10 @@ pub async fn handle_did_change(backend: &Backend, params: DidChangeTextDocumentP
     backend.send_decorations_changed().await;
 }
 
-pub async fn handle_did_save(backend: &Backend, _: DidSaveTextDocumentParams) {
-    backend.client.log_message(MessageType::INFO, "file saved!").await;
-}
+#[allow(clippy::unused_async)]
+pub async fn handle_did_save(_: &Backend, _: DidSaveTextDocumentParams) {}
 
 pub async fn handle_did_close(backend: &Backend, params: DidCloseTextDocumentParams) {
-    backend.client.log_message(MessageType::INFO, "file closed!").await;
-
     let uri = params.text_document.uri;
     if uri.scheme() != "file" {
         return;

@@ -7,7 +7,6 @@ use serde_json::Value;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     ExecuteCommandParams,
-    MessageType,
     Position,
     TextEdit,
     Url,
@@ -112,13 +111,7 @@ async fn handle_edit_translation(
 
     let Some(translation) = translations.iter().find(|t| t.language(&*db) == parsed_args.lang)
     else {
-        backend
-            .client
-            .log_message(
-                MessageType::WARNING,
-                format!("Translation file not found for: {}", parsed_args.lang),
-            )
-            .await;
+        tracing::warn!(lang = %parsed_args.lang, "translation file not found");
         return Ok(None);
     };
 
@@ -224,7 +217,7 @@ async fn handle_delete_unused_keys(
     };
 
     if unused_keys.is_empty() {
-        backend.client.log_message(MessageType::INFO, "No unused translation keys found").await;
+        tracing::info!("no unused translation keys found");
         return Ok(Some(serde_json::json!({
             "deletedCount": 0,
             "deletedKeys": []
@@ -247,15 +240,6 @@ async fn handle_delete_unused_keys(
 
     // State sync (reload, diagnostics, decorations) is handled by the
     // didChange notification that the client sends after applying the edit.
-
-    let deleted_count = result.deleted_count;
-    backend
-        .client
-        .log_message(
-            MessageType::INFO,
-            format!("Deleted {deleted_count} unused translation key(s)"),
-        )
-        .await;
 
     Ok(Some(serde_json::json!({
         "deletedCount": result.deleted_count,
@@ -476,13 +460,7 @@ async fn handle_set_current_language(
     current_language.clone_from(&parsed_args.language);
     drop(current_language);
 
-    backend
-        .client
-        .log_message(
-            MessageType::INFO,
-            format!("Current language set to: {:?}", parsed_args.language),
-        )
-        .await;
+    tracing::info!(language = ?parsed_args.language, "current language updated");
 
     backend.send_decorations_changed().await;
 

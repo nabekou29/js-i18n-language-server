@@ -9,7 +9,6 @@ use tower_lsp::lsp_types::{
     InitializeParams,
     InitializeResult,
     InitializedParams,
-    MessageType,
     NumberOrString,
     OneOf,
     ProgressParams,
@@ -41,11 +40,7 @@ pub async fn handle_initialize(
 
     let mut config_manager = backend.config_manager.lock().await;
     if let Err(error) = config_manager.load_settings(workspace_root) {
-        backend
-            .client
-            .log_message(MessageType::ERROR, format!("Configuration error: {error}"))
-            .await;
-        tracing::error!("Configuration error during initialize: {}", error);
+        tracing::error!(%error, "configuration error during initialize");
     }
     drop(config_manager);
 
@@ -118,15 +113,10 @@ pub async fn handle_initialize(
 
 #[allow(clippy::too_many_lines)]
 pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
-    backend.client.log_message(MessageType::INFO, "initialized!").await;
+    tracing::info!("initialized");
 
     let workspace_folders = backend.get_workspace_folders().await;
     {
-        backend
-            .client
-            .log_message(MessageType::INFO, format!("Workspace folders: {workspace_folders:?}"))
-            .await;
-
         for folder in workspace_folders {
             if let Ok(workspace_path) = folder.uri.to_file_path() {
                 let token = NumberOrString::String("workspace-indexing".to_string());
@@ -221,13 +211,7 @@ pub async fn handle_initialized(backend: &Backend, _: InitializedParams) {
                             })
                             .await;
 
-                        backend
-                            .client
-                            .log_message(
-                                MessageType::ERROR,
-                                format!("error indexing workspace: {error}"),
-                            )
-                            .await;
+                        tracing::error!(%error, "workspace indexing failed");
                     }
                 }
             }

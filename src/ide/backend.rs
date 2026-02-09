@@ -17,7 +17,6 @@ use tower_lsp::lsp_types::{
     FileChangeType,
     FileSystemWatcher,
     GlobPattern,
-    MessageType,
     NumberOrString,
     ProgressParams,
     ProgressParamsValue,
@@ -668,19 +667,10 @@ impl Backend {
                 let mut config_manager = self.config_manager.lock().await;
                 match config_manager.load_settings(workspace_root) {
                     Ok(()) => {
-                        self.client
-                            .log_message(MessageType::INFO, "Configuration reloaded successfully")
-                            .await;
                         tracing::info!("Configuration reloaded successfully");
                     }
                     Err(error) => {
-                        self.client
-                            .log_message(
-                                MessageType::ERROR,
-                                format!("Failed to reload configuration: {error}"),
-                            )
-                            .await;
-                        tracing::error!("Failed to reload configuration: {}", error);
+                        tracing::error!(%error, "Failed to reload configuration");
                         return;
                     }
                 }
@@ -689,22 +679,10 @@ impl Backend {
                 let mut config_manager = self.config_manager.lock().await;
                 match config_manager.update_settings(crate::config::I18nSettings::default()) {
                     Ok(()) => {
-                        self.client
-                            .log_message(
-                                MessageType::INFO,
-                                "Configuration file deleted, using default settings",
-                            )
-                            .await;
                         tracing::info!("Configuration reset to defaults");
                     }
                     Err(error) => {
-                        self.client
-                            .log_message(
-                                MessageType::ERROR,
-                                format!("Failed to reset configuration: {error}"),
-                            )
-                            .await;
-                        tracing::error!("Failed to reset configuration: {}", error);
+                        tracing::error!(%error, "Failed to reset configuration");
                         return;
                     }
                 }
