@@ -11,6 +11,10 @@ use tower_lsp::lsp_types::{
 use crate::config::Severity;
 use crate::db::I18nDatabase;
 use crate::ide::key_match::is_child_key;
+use crate::ide::namespace::{
+    filter_translations_by_namespace,
+    resolve_namespace,
+};
 use crate::ide::plural::{
     get_plural_base_key,
     has_plural_variants,
@@ -18,6 +22,7 @@ use crate::ide::plural::{
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 use crate::syntax::analyze_source;
+use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticOptions {
@@ -62,12 +67,15 @@ pub fn determine_target_languages<'a>(
 ///
 /// Supports reverse prefix matching: `t('nested')` is valid if `nested.key` exists,
 /// allowing object retrieval patterns.
+/// Filters translations by namespace when `namespace_separator` is set.
 pub fn generate_diagnostics(
     db: &dyn I18nDatabase,
     source_file: SourceFile,
     translations: &[Translation],
     options: &DiagnosticOptions,
     key_separator: &str,
+    namespace_separator: Option<&str>,
+    default_namespace: Option<&str>,
 ) -> Vec<Diagnostic> {
     if !options.enabled {
         return Vec::new();
@@ -79,38 +87,54 @@ pub fn generate_diagnostics(
 
     let key_usages = analyze_source(db, source_file, key_separator.to_string());
 
-    let language_keys: Vec<(String, HashSet<String>)> = translations
-        .iter()
-        .map(|t| {
-            let lang = t.language(db);
-            let keys: HashSet<String> = t.keys(db).keys().cloned().collect();
-            (lang, keys)
-        })
-        .collect();
-
-    let all_languages: HashSet<String> = translations.iter().map(|t| t.language(db)).collect();
-    let target_languages = determine_target_languages(&all_languages, options);
-
     for usage in key_usages {
-        let key = usage.key(db).text(db);
+        let full_key = usage.key(db).text(db);
 
         // Empty key = completion in progress
-        if key.is_empty() {
+        if full_key.is_empty() {
             continue;
         }
+
+        let (explicit_ns, key_part) = parse_key_with_namespace(full_key, namespace_separator);
+        let declared_ns = usage.namespace(db);
+        let declared_nss = usage.namespaces(db);
+
+        let filtered = filter_translations_by_namespace(
+            db,
+            translations,
+            explicit_ns.as_deref(),
+            declared_ns.as_deref(),
+            declared_nss.as_deref(),
+            default_namespace,
+        );
+
+        let language_keys: Vec<(String, HashSet<String>)> = filtered
+            .iter()
+            .map(|t| {
+                let lang = t.language(db);
+                let keys: HashSet<String> = t.keys(db).keys().cloned().collect();
+                (lang, keys)
+            })
+            .collect();
+
+        let all_languages: HashSet<String> = filtered.iter().map(|t| t.language(db)).collect();
+        let target_languages = determine_target_languages(&all_languages, options);
 
         let missing_languages: Vec<String> = language_keys
             .iter()
             .filter(|(lang, _)| target_languages.contains(lang.as_str()))
-            .filter(|(_, keys)| !key_exists_or_has_children(key, keys, key_separator))
+            .filter(|(_, keys)| !key_exists_or_has_children(&key_part, keys, key_separator))
             .map(|(lang, _)| lang.clone())
             .collect();
 
         if !missing_languages.is_empty() {
             let range = usage.range(db);
 
-            let message =
-                format!("Translation key '{}' missing for: {}", key, missing_languages.join(", "));
+            let message = format!(
+                "Translation key '{}' missing for: {}",
+                full_key,
+                missing_languages.join(", ")
+            );
 
             diagnostics.push(Diagnostic {
                 range: range.into(),
@@ -122,7 +146,7 @@ pub fn generate_diagnostics(
                 related_information: None,
                 tags: None,
                 data: Some(serde_json::json!({
-                    "key": key,
+                    "key": full_key,
                     "missing_languages": missing_languages
                 })),
             });
@@ -136,6 +160,8 @@ pub fn generate_diagnostics(
 ///
 /// Supports prefix matching: if `hoge.fuga` is used, `hoge.fuga.piyo` is considered used
 /// (for object retrieval patterns like `t('hoge.fuga')`).
+/// Filters by namespace when `namespace_separator` is set.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_unused_key_diagnostics(
     db: &dyn I18nDatabase,
     translation: Translation,
@@ -143,12 +169,34 @@ pub fn generate_unused_key_diagnostics(
     key_separator: &str,
     ignore_patterns: &[String],
     severity: Severity,
+    namespace_separator: Option<&str>,
+    default_namespace: Option<&str>,
 ) -> Vec<Diagnostic> {
+    let translation_ns = translation.namespace(db);
     let mut used_keys: HashSet<String> = HashSet::new();
     for source_file in source_files {
         let key_usages = analyze_source(db, *source_file, key_separator.to_string());
         for usage in key_usages {
-            used_keys.insert(usage.key(db).text(db).clone());
+            let full_key = usage.key(db).text(db);
+            let (explicit_ns, key_part) = parse_key_with_namespace(full_key, namespace_separator);
+            let declared_ns = usage.namespace(db);
+            let declared_nss = usage.namespaces(db);
+
+            let resolved_ns = resolve_namespace(
+                explicit_ns.as_deref(),
+                declared_ns.as_deref(),
+                declared_nss.as_deref(),
+                default_namespace,
+            );
+
+            let ns_matches = match (&resolved_ns, &translation_ns) {
+                (None, _) | (_, None) => true,
+                (Some(rns), Some(tns)) => rns == tns,
+            };
+
+            if ns_matches {
+                used_keys.insert(key_part);
+            }
         }
     }
 
@@ -285,6 +333,7 @@ mod tests {
         SourceFile,
     };
     use crate::input::translation::Translation;
+    use crate::test_utils::create_translation_with_namespace;
 
     #[rstest]
     fn test_generate_diagnostics_with_missing_key() {
@@ -317,7 +366,8 @@ mod tests {
         );
 
         let options = DiagnosticOptions::default();
-        let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &[translation], &options, ".", None, None);
 
         assert_that!(diagnostics, not(is_empty()));
         assert_that!(
@@ -368,7 +418,8 @@ mod tests {
         );
 
         let options = DiagnosticOptions::default();
-        let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &[translation], &options, ".", None, None);
 
         assert_that!(diagnostics, is_empty());
     }
@@ -422,6 +473,8 @@ mod tests {
             &[translation_en, translation_ja],
             &options,
             ".",
+            None,
+            None,
         );
 
         // common.hello is missing in ja, errors.notFound is missing in en
@@ -498,7 +551,8 @@ mod tests {
         );
 
         let options = DiagnosticOptions { enabled: false, ..DiagnosticOptions::default() };
-        let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &[translation], &options, ".", None, None);
 
         assert_that!(diagnostics, is_empty());
     }
@@ -526,7 +580,8 @@ mod tests {
 
         let options =
             DiagnosticOptions { severity: Severity::Error, ..DiagnosticOptions::default() };
-        let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &[translation], &options, ".", None, None);
 
         assert_that!(diagnostics, not(is_empty()));
         assert_that!(
@@ -618,6 +673,8 @@ mod tests {
             ".",
             &[],
             Severity::Hint,
+            None,
+            None,
         );
 
         assert_that!(diagnostics, len(eq(1)));
@@ -694,6 +751,8 @@ mod tests {
             ".",
             &[],
             Severity::Hint,
+            None,
+            None,
         );
 
         // hoge.fuga and hoge.fuga.piyo are used (prefix match)
@@ -753,6 +812,8 @@ mod tests {
             ".",
             &ignore_patterns,
             Severity::Hint,
+            None,
+            None,
         );
 
         // debug.info and debug.warn are ignored, only other.unused is reported
@@ -808,6 +869,8 @@ mod tests {
             ".",
             &[],
             Severity::Warning,
+            None,
+            None,
         );
 
         assert_that!(diagnostics, len(eq(1)));
@@ -874,7 +937,8 @@ mod tests {
         );
 
         let options = DiagnosticOptions::default();
-        let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &[translation], &options, ".", None, None);
 
         // Since nested.key exists, nested is valid (no diagnostics)
         assert_that!(diagnostics, is_empty());
@@ -908,7 +972,8 @@ mod tests {
         );
 
         let options = DiagnosticOptions::default();
-        let diagnostics = generate_diagnostics(&db, source_file, &[translation], &options, ".");
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &[translation], &options, ".", None, None);
 
         assert_that!(diagnostics, len(eq(1)));
         assert_that!(
@@ -949,5 +1014,296 @@ mod tests {
         // Array children exist
         assert_that!(key_exists_or_has_children("items", &keys, "."), eq(true));
         assert_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
+    }
+
+    // ===== Namespace-aware diagnostics tests =====
+
+    #[rstest]
+    fn test_generate_diagnostics_with_namespace_separator() {
+        let db = I18nDatabaseImpl::default();
+
+        // Source uses namespaced key "common:hello"
+        let source_code = r#"const msg = t("common:hello");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let common_en = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("common"),
+            "/locales/en/common.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+        );
+        let common_ja = create_translation_with_namespace(
+            &db,
+            "ja",
+            Some("common"),
+            "/locales/ja/common.json",
+            HashMap::from([("hello".to_string(), "こんにちは".to_string())]),
+        );
+        let errors_en = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("errors"),
+            "/locales/en/errors.json",
+            HashMap::from([("notFound".to_string(), "Not Found".to_string())]),
+        );
+
+        let translations = vec![common_en, common_ja, errors_en];
+        let options = DiagnosticOptions::default();
+
+        // With namespace_separator=":", "common:hello" should only check common namespace
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &translations, &options, ".", Some(":"), None);
+
+        // "hello" exists in both en/common and ja/common → no diagnostics
+        assert_that!(diagnostics, is_empty());
+    }
+
+    #[rstest]
+    fn test_generate_diagnostics_namespace_key_missing_in_correct_ns() {
+        let db = I18nDatabaseImpl::default();
+
+        // Source uses namespaced key "errors:missing"
+        let source_code = r#"const msg = t("errors:missing");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let errors_en = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("errors"),
+            "/locales/en/errors.json",
+            HashMap::from([("notFound".to_string(), "Not Found".to_string())]),
+        );
+        let common_en = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("common"),
+            "/locales/en/common.json",
+            HashMap::from([("missing".to_string(), "Missing".to_string())]),
+        );
+
+        let translations = vec![errors_en, common_en];
+        let options = DiagnosticOptions::default();
+
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &translations, &options, ".", Some(":"), None);
+
+        // "missing" does NOT exist in errors namespace → should report missing for en
+        assert_that!(diagnostics, len(eq(1)));
+        assert_that!(
+            diagnostics,
+            contains(field!(Diagnostic.message, contains_substring("errors:missing")))
+        );
+    }
+
+    #[rstest]
+    fn test_generate_diagnostics_with_declared_namespace() {
+        let db = I18nDatabaseImpl::default();
+
+        // useTranslation("common") + t("hello") → namespace from scope
+        let source_code = r#"
+            const { t } = useTranslation("common");
+            const msg = t("hello");
+        "#;
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let common_en = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("common"),
+            "/locales/en/common.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+        );
+        let errors_en = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("errors"),
+            "/locales/en/errors.json",
+            HashMap::from([("notFound".to_string(), "Not Found".to_string())]),
+        );
+
+        let translations = vec![common_en, errors_en];
+        let options = DiagnosticOptions::default();
+
+        // namespace_separator is None but declared namespace from useTranslation is used
+        let diagnostics =
+            generate_diagnostics(&db, source_file, &translations, &options, ".", None, None);
+
+        // "hello" exists in common → no diagnostics
+        assert_that!(diagnostics, is_empty());
+    }
+
+    #[rstest]
+    fn test_generate_diagnostics_with_default_namespace() {
+        let db = I18nDatabaseImpl::default();
+
+        // t("hello") without explicit namespace, default_namespace="common"
+        let source_code = r#"const msg = t("hello");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let common_en = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("common"),
+            "/locales/en/common.json",
+            HashMap::from([("hello".to_string(), "Hello".to_string())]),
+        );
+        let errors_en = create_translation_with_namespace(
+            &db,
+            "en",
+            Some("errors"),
+            "/locales/en/errors.json",
+            HashMap::from([("notFound".to_string(), "Not Found".to_string())]),
+        );
+
+        let translations = vec![common_en, errors_en];
+        let options = DiagnosticOptions::default();
+
+        let diagnostics = generate_diagnostics(
+            &db,
+            source_file,
+            &translations,
+            &options,
+            ".",
+            Some(":"),
+            Some("common"), // default namespace
+        );
+
+        // "hello" exists in common (default namespace) → no diagnostics
+        assert_that!(diagnostics, is_empty());
+    }
+
+    #[rstest]
+    fn test_generate_unused_key_diagnostics_with_namespace() {
+        let db = I18nDatabaseImpl::default();
+
+        // Source uses "common:hello" (namespace separator = ":")
+        let source_code = r#"const msg = t("common:hello");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut keys = HashMap::new();
+        keys.insert("hello".to_string(), "Hello".to_string());
+        keys.insert("unused".to_string(), "Unused".to_string());
+
+        let mut key_ranges = HashMap::new();
+        for key in keys.keys() {
+            key_ranges.insert(
+                key.clone(),
+                crate::types::SourceRange {
+                    start: crate::types::SourcePosition { line: 1, character: 0 },
+                    end: crate::types::SourcePosition { line: 1, character: 10 },
+                },
+            );
+        }
+
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            Some("common".to_string()),
+            "/locales/en/common.json".to_string(),
+            keys,
+            String::new(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        let diagnostics = generate_unused_key_diagnostics(
+            &db,
+            translation,
+            &[source_file],
+            ".",
+            &[],
+            Severity::Hint,
+            Some(":"),
+            None,
+        );
+
+        // "hello" is used (common:hello matches common namespace), "unused" is unused
+        assert_that!(diagnostics, len(eq(1)));
+        assert_that!(
+            diagnostics,
+            contains(field!(Diagnostic.message, contains_substring("unused")))
+        );
+    }
+
+    #[rstest]
+    fn test_generate_unused_key_diagnostics_cross_namespace() {
+        let db = I18nDatabaseImpl::default();
+
+        // Source uses "common:hello" — targeting common namespace only
+        let source_code = r#"const msg = t("common:hello");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut keys = HashMap::new();
+        keys.insert("hello".to_string(), "Hello in errors".to_string());
+
+        let mut key_ranges = HashMap::new();
+        key_ranges.insert(
+            "hello".to_string(),
+            crate::types::SourceRange {
+                start: crate::types::SourcePosition { line: 1, character: 0 },
+                end: crate::types::SourcePosition { line: 1, character: 10 },
+            },
+        );
+
+        // Translation is in "errors" namespace, not "common"
+        let translation = Translation::new(
+            &db,
+            "en".to_string(),
+            Some("errors".to_string()),
+            "/locales/en/errors.json".to_string(),
+            keys,
+            String::new(),
+            key_ranges,
+            HashMap::new(),
+        );
+
+        let diagnostics = generate_unused_key_diagnostics(
+            &db,
+            translation,
+            &[source_file],
+            ".",
+            &[],
+            Severity::Hint,
+            Some(":"),
+            None,
+        );
+
+        // "hello" in errors namespace is unused because source targets common namespace
+        assert_that!(diagnostics, len(eq(1)));
+        assert_that!(
+            diagnostics,
+            contains(field!(Diagnostic.message, contains_substring("hello")))
+        );
     }
 }

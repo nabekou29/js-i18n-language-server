@@ -45,11 +45,20 @@ use tower_lsp::{
     LanguageServer,
 };
 
+use super::diagnostics::DiagnosticOptions;
 use super::handlers;
 use super::state::ServerState;
 use crate::config::ConfigManager;
 use crate::db::I18nDatabaseImpl;
 use crate::indexer::workspace::WorkspaceIndexer;
+
+/// Settings needed for diagnostic generation, extracted from config.
+struct DiagnosticConfig {
+    options: DiagnosticOptions,
+    key_separator: String,
+    namespace_separator: Option<String>,
+    default_namespace: Option<String>,
+}
 
 /// LSP Backend
 #[derive(Clone)]
@@ -85,20 +94,26 @@ impl Backend {
         self.workspace_indexer.wait_for_translations_indexed(TRANSLATIONS_INDEX_TIMEOUT).await
     }
 
-    fn create_diagnostic_options(config: &ConfigManager) -> super::diagnostics::DiagnosticOptions {
-        let settings = config.get_settings();
+    async fn get_diagnostic_config(&self) -> DiagnosticConfig {
+        let settings = self.config_manager.lock().await.get_settings().clone();
         let mt = &settings.diagnostics.missing_translation;
-        super::diagnostics::DiagnosticOptions {
-            enabled: mt.enabled,
-            severity: mt.severity,
-            required_languages: mt.required_languages.as_ref().map(|v| v.iter().cloned().collect()),
-            optional_languages: mt.optional_languages.as_ref().map(|v| v.iter().cloned().collect()),
+        DiagnosticConfig {
+            options: DiagnosticOptions {
+                enabled: mt.enabled,
+                severity: mt.severity,
+                required_languages: mt
+                    .required_languages
+                    .as_ref()
+                    .map(|v| v.iter().cloned().collect()),
+                optional_languages: mt
+                    .optional_languages
+                    .as_ref()
+                    .map(|v| v.iter().cloned().collect()),
+            },
+            key_separator: settings.key_separator,
+            namespace_separator: settings.namespace_separator,
+            default_namespace: settings.default_namespace,
         }
-    }
-
-    async fn get_diagnostic_config(&self) -> (super::diagnostics::DiagnosticOptions, String) {
-        let config = self.config_manager.lock().await;
-        (Self::create_diagnostic_options(&config), config.get_settings().key_separator.clone())
     }
 
     /// Resets state and initializes index. Creates new Salsa database to clear old cache.
@@ -230,15 +245,17 @@ impl Backend {
             };
 
             let diagnostics = {
-                let (options, key_separator) = self.get_diagnostic_config().await;
+                let config = self.get_diagnostic_config().await;
                 let db = self.state.db.lock().await;
                 let translations = self.state.translations.lock().await;
                 crate::ide::diagnostics::generate_diagnostics(
                     &*db,
                     source_file,
                     &translations,
-                    &options,
-                    &key_separator,
+                    &config.options,
+                    &config.key_separator,
+                    config.namespace_separator.as_deref(),
+                    config.default_namespace.as_deref(),
                 )
             };
 
@@ -283,6 +300,8 @@ impl Backend {
                         key_separator,
                         &settings.diagnostics.unused_translation.ignore_patterns,
                         settings.diagnostics.unused_translation.severity,
+                        settings.namespace_separator.as_deref(),
+                        settings.default_namespace.as_deref(),
                     );
                     let file_path = translation.file_path(&*db).clone();
                     (file_path, diagnostics)
@@ -383,15 +402,17 @@ impl Backend {
         tracing::debug!(uri = %uri, "Generating diagnostics");
 
         let diagnostics = {
-            let (options, key_separator) = self.get_diagnostic_config().await;
+            let config = self.get_diagnostic_config().await;
             let db = self.state.db.lock().await;
             let translations = self.state.translations.lock().await;
             crate::ide::diagnostics::generate_diagnostics(
                 &*db,
                 source_file,
                 &translations,
-                &options,
-                &key_separator,
+                &config.options,
+                &config.key_separator,
+                config.namespace_separator.as_deref(),
+                config.default_namespace.as_deref(),
             )
         };
 
