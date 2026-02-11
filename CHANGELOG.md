@@ -1,4 +1,20 @@
 
+## [0.4.1] - 2026-02-11
+
+### Bug Fixes
+
+- Remove unused workspaceFolders support
+- Use initialize params for workspace folders in multi-server setups
+- Use markdown-compatible line breaks in hover content
+- Show delete key as Quick Fix for unused translation keys
+- Skip non-file URI schemes in document sync handlers
+
+### Features
+
+- Add serverInfo to initialize response
+- Add --log-level CLI arg and JS_I18N_LOG env var
+
+
 ## [0.4.0] - 2026-02-08
 
 ### Bug Fixes

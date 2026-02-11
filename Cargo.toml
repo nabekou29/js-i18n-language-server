@@ -1,6 +1,6 @@
 [package]
 name = "js-i18n-language-server"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 description = "Language Server for JavaScript/TypeScript i18n (i18next, next-intl, react-intl)"
 license = "MIT"
