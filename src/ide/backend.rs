@@ -80,21 +80,11 @@ impl KeyContext {
         namespace_separator: Option<&str>,
         default_namespace: Option<&str>,
     ) -> (String, Vec<crate::input::translation::Translation>) {
-        use crate::ide::namespace::filter_translations_by_namespace;
-        use crate::syntax::analyzer::extractor::parse_key_with_namespace;
+        use crate::ide::namespace::filter_by_namespace;
 
-        let (explicit_ns, key_part) = parse_key_with_namespace(&self.key_text, namespace_separator);
-
-        let effective_explicit_ns = explicit_ns.or_else(|| self.translation_namespace.clone());
-
-        let filtered = filter_translations_by_namespace(
-            db,
-            translations,
-            effective_explicit_ns.as_deref(),
-            self.declared_namespace.as_deref(),
-            self.declared_namespaces.as_deref(),
-            default_namespace,
-        );
+        let (resolved_ns, key_part) =
+            self.resolve_key_and_namespace(namespace_separator, default_namespace);
+        let filtered = filter_by_namespace(db, translations, resolved_ns.as_deref());
 
         (key_part, filtered.into_iter().copied().collect())
     }

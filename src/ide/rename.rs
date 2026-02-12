@@ -16,7 +16,7 @@ use crate::ide::code_actions::{
 };
 use crate::ide::namespace::{
     filter_by_namespace,
-    resolve_namespace,
+    resolve_usage_namespace,
 };
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
@@ -80,28 +80,18 @@ pub fn compute_rename_edits(
         };
 
         for usage in &usages {
-            let usage_key_text = usage.key(db).text(db);
-            let (usage_explicit_ns, usage_key_part) =
-                parse_key_with_namespace(usage_key_text, namespace_separator);
+            let (usage_ns, usage_key_part) =
+                resolve_usage_namespace(db, *usage, namespace_separator, default_namespace);
 
-            // Match key part
             if usage_key_part != old_key_part {
                 continue;
             }
 
             // Match namespace when target has one
-            if let Some(target_ns) = effective_ns {
-                let declared_ns = usage.namespace(db);
-                let declared_nss = usage.namespaces(db);
-                let usage_ns = resolve_namespace(
-                    usage_explicit_ns.as_deref(),
-                    declared_ns.as_deref(),
-                    declared_nss.as_deref(),
-                    default_namespace,
-                );
-                if usage_ns.is_none_or(|ns| ns != target_ns) {
-                    continue;
-                }
+            if let Some(target_ns) = effective_ns
+                && usage_ns.as_deref().is_none_or(|ns| ns != target_ns)
+            {
+                continue;
             }
 
             let range = usage.range(db);

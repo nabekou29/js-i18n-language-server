@@ -6,11 +6,10 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::Location;
 
 use crate::db::I18nDatabase;
-use crate::ide::namespace::resolve_namespace;
+use crate::ide::namespace::resolve_usage_namespace;
 use crate::ide::plural::get_plural_base_key;
 use crate::input::source::SourceFile;
 use crate::syntax::analyze_source;
-use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 
 /// Finds all references to a translation key across all source files.
 ///
@@ -38,9 +37,8 @@ pub fn find_references<S: std::hash::BuildHasher>(
             let uri = source_file.uri(db);
 
             usages.into_iter().filter_map(move |usage| {
-                let usage_key_text = usage.key(db).text(db);
-                let (usage_explicit_ns, usage_key_part) =
-                    parse_key_with_namespace(usage_key_text, namespace_separator);
+                let (usage_ns, usage_key_part) =
+                    resolve_usage_namespace(db, usage, namespace_separator, default_namespace);
 
                 let is_key_match =
                     usage_key_part == key_part || base_key.is_some_and(|bk| usage_key_part == bk);
@@ -50,18 +48,10 @@ pub fn find_references<S: std::hash::BuildHasher>(
                 }
 
                 // When target has a namespace, verify the usage resolves to the same one
-                if let Some(target_ns) = target_namespace {
-                    let declared_ns = usage.namespace(db);
-                    let declared_nss = usage.namespaces(db);
-                    let usage_ns = resolve_namespace(
-                        usage_explicit_ns.as_deref(),
-                        declared_ns.as_deref(),
-                        declared_nss.as_deref(),
-                        default_namespace,
-                    );
-                    if usage_ns.is_none_or(|ns| ns != target_ns) {
-                        return None;
-                    }
+                if let Some(target_ns) = target_namespace
+                    && usage_ns.as_deref().is_none_or(|ns| ns != target_ns)
+                {
+                    return None;
                 }
 
                 let Ok(parsed_uri) = uri.parse() else {

@@ -12,8 +12,8 @@ use crate::config::Severity;
 use crate::db::I18nDatabase;
 use crate::ide::key_match::is_child_key;
 use crate::ide::namespace::{
-    filter_translations_by_namespace,
-    resolve_namespace,
+    filter_by_namespace,
+    resolve_usage_namespace,
 };
 use crate::ide::plural::{
     get_plural_base_key,
@@ -22,7 +22,6 @@ use crate::ide::plural::{
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 use crate::syntax::analyze_source;
-use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticOptions {
@@ -95,18 +94,9 @@ pub fn generate_diagnostics(
             continue;
         }
 
-        let (explicit_ns, key_part) = parse_key_with_namespace(full_key, namespace_separator);
-        let declared_ns = usage.namespace(db);
-        let declared_nss = usage.namespaces(db);
-
-        let filtered = filter_translations_by_namespace(
-            db,
-            translations,
-            explicit_ns.as_deref(),
-            declared_ns.as_deref(),
-            declared_nss.as_deref(),
-            default_namespace,
-        );
+        let (resolved_ns, key_part) =
+            resolve_usage_namespace(db, usage, namespace_separator, default_namespace);
+        let filtered = filter_by_namespace(db, translations, resolved_ns.as_deref());
 
         let language_keys: Vec<(String, HashSet<String>)> = filtered
             .iter()
@@ -177,17 +167,8 @@ pub fn generate_unused_key_diagnostics(
     for source_file in source_files {
         let key_usages = analyze_source(db, *source_file, key_separator.to_string());
         for usage in key_usages {
-            let full_key = usage.key(db).text(db);
-            let (explicit_ns, key_part) = parse_key_with_namespace(full_key, namespace_separator);
-            let declared_ns = usage.namespace(db);
-            let declared_nss = usage.namespaces(db);
-
-            let resolved_ns = resolve_namespace(
-                explicit_ns.as_deref(),
-                declared_ns.as_deref(),
-                declared_nss.as_deref(),
-                default_namespace,
-            );
+            let (resolved_ns, key_part) =
+                resolve_usage_namespace(db, usage, namespace_separator, default_namespace);
 
             let ns_matches = match (&resolved_ns, &translation_ns) {
                 (None, _) | (_, None) => true,

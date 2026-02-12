@@ -7,11 +7,13 @@ use serde::{
 use tower_lsp::lsp_types::Range;
 
 use crate::db::I18nDatabase;
-use crate::ide::namespace::filter_translations_by_namespace;
+use crate::ide::namespace::{
+    filter_by_namespace,
+    resolve_usage_namespace,
+};
 use crate::ide::plural::find_plural_variants;
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
-use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 
 /// Translation decoration info for a key usage in the document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,22 +39,12 @@ pub fn get_translation_decorations(
     let mut decorations = Vec::new();
 
     for usage in key_usages {
-        let key = usage.key(db);
-        let full_key_text = key.text(db);
+        let full_key_text = usage.key(db).text(db);
         let range: Range = usage.range(db).into();
 
-        let (explicit_ns, key_part) = parse_key_with_namespace(full_key_text, namespace_separator);
-        let declared_ns = usage.namespace(db);
-        let declared_nss = usage.namespaces(db);
-
-        let filtered = filter_translations_by_namespace(
-            db,
-            translations,
-            explicit_ns.as_deref(),
-            declared_ns.as_deref(),
-            declared_nss.as_deref(),
-            default_namespace,
-        );
+        let (resolved_ns, key_part) =
+            resolve_usage_namespace(db, usage, namespace_separator, default_namespace);
+        let filtered = filter_by_namespace(db, translations, resolved_ns.as_deref());
 
         let value = get_translation_value(db, &filtered, &key_part, language);
 

@@ -2,30 +2,20 @@
 
 use crate::db::I18nDatabase;
 use crate::input::translation::Translation;
+use crate::ir::key_usage::KeyUsage;
+use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 
-/// Filters translations by namespace based on priority:
-/// 1. `explicit_namespace` - from `t("ns:key")` or `t("key", {ns: "ns"})`
-/// 2. `declared_namespaces[0]` - from `useTranslation(["ns1", "ns2"])`
-/// 3. `declared_namespace` - from `useTranslation("ns")`
-/// 4. `default_namespace` - from settings
-/// 5. `None` - returns all translations (backward compatibility)
+/// Filters translations by a resolved namespace.
+///
+/// When `namespace` is `Some`, only translations with a matching namespace are returned.
+/// When `None`, all translations are returned (backward compatibility for non-namespaced setups).
 #[must_use]
-pub fn filter_translations_by_namespace<'a>(
+pub fn filter_by_namespace<'a>(
     db: &dyn I18nDatabase,
     translations: &'a [Translation],
-    explicit_namespace: Option<&str>,
-    declared_namespace: Option<&str>,
-    declared_namespaces: Option<&[String]>,
-    default_namespace: Option<&str>,
+    namespace: Option<&str>,
 ) -> Vec<&'a Translation> {
-    let resolved_namespace = resolve_namespace(
-        explicit_namespace,
-        declared_namespace,
-        declared_namespaces,
-        default_namespace,
-    );
-
-    resolved_namespace.map_or_else(
+    namespace.map_or_else(
         || translations.iter().collect(),
         |ns| {
             translations
@@ -36,16 +26,32 @@ pub fn filter_translations_by_namespace<'a>(
     )
 }
 
-/// Filters translations by a single explicit namespace.
+/// Resolves namespace and key part from a `KeyUsage`.
 ///
-/// Simpler API for callers that only have a namespace from `parse_key_with_namespace`.
+/// Combines explicit namespace (from key text), declared namespace (from `useTranslation`),
+/// and default namespace into a single resolved result.
+/// Returns `(resolved_namespace, key_part)`.
 #[must_use]
-pub fn filter_by_namespace<'a>(
+pub fn resolve_usage_namespace(
     db: &dyn I18nDatabase,
-    translations: &'a [Translation],
-    namespace: Option<&str>,
-) -> Vec<&'a Translation> {
-    filter_translations_by_namespace(db, translations, namespace, None, None, None)
+    usage: KeyUsage<'_>,
+    namespace_separator: Option<&str>,
+    default_namespace: Option<&str>,
+) -> (Option<String>, String) {
+    let full_key = usage.key(db).text(db);
+    let (explicit_ns, key_part) = parse_key_with_namespace(full_key, namespace_separator);
+    let declared_ns = usage.namespace(db);
+    let declared_nss = usage.namespaces(db);
+
+    let ns = resolve_namespace(
+        explicit_ns.as_deref(),
+        declared_ns.as_deref(),
+        declared_nss.as_deref(),
+        default_namespace,
+    )
+    .map(str::to_owned);
+
+    (ns, key_part)
 }
 
 #[must_use]
@@ -116,60 +122,6 @@ mod tests {
     }
 
     #[rstest]
-    fn filter_by_explicit_namespace(db: I18nDatabaseImpl) {
-        let common = create_translation_with_namespace(
-            &db,
-            "en",
-            Some("common"),
-            "/locales/en/common.json",
-            HashMap::from([("hello".to_string(), "Hello".to_string())]),
-        );
-        let errors = create_translation_with_namespace(
-            &db,
-            "en",
-            Some("errors"),
-            "/locales/en/errors.json",
-            HashMap::from([("notFound".to_string(), "Not Found".to_string())]),
-        );
-        let translations = vec![common, errors];
-
-        let filtered = filter_translations_by_namespace(
-            &db,
-            &translations,
-            Some("common"), // explicit
-            None,
-            None,
-            None,
-        );
-
-        assert_that!(filtered.len(), eq(1));
-        assert_that!(filtered[0].namespace(&db).as_deref(), some(eq("common")));
-    }
-
-    #[rstest]
-    fn filter_returns_all_when_no_namespace(db: I18nDatabaseImpl) {
-        let common = create_translation_with_namespace(
-            &db,
-            "en",
-            Some("common"),
-            "/locales/en/common.json",
-            HashMap::from([("hello".to_string(), "Hello".to_string())]),
-        );
-        let errors = create_translation_with_namespace(
-            &db,
-            "en",
-            Some("errors"),
-            "/locales/en/errors.json",
-            HashMap::from([("notFound".to_string(), "Not Found".to_string())]),
-        );
-        let translations = vec![common, errors];
-
-        let filtered = filter_translations_by_namespace(&db, &translations, None, None, None, None);
-
-        assert_that!(filtered.len(), eq(2));
-    }
-
-    #[rstest]
     fn filter_by_namespace_some(db: I18nDatabaseImpl) {
         let common = create_translation_with_namespace(
             &db,
@@ -212,36 +164,5 @@ mod tests {
 
         let filtered = filter_by_namespace(&db, &translations, None);
         assert_that!(filtered.len(), eq(2));
-    }
-
-    #[rstest]
-    fn filter_by_default_namespace(db: I18nDatabaseImpl) {
-        let common = create_translation_with_namespace(
-            &db,
-            "en",
-            Some("common"),
-            "/locales/en/common.json",
-            HashMap::from([("hello".to_string(), "Hello".to_string())]),
-        );
-        let translation = create_translation_with_namespace(
-            &db,
-            "en",
-            Some("translation"),
-            "/locales/en/translation.json",
-            HashMap::from([("world".to_string(), "World".to_string())]),
-        );
-        let translations = vec![common, translation];
-
-        let filtered = filter_translations_by_namespace(
-            &db,
-            &translations,
-            None,
-            None,
-            None,
-            Some("translation"), // default
-        );
-
-        assert_that!(filtered.len(), eq(1));
-        assert_that!(filtered[0].namespace(&db).as_deref(), some(eq("translation")));
     }
 }
