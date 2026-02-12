@@ -1,4 +1,16 @@
 
+## [0.4.2] - 2026-02-12
+
+### Bug Fixes
+
+- Filter translations by namespace in missing/unused key diagnostics
+- Add namespace filtering to hover, goto_definition, references, rename, and decorations
+
+### Refactor
+
+- Extract resolve_usage_namespace and simplify filter_by_namespace
+
+
 ## [0.4.1] - 2026-02-11
 
 ### Bug Fixes
