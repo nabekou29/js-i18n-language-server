@@ -55,7 +55,7 @@ pub async fn handle_code_action(
     let position = params.range.start;
     let source_position = crate::types::SourcePosition::from(position);
 
-    let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
+    let Some(key_context) = backend.get_key_at_position(&file_path, source_position).await else {
         return Ok(Some(vec![]));
     };
 
@@ -68,7 +68,7 @@ pub async fn handle_code_action(
         let translations = backend.state.translations.lock().await;
         if let Some(action) = crate::ide::code_actions::generate_delete_key_code_action(
             &*db,
-            &key_text,
+            &key_context.key_text,
             &translations,
             &settings.key_separator,
             settings.namespace_separator.as_deref(),
@@ -104,7 +104,7 @@ pub async fn handle_code_action(
         };
 
         let edit_actions = crate::ide::code_actions::generate_code_actions(
-            &key_text,
+            &key_context.key_text,
             &sorted_languages,
             &missing_languages,
             effective_language.as_deref(),

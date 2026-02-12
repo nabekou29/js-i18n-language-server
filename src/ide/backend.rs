@@ -52,6 +52,80 @@ use crate::config::ConfigManager;
 use crate::db::I18nDatabaseImpl;
 use crate::indexer::workspace::WorkspaceIndexer;
 
+/// Namespace-aware context for a translation key at a cursor position.
+///
+/// Unifies results from source files (JS/TS) and translation files (JSON)
+/// so callers can filter translations by namespace.
+#[derive(Debug, Clone)]
+pub struct KeyContext {
+    /// Full key text as written in source (may contain namespace prefix like "ns:key").
+    pub key_text: String,
+    /// Namespace from `useTranslation("ns")` scope (source files only).
+    pub declared_namespace: Option<String>,
+    /// Namespaces from `useTranslation(["ns1", "ns2"])` scope (source files only).
+    pub declared_namespaces: Option<Vec<String>>,
+    /// Namespace of the JSON translation file (JSON files only).
+    pub translation_namespace: Option<String>,
+}
+
+impl KeyContext {
+    /// Splits the key text by namespace separator and filters translations.
+    ///
+    /// Returns `(key_part, filtered_translations)` where `key_part` has the
+    /// namespace prefix stripped (or the full key if no separator matched).
+    pub fn filter_translations(
+        &self,
+        db: &dyn crate::db::I18nDatabase,
+        translations: &[crate::input::translation::Translation],
+        namespace_separator: Option<&str>,
+        default_namespace: Option<&str>,
+    ) -> (String, Vec<crate::input::translation::Translation>) {
+        use crate::ide::namespace::filter_translations_by_namespace;
+        use crate::syntax::analyzer::extractor::parse_key_with_namespace;
+
+        let (explicit_ns, key_part) = parse_key_with_namespace(&self.key_text, namespace_separator);
+
+        let effective_explicit_ns = explicit_ns.or_else(|| self.translation_namespace.clone());
+
+        let filtered = filter_translations_by_namespace(
+            db,
+            translations,
+            effective_explicit_ns.as_deref(),
+            self.declared_namespace.as_deref(),
+            self.declared_namespaces.as_deref(),
+            default_namespace,
+        );
+
+        (key_part, filtered.into_iter().copied().collect())
+    }
+
+    /// Resolves the effective namespace and key part for this context.
+    ///
+    /// Uses `translation_namespace` as fallback for explicit namespace (from key text).
+    pub fn resolve_key_and_namespace(
+        &self,
+        namespace_separator: Option<&str>,
+        default_namespace: Option<&str>,
+    ) -> (Option<String>, String) {
+        use crate::ide::namespace::resolve_namespace;
+        use crate::syntax::analyzer::extractor::parse_key_with_namespace;
+
+        let (explicit_ns, key_part) = parse_key_with_namespace(&self.key_text, namespace_separator);
+
+        let effective_explicit_ns = explicit_ns.or_else(|| self.translation_namespace.clone());
+
+        let resolved = resolve_namespace(
+            effective_explicit_ns.as_deref(),
+            self.declared_namespace.as_deref(),
+            self.declared_namespaces.as_deref(),
+            default_namespace,
+        )
+        .map(str::to_owned);
+
+        (resolved, key_part)
+    }
+}
+
 /// Settings needed for diagnostic generation, extracted from config.
 struct DiagnosticConfig {
     options: DiagnosticOptions,
@@ -182,12 +256,14 @@ impl Backend {
         self.client.send_notification::<DecorationsChanged>(()).await;
     }
 
-    /// Gets translation key text at cursor position from `SourceFile` or `Translation`.
+    /// Gets translation key context at cursor position from `SourceFile` or `Translation`.
+    ///
+    /// Returns a `KeyContext` with namespace information for filtering translations.
     pub(crate) async fn get_key_at_position(
         &self,
         file_path: &Path,
         position: crate::types::SourcePosition,
-    ) -> Option<String> {
+    ) -> Option<KeyContext> {
         let source_file = {
             let source_files = self.state.source_files.lock().await;
             source_files.get(file_path).copied()
@@ -197,8 +273,14 @@ impl Backend {
         let db = self.state.db.lock().await;
 
         if let Some(source_file) = source_file {
-            crate::syntax::key_at_position(&*db, source_file, position, key_separator)
-                .map(|key| key.text(&*db).clone())
+            crate::syntax::key_usage_at_position(&*db, source_file, position, key_separator).map(
+                |usage| KeyContext {
+                    key_text: usage.key(&*db).text(&*db).clone(),
+                    declared_namespace: usage.namespace(&*db),
+                    declared_namespaces: usage.namespaces(&*db),
+                    translation_namespace: None,
+                },
+            )
         } else {
             tracing::debug!("Source file not found, trying Translation: {}", file_path.display());
 
@@ -208,7 +290,14 @@ impl Backend {
             let result = translations
                 .iter()
                 .find(|t| t.file_path(&*db) == file_path_str.as_ref())
-                .and_then(|t| t.key_at_position(&*db, position).map(|key| key.text(&*db).clone()));
+                .and_then(|t| {
+                    t.key_at_position(&*db, position).map(|key| KeyContext {
+                        key_text: key.text(&*db).clone(),
+                        declared_namespace: None,
+                        declared_namespaces: None,
+                        translation_namespace: t.namespace(&*db).clone(),
+                    })
+                });
             drop(translations);
             result
         }
@@ -908,12 +997,22 @@ fn sort_languages(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{
+        HashMap,
+        HashSet,
+    };
 
+    use googletest::prelude::*;
     use rstest::rstest;
 
-    use super::sort_languages;
+    use super::{
+        KeyContext,
+        sort_languages,
+    };
+    use crate::db::I18nDatabaseImpl;
+    use crate::test_utils::create_translation_with_namespace;
 
     fn langs(list: &[&str]) -> Vec<String> {
         list.iter().copied().map(String::from).collect()
@@ -974,5 +1073,166 @@ mod tests {
         let primaries = langs(&["fr", "de"]);
         let result = sort_languages(languages, None, Some(&primaries));
         assert_eq!(result, langs(&["en", "ja", "zh"]));
+    }
+
+    // --- KeyContext::filter_translations tests ---
+
+    fn make_translations(db: &I18nDatabaseImpl) -> Vec<crate::input::translation::Translation> {
+        vec![
+            create_translation_with_namespace(
+                db,
+                "en",
+                Some("common"),
+                "/locales/en/common.json",
+                HashMap::from([("hello".to_string(), "Hello".to_string())]),
+            ),
+            create_translation_with_namespace(
+                db,
+                "en",
+                Some("errors"),
+                "/locales/en/errors.json",
+                HashMap::from([("hello".to_string(), "Error Hello".to_string())]),
+            ),
+            create_translation_with_namespace(
+                db,
+                "ja",
+                Some("common"),
+                "/locales/ja/common.json",
+                HashMap::from([("hello".to_string(), "こんにちは".to_string())]),
+            ),
+        ]
+    }
+
+    #[rstest]
+    fn filter_translations_explicit_namespace_in_key() {
+        let db = I18nDatabaseImpl::default();
+        let translations = make_translations(&db);
+
+        let ctx = KeyContext {
+            key_text: "common:hello".to_string(),
+            declared_namespace: None,
+            declared_namespaces: None,
+            translation_namespace: None,
+        };
+
+        let (key_part, filtered) = ctx.filter_translations(&db, &translations, Some(":"), None);
+
+        assert_that!(key_part, eq("hello"));
+        assert_that!(filtered.len(), eq(2)); // en/common + ja/common
+        assert!(filtered.iter().all(|t| t.namespace(&db).as_deref() == Some("common")));
+    }
+
+    #[rstest]
+    fn filter_translations_declared_namespace() {
+        let db = I18nDatabaseImpl::default();
+        let translations = make_translations(&db);
+
+        let ctx = KeyContext {
+            key_text: "hello".to_string(),
+            declared_namespace: Some("errors".to_string()),
+            declared_namespaces: None,
+            translation_namespace: None,
+        };
+
+        let (key_part, filtered) = ctx.filter_translations(&db, &translations, Some(":"), None);
+
+        assert_that!(key_part, eq("hello"));
+        assert_that!(filtered.len(), eq(1)); // en/errors only
+        assert_that!(filtered[0].namespace(&db).as_deref(), some(eq("errors")));
+    }
+
+    #[rstest]
+    fn filter_translations_declared_namespaces_array() {
+        let db = I18nDatabaseImpl::default();
+        let translations = make_translations(&db);
+
+        let ctx = KeyContext {
+            key_text: "hello".to_string(),
+            declared_namespace: None,
+            declared_namespaces: Some(vec!["errors".to_string(), "common".to_string()]),
+            translation_namespace: None,
+        };
+
+        let (key_part, filtered) = ctx.filter_translations(&db, &translations, Some(":"), None);
+
+        assert_that!(key_part, eq("hello"));
+        // First element of array wins: "errors"
+        assert_that!(filtered.len(), eq(1));
+        assert_that!(filtered[0].namespace(&db).as_deref(), some(eq("errors")));
+    }
+
+    #[rstest]
+    fn filter_translations_default_namespace() {
+        let db = I18nDatabaseImpl::default();
+        let translations = make_translations(&db);
+
+        let ctx = KeyContext {
+            key_text: "hello".to_string(),
+            declared_namespace: None,
+            declared_namespaces: None,
+            translation_namespace: None,
+        };
+
+        let (key_part, filtered) =
+            ctx.filter_translations(&db, &translations, Some(":"), Some("common"));
+
+        assert_that!(key_part, eq("hello"));
+        assert_that!(filtered.len(), eq(2)); // en/common + ja/common
+    }
+
+    #[rstest]
+    fn filter_translations_no_namespace_returns_all() {
+        let db = I18nDatabaseImpl::default();
+        let translations = make_translations(&db);
+
+        let ctx = KeyContext {
+            key_text: "hello".to_string(),
+            declared_namespace: None,
+            declared_namespaces: None,
+            translation_namespace: None,
+        };
+
+        let (key_part, filtered) = ctx.filter_translations(&db, &translations, None, None);
+
+        assert_that!(key_part, eq("hello"));
+        assert_that!(filtered.len(), eq(3)); // all
+    }
+
+    #[rstest]
+    fn filter_translations_json_file_namespace() {
+        let db = I18nDatabaseImpl::default();
+        let translations = make_translations(&db);
+
+        let ctx = KeyContext {
+            key_text: "hello".to_string(),
+            declared_namespace: None,
+            declared_namespaces: None,
+            translation_namespace: Some("common".to_string()),
+        };
+
+        let (key_part, filtered) = ctx.filter_translations(&db, &translations, None, None);
+
+        assert_that!(key_part, eq("hello"));
+        assert_that!(filtered.len(), eq(2)); // en/common + ja/common
+    }
+
+    #[rstest]
+    fn filter_translations_explicit_overrides_declared() {
+        let db = I18nDatabaseImpl::default();
+        let translations = make_translations(&db);
+
+        let ctx = KeyContext {
+            key_text: "errors:hello".to_string(),
+            declared_namespace: Some("common".to_string()),
+            declared_namespaces: None,
+            translation_namespace: None,
+        };
+
+        let (key_part, filtered) = ctx.filter_translations(&db, &translations, Some(":"), None);
+
+        assert_that!(key_part, eq("hello"));
+        // Explicit "errors" overrides declared "common"
+        assert_that!(filtered.len(), eq(1));
+        assert_that!(filtered[0].namespace(&db).as_deref(), some(eq("errors")));
     }
 }

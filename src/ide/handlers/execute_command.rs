@@ -283,9 +283,9 @@ async fn handle_get_key_at_position(
 
     let source_position = crate::types::SourcePosition::from(parsed_args.position);
 
-    let key = backend.get_key_at_position(&file_path, source_position).await;
+    let key_context = backend.get_key_at_position(&file_path, source_position).await;
 
-    Ok(key.map(|k| serde_json::json!({ "key": k })))
+    Ok(key_context.map(|ctx| serde_json::json!({ "key": ctx.key_text })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -362,6 +362,8 @@ async fn handle_get_decorations(
     let settings = config.get_settings();
     let primary_languages = settings.primary_languages.clone();
     let key_separator = settings.key_separator.clone();
+    let namespace_separator = settings.namespace_separator.clone();
+    let default_namespace = settings.default_namespace.clone();
     drop(config);
 
     let db = backend.state.db.lock().await;
@@ -392,6 +394,8 @@ async fn handle_get_decorations(
         &translations,
         language.as_deref(),
         &key_separator,
+        namespace_separator.as_deref(),
+        default_namespace.as_deref(),
     );
 
     drop(translations);

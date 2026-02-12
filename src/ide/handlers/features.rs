@@ -126,7 +126,7 @@ pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Opti
 
     let source_position = crate::types::SourcePosition::from(position);
 
-    let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
+    let Some(key_context) = backend.get_key_at_position(&file_path, source_position).await else {
         tracing::debug!("No translation key found at position");
         return Ok(None);
     };
@@ -136,16 +136,26 @@ pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Opti
         let settings = config.get_settings();
         let key_separator = settings.key_separator.clone();
         let primary_languages = settings.primary_languages.clone();
+        let namespace_separator = settings.namespace_separator.clone();
+        let default_namespace = settings.default_namespace.clone();
         drop(config);
 
         let current_language = backend.state.current_language.lock().await.clone();
         let db = backend.state.db.lock().await;
-        let key = crate::interned::TransKey::new(&*db, key_text.clone());
         let translations = backend.state.translations.lock().await;
+
+        let (key_part, filtered) = key_context.filter_translations(
+            &*db,
+            &translations,
+            namespace_separator.as_deref(),
+            default_namespace.as_deref(),
+        );
+
+        let key = crate::interned::TransKey::new(&*db, key_part);
         crate::ide::hover::generate_hover_content(
             &*db,
             key,
-            &translations,
+            &filtered,
             &key_separator,
             current_language.as_deref(),
             primary_languages.as_deref(),
@@ -153,11 +163,11 @@ pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Opti
     };
 
     let Some(hover_text) = hover_text else {
-        tracing::debug!("No translations found for key: {}", key_text);
+        tracing::debug!("No translations found for key: {}", key_context.key_text);
         return Ok(None);
     };
 
-    tracing::debug!("Generated hover content for key: {}", key_text);
+    tracing::debug!("Generated hover content for key: {}", key_context.key_text);
 
     Ok(Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
@@ -189,17 +199,31 @@ pub async fn handle_goto_definition(
 
     let source_position = crate::types::SourcePosition::from(position);
 
-    let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
+    let Some(key_context) = backend.get_key_at_position(&file_path, source_position).await else {
         tracing::debug!("No translation key found at position");
         return Ok(None);
     };
 
     let locations = {
-        let key_separator = backend.get_key_separator().await;
+        let config = backend.config_manager.lock().await;
+        let settings = config.get_settings();
+        let key_separator = settings.key_separator.clone();
+        let namespace_separator = settings.namespace_separator.clone();
+        let default_namespace = settings.default_namespace.clone();
+        drop(config);
+
         let db = backend.state.db.lock().await;
-        let key = crate::interned::TransKey::new(&*db, key_text);
         let translations = backend.state.translations.lock().await;
-        crate::ide::goto_definition::find_definitions(&*db, key, &translations, &key_separator)
+
+        let (key_part, filtered) = key_context.filter_translations(
+            &*db,
+            &translations,
+            namespace_separator.as_deref(),
+            default_namespace.as_deref(),
+        );
+
+        let key = crate::interned::TransKey::new(&*db, key_part);
+        crate::ide::goto_definition::find_definitions(&*db, key, &filtered, &key_separator)
     };
 
     tracing::debug!("Found {} definitions for key", locations.len());
@@ -227,20 +251,38 @@ pub async fn handle_references(
 
     let source_position = crate::types::SourcePosition::from(position);
 
-    let Some(key_text) = backend.get_key_at_position(&file_path, source_position).await else {
+    let Some(key_context) = backend.get_key_at_position(&file_path, source_position).await else {
         tracing::debug!("No translation key found at position");
         return Ok(None);
     };
 
     let locations = {
-        let key_separator = backend.get_key_separator().await;
+        let config = backend.config_manager.lock().await;
+        let settings = config.get_settings();
+        let key_separator = settings.key_separator.clone();
+        let namespace_separator = settings.namespace_separator.clone();
+        let default_namespace = settings.default_namespace.clone();
+        drop(config);
+
+        let (target_ns, key_part) = key_context.resolve_key_and_namespace(
+            namespace_separator.as_deref(),
+            default_namespace.as_deref(),
+        );
+
         let db = backend.state.db.lock().await;
-        let key = crate::interned::TransKey::new(&*db, key_text.clone());
         let source_files = backend.state.source_files.lock().await;
-        crate::ide::references::find_references(&*db, key, &source_files, &key_separator)
+        crate::ide::references::find_references(
+            &*db,
+            &key_part,
+            target_ns.as_deref(),
+            &source_files,
+            &key_separator,
+            namespace_separator.as_deref(),
+            default_namespace.as_deref(),
+        )
     };
 
-    tracing::debug!("Found {} references for key: {}", locations.len(), key_text);
+    tracing::debug!("Found {} references for key: {}", locations.len(), key_context.key_text);
 
     if locations.is_empty() { Ok(None) } else { Ok(Some(locations)) }
 }
@@ -329,23 +371,31 @@ pub async fn handle_rename(
 
     let source_position = crate::types::SourcePosition::from(position);
 
-    let Some(old_key) = backend.get_key_at_position(&file_path, source_position).await else {
+    let Some(key_context) = backend.get_key_at_position(&file_path, source_position).await else {
         return Ok(None);
     };
 
     let settings = backend.config_manager.lock().await.get_settings().clone();
+
+    let (target_ns, _) = key_context.resolve_key_and_namespace(
+        settings.namespace_separator.as_deref(),
+        settings.default_namespace.as_deref(),
+    );
+
     let db = backend.state.db.lock().await;
     let translations = backend.state.translations.lock().await;
     let source_files = backend.state.source_files.lock().await;
 
     let edit = crate::ide::rename::compute_rename_edits(
         &*db,
-        &old_key,
+        &key_context.key_text,
         &new_name,
+        target_ns.as_deref(),
         &translations,
         &source_files,
         &settings.key_separator,
         settings.namespace_separator.as_deref(),
+        settings.default_namespace.as_deref(),
     );
     drop(db);
     drop(translations);

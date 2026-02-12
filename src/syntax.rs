@@ -40,22 +40,15 @@ pub fn analyze_source(
         .collect()
 }
 
-/// Finds a key at a specific position.
+/// Finds a key usage (with namespace context) at a specific position.
 #[salsa::tracked]
 #[allow(clippy::needless_pass_by_value)]
-pub fn key_at_position(
+pub fn key_usage_at_position(
     db: &dyn I18nDatabase,
     file: SourceFile,
     position: SourcePosition,
     key_separator: String,
-) -> Option<TransKey<'_>> {
+) -> Option<KeyUsage<'_>> {
     let usages = analyze_source(db, file, key_separator);
-
-    for usage in usages {
-        if usage.range(db).contains(position) {
-            return Some(usage.key(db));
-        }
-    }
-
-    None
+    usages.into_iter().find(|usage| usage.range(db).contains(position))
 }

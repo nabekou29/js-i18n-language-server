@@ -14,10 +14,12 @@ use crate::ide::code_actions::{
     create_full_file_text_edit,
     rename_key_in_json_text,
 };
-use crate::ide::namespace::filter_by_namespace;
+use crate::ide::namespace::{
+    filter_by_namespace,
+    resolve_namespace,
+};
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
-use crate::interned::TransKey;
 use crate::syntax::analyze_source;
 use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 
@@ -25,16 +27,20 @@ use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 ///
 /// Updates both translation JSON files and source file references.
 /// Supports namespace-prefixed keys (e.g., `"ns:key"`); namespace changes are rejected.
+/// `target_namespace` is the resolved namespace from `KeyContext`, used to filter
+/// source file usages when the namespace isn't explicit in the key text.
 #[must_use]
-#[allow(clippy::implicit_hasher)]
+#[allow(clippy::implicit_hasher, clippy::too_many_arguments)]
 pub fn compute_rename_edits(
     db: &dyn I18nDatabase,
     old_key: &str,
     new_key: &str,
+    target_namespace: Option<&str>,
     translations: &[Translation],
     source_files: &HashMap<PathBuf, SourceFile>,
     key_separator: &str,
     namespace_separator: Option<&str>,
+    default_namespace: Option<&str>,
 ) -> WorkspaceEdit {
     let (old_ns, old_key_part) = parse_key_with_namespace(old_key, namespace_separator);
     let (new_ns, new_key_part) = parse_key_with_namespace(new_key, namespace_separator);
@@ -46,7 +52,10 @@ pub fn compute_rename_edits(
 
     let mut changes: HashMap<Url, Vec<TextEdit>> = HashMap::new();
 
-    let target_translations = filter_by_namespace(db, translations, old_ns.as_deref());
+    // Use explicit namespace from key text, falling back to resolved target namespace
+    let effective_ns = old_ns.as_deref().or(target_namespace);
+
+    let target_translations = filter_by_namespace(db, translations, effective_ns);
 
     // Translation file edits
     for translation in &target_translations {
@@ -63,7 +72,6 @@ pub fn compute_rename_edits(
     }
 
     // Source file edits: find references and replace key text
-    let old_trans_key = TransKey::new(db, old_key.to_string());
     for source_file in source_files.values() {
         let usages = analyze_source(db, *source_file, key_separator.to_string());
         let uri_str = source_file.uri(db);
@@ -73,8 +81,27 @@ pub fn compute_rename_edits(
 
         for usage in &usages {
             let usage_key_text = usage.key(db).text(db);
-            if usage_key_text != old_trans_key.text(db) {
+            let (usage_explicit_ns, usage_key_part) =
+                parse_key_with_namespace(usage_key_text, namespace_separator);
+
+            // Match key part
+            if usage_key_part != old_key_part {
                 continue;
+            }
+
+            // Match namespace when target has one
+            if let Some(target_ns) = effective_ns {
+                let declared_ns = usage.namespace(db);
+                let declared_nss = usage.namespaces(db);
+                let usage_ns = resolve_namespace(
+                    usage_explicit_ns.as_deref(),
+                    declared_ns.as_deref(),
+                    declared_nss.as_deref(),
+                    default_namespace,
+                );
+                if usage_ns.is_none_or(|ns| ns != target_ns) {
+                    continue;
+                }
             }
 
             let range = usage.range(db);
@@ -144,9 +171,11 @@ mod tests {
             &db,
             "hello",
             "greeting",
+            None,
             &translations,
             &HashMap::new(),
             ".",
+            None,
             None,
         );
 
@@ -184,9 +213,11 @@ mod tests {
             &db,
             "common.hello",
             "common.greeting",
+            None,
             &[],
             &source_files,
             ".",
+            None,
             None,
         );
 
@@ -230,10 +261,12 @@ mod tests {
             &db,
             "common:hello",
             "common:greeting",
+            Some("common"),
             &translations,
             &HashMap::new(),
             ".",
             Some(":"),
+            None,
         );
 
         let changes = result.changes.unwrap();
@@ -251,10 +284,12 @@ mod tests {
             &db,
             "common:hello",
             "errors:hello",
+            Some("common"),
             &[],
             &HashMap::new(),
             ".",
             Some(":"),
+            None,
         );
 
         assert_that!(result.changes.unwrap_or_default(), is_empty());

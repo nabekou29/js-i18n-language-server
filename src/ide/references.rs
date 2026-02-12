@@ -6,23 +6,30 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::Location;
 
 use crate::db::I18nDatabase;
+use crate::ide::namespace::resolve_namespace;
 use crate::ide::plural::get_plural_base_key;
 use crate::input::source::SourceFile;
-use crate::interned::TransKey;
 use crate::syntax::analyze_source;
+use crate::syntax::analyzer::extractor::parse_key_with_namespace;
 
 /// Finds all references to a translation key across all source files.
 ///
 /// For plural keys (e.g., `items_one`), also matches calls to the base key (`items`)
 /// since i18next resolves `t("items", { count: n })` to plural variants internally.
+///
+/// When `target_namespace` is `Some`, only usages whose resolved namespace matches
+/// are returned. This prevents cross-namespace false positives when multiple
+/// namespaces share the same key name.
 pub fn find_references<S: std::hash::BuildHasher>(
     db: &dyn I18nDatabase,
-    key: TransKey<'_>,
+    key_part: &str,
+    target_namespace: Option<&str>,
     source_files: &HashMap<PathBuf, SourceFile, S>,
     key_separator: &str,
+    namespace_separator: Option<&str>,
+    default_namespace: Option<&str>,
 ) -> Vec<Location> {
-    let key_text = key.text(db);
-    let base_key = get_plural_base_key(key_text);
+    let base_key = get_plural_base_key(key_part);
 
     source_files
         .values()
@@ -32,12 +39,29 @@ pub fn find_references<S: std::hash::BuildHasher>(
 
             usages.into_iter().filter_map(move |usage| {
                 let usage_key_text = usage.key(db).text(db);
+                let (usage_explicit_ns, usage_key_part) =
+                    parse_key_with_namespace(usage_key_text, namespace_separator);
 
-                let is_match =
-                    usage_key_text == key_text || base_key.is_some_and(|bk| usage_key_text == bk);
+                let is_key_match =
+                    usage_key_part == key_part || base_key.is_some_and(|bk| usage_key_part == bk);
 
-                if !is_match {
+                if !is_key_match {
                     return None;
+                }
+
+                // When target has a namespace, verify the usage resolves to the same one
+                if let Some(target_ns) = target_namespace {
+                    let declared_ns = usage.namespace(db);
+                    let declared_nss = usage.namespaces(db);
+                    let usage_ns = resolve_namespace(
+                        usage_explicit_ns.as_deref(),
+                        declared_ns.as_deref(),
+                        declared_nss.as_deref(),
+                        default_namespace,
+                    );
+                    if usage_ns.is_none_or(|ns| ns != target_ns) {
+                        return None;
+                    }
                 }
 
                 let Ok(parsed_uri) = uri.parse() else {
@@ -64,7 +88,6 @@ mod tests {
         ProgrammingLanguage,
         SourceFile,
     };
-    use crate::interned::TransKey;
 
     #[rstest]
     fn test_find_references_single_file() {
@@ -85,8 +108,7 @@ mod tests {
         let mut source_files = HashMap::new();
         source_files.insert(PathBuf::from("/test.ts"), source_file);
 
-        let key = TransKey::new(&db, "common.hello".to_string());
-        let locations = find_references(&db, key, &source_files, ".");
+        let locations = find_references(&db, "common.hello", None, &source_files, ".", None, None);
 
         assert_that!(locations.len(), eq(2));
 
@@ -119,8 +141,7 @@ mod tests {
         source_files.insert(PathBuf::from("/test1.ts"), source_file1);
         source_files.insert(PathBuf::from("/test2.ts"), source_file2);
 
-        let key = TransKey::new(&db, "common.hello".to_string());
-        let locations = find_references(&db, key, &source_files, ".");
+        let locations = find_references(&db, "common.hello", None, &source_files, ".", None, None);
 
         assert_that!(locations.len(), eq(2));
     }
@@ -140,8 +161,8 @@ mod tests {
         let mut source_files = HashMap::new();
         source_files.insert(PathBuf::from("/test.ts"), source_file);
 
-        let key = TransKey::new(&db, "common.nonexistent".to_string());
-        let locations = find_references(&db, key, &source_files, ".");
+        let locations =
+            find_references(&db, "common.nonexistent", None, &source_files, ".", None, None);
 
         assert_that!(locations, is_empty());
     }
@@ -151,8 +172,7 @@ mod tests {
         let db = I18nDatabaseImpl::default();
 
         let source_files = HashMap::new();
-        let key = TransKey::new(&db, "common.hello".to_string());
-        let locations = find_references(&db, key, &source_files, ".");
+        let locations = find_references(&db, "common.hello", None, &source_files, ".", None, None);
 
         assert_that!(locations, is_empty());
     }
@@ -175,8 +195,7 @@ mod tests {
         let mut source_files = HashMap::new();
         source_files.insert(PathBuf::from("/test.ts"), source_file);
 
-        let key = TransKey::new(&db, "items_one".to_string());
-        let locations = find_references(&db, key, &source_files, ".");
+        let locations = find_references(&db, "items_one", None, &source_files, ".", None, None);
 
         assert_that!(locations.len(), eq(2));
     }
@@ -196,8 +215,8 @@ mod tests {
         let mut source_files = HashMap::new();
         source_files.insert(PathBuf::from("/test.ts"), source_file);
 
-        let key = TransKey::new(&db, "place_ordinal_one".to_string());
-        let locations = find_references(&db, key, &source_files, ".");
+        let locations =
+            find_references(&db, "place_ordinal_one", None, &source_files, ".", None, None);
 
         assert_that!(locations.len(), eq(1));
     }
@@ -220,8 +239,7 @@ mod tests {
         let mut source_files = HashMap::new();
         source_files.insert(PathBuf::from("/test.ts"), source_file);
 
-        let key = TransKey::new(&db, "items".to_string());
-        let locations = find_references(&db, key, &source_files, ".");
+        let locations = find_references(&db, "items", None, &source_files, ".", None, None);
 
         assert_that!(locations.len(), eq(1));
     }
