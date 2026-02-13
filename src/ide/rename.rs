@@ -87,9 +87,10 @@ pub fn compute_rename_edits(
                 continue;
             }
 
-            // Match namespace when target has one
+            // Skip usages that explicitly resolve to a *different* namespace.
+            // Usages with no resolved namespace (None) are ambiguous and included.
             if let Some(target_ns) = effective_ns
-                && usage_ns.as_deref().is_none_or(|ns| ns != target_ns)
+                && usage_ns.as_deref().is_some_and(|ns| ns != target_ns)
             {
                 continue;
             }
@@ -283,5 +284,42 @@ mod tests {
         );
 
         assert_that!(result.changes.unwrap_or_default(), is_empty());
+    }
+
+    #[rstest]
+    fn rename_updates_unresolved_namespace_source_references() {
+        let db = I18nDatabaseImpl::default();
+
+        // t("hello") without useTranslation — namespace resolves to None
+        let source_code = r#"const msg = t("hello");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "file:///src/app.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut source_files = HashMap::new();
+        source_files.insert(PathBuf::from("/src/app.ts"), source_file);
+
+        // Target namespace is "common" but defaultNamespace is None.
+        // Ambiguous usages (namespace = None) should still be renamed.
+        let result = compute_rename_edits(
+            &db,
+            "hello",
+            "greeting",
+            Some("common"),
+            &[],
+            &source_files,
+            ".",
+            Some(":"),
+            None,
+        );
+
+        let changes = result.changes.unwrap();
+        let source_uri: Url = "file:///src/app.ts".parse().unwrap();
+        let edits = &changes[&source_uri];
+        assert_that!(edits.len(), eq(1));
+        assert_that!(edits[0].new_text, eq("greeting"));
     }
 }

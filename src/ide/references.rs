@@ -47,9 +47,11 @@ pub fn find_references<S: std::hash::BuildHasher>(
                     return None;
                 }
 
-                // When target has a namespace, verify the usage resolves to the same one
+                // When target has a namespace, skip usages that explicitly resolve
+                // to a *different* namespace. Usages with no resolved namespace
+                // (None) are ambiguous and should be included.
                 if let Some(target_ns) = target_namespace
-                    && usage_ns.as_deref().is_none_or(|ns| ns != target_ns)
+                    && usage_ns.as_deref().is_some_and(|ns| ns != target_ns)
                 {
                     return None;
                 }
@@ -230,6 +232,31 @@ mod tests {
         source_files.insert(PathBuf::from("/test.ts"), source_file);
 
         let locations = find_references(&db, "items", None, &source_files, ".", None, None);
+
+        assert_that!(locations.len(), eq(1));
+    }
+
+    #[rstest]
+    fn test_find_references_unresolved_namespace_matches_target() {
+        let db = I18nDatabaseImpl::default();
+
+        // t("hello") without useTranslation — namespace resolves to None
+        let source_code = r#"const msg = t("hello");"#;
+        let source_file = SourceFile::new(
+            &db,
+            "file:///test.ts".to_string(),
+            source_code.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let mut source_files = HashMap::new();
+        source_files.insert(PathBuf::from("/test.ts"), source_file);
+
+        // Target namespace is "common" (e.g., triggered from JSON file or useTranslation("common"))
+        // Without defaultNamespace, the usage's namespace is None (ambiguous).
+        // Ambiguous usages should still be included, not excluded.
+        let locations =
+            find_references(&db, "hello", Some("common"), &source_files, ".", Some(":"), None);
 
         assert_that!(locations.len(), eq(1));
     }
