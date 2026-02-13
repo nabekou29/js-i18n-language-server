@@ -78,7 +78,7 @@ fn print_version() {
 
 /// Resolves the tracing env filter.
 ///
-/// Priority: `--log-level` arg > `JS_I18N_LOG` env > `RUST_LOG` env > default (`warn`).
+/// Priority: `--log-level` arg > `JS_I18N_LOG` env > `RUST_LOG` env > default (`info`).
 /// Simple values (e.g., `info`) are auto-scoped to `js_i18n_language_server={value}`.
 fn resolve_env_filter(log_level_arg: Option<&str>) -> tracing_subscriber::EnvFilter {
     let raw = log_level_arg.map(String::from).or_else(|| std::env::var("JS_I18N_LOG").ok());
@@ -86,7 +86,7 @@ fn resolve_env_filter(log_level_arg: Option<&str>) -> tracing_subscriber::EnvFil
     raw.map_or_else(
         || {
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "js_i18n_language_server=warn".into())
+                .unwrap_or_else(|_| "js_i18n_language_server=info".into())
         },
         |value| {
             let filter = if value.contains('=') {
@@ -94,7 +94,7 @@ fn resolve_env_filter(log_level_arg: Option<&str>) -> tracing_subscriber::EnvFil
             } else {
                 format!("js_i18n_language_server={value}")
             };
-            filter.parse().unwrap_or_else(|_| "js_i18n_language_server=warn".into())
+            filter.parse().unwrap_or_else(|_| "js_i18n_language_server=info".into())
         },
     )
 }
@@ -130,6 +130,8 @@ fn init_logging(args: &Args) {
 async fn main() {
     let args = parse_args();
     init_logging(&args);
+
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "Starting js-i18n-language-server");
 
     let config_manager = Arc::new(Mutex::new(ConfigManager::new()));
     let workspace_indexer = Arc::new(WorkspaceIndexer::new());

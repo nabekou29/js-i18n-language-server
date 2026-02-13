@@ -12,7 +12,7 @@ pub async fn handle_did_change_configuration(
     backend: &Backend,
     params: DidChangeConfigurationParams,
 ) {
-    tracing::info!(settings = %params.settings, "didChangeConfiguration received");
+    tracing::debug!(settings = %params.settings, "didChangeConfiguration received");
 
     let new_settings = serde_json::from_value::<crate::config::I18nSettings>(
         params.settings.clone(),
@@ -27,7 +27,7 @@ pub async fn handle_did_change_configuration(
         match config_manager.update_settings(new_settings) {
             Ok(()) => {
                 drop(config_manager);
-                tracing::info!("configuration updated successfully");
+                tracing::debug!("configuration updated successfully");
 
                 backend.reindex_workspace().await;
             }

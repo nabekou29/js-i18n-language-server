@@ -309,7 +309,7 @@ impl Backend {
         )> = {
             let opened_files = self.state.opened_files.lock().await;
             let file_count = opened_files.len();
-            tracing::info!(file_count, "Sending diagnostics to opened files");
+            tracing::debug!(file_count, "Sending diagnostics to opened files");
 
             let config = self.get_diagnostic_config().await;
             let db = self.state.db.lock().await;
@@ -368,7 +368,7 @@ impl Backend {
             let db = self.state.db.lock().await;
             let translations = self.state.translations.lock().await;
 
-            tracing::info!(
+            tracing::debug!(
                 translation_count = translations.len(),
                 source_file_count = source_file_vec.len(),
                 "Sending unused key diagnostics"
@@ -421,7 +421,7 @@ impl Backend {
             SourceFile,
         };
 
-        tracing::info!(uri = %uri, force_create, "Updating source file and diagnosing");
+        tracing::debug!(uri = %uri, force_create, "Updating source file and diagnosing");
 
         let Some(file_path) = Self::uri_to_path(&uri) else {
             return;
@@ -619,7 +619,7 @@ impl Backend {
                 translations.push(new_translation);
                 drop(translations);
 
-                tracing::info!("Reloaded translation file: {:?}", file_path);
+                tracing::debug!("Reloaded translation file: {:?}", file_path);
             }
             Err(e) => {
                 tracing::warn!("Failed to reload translation file {:?}: {}", file_path, e);
@@ -651,7 +651,7 @@ impl Backend {
                 translations.push(new_translation);
                 drop(translations);
 
-                tracing::info!("Updated translation from buffer: {:?}", file_path);
+                tracing::debug!("Updated translation from buffer: {:?}", file_path);
             }
             Err(e) => {
                 tracing::warn!("Failed to update translation {:?}: {}", file_path, e);
@@ -670,7 +670,7 @@ impl Backend {
         translations.retain(|t| t.file_path(&*db) != &file_path_str);
 
         if translations.len() < before_len {
-            tracing::info!("Removed translation file: {:?}", file_path);
+            tracing::debug!("Removed translation file: {:?}", file_path);
         }
     }
 
@@ -742,14 +742,14 @@ impl Backend {
             return;
         }
 
-        tracing::info!(count = pending_updates.len(), "Processing pending updates");
+        tracing::debug!(count = pending_updates.len(), "Processing pending updates");
 
         for (uri, text, force_create) in pending_updates {
             tracing::debug!(uri = %uri, "Processing pending update");
             self.update_and_diagnose(uri, text, force_create).await;
         }
 
-        tracing::info!("Pending updates processed");
+        tracing::debug!("Pending updates processed");
     }
 
     /// Handles config file changes (create/modify/delete).
@@ -763,7 +763,7 @@ impl Backend {
         file_path: &Path,
         change_type: FileChangeType,
     ) {
-        tracing::info!("Config file changed: {:?}, type: {:?}", file_path, change_type);
+        tracing::debug!("Config file changed: {:?}, type: {:?}", file_path, change_type);
 
         let workspace_root = file_path.parent().map(Path::to_path_buf);
 
@@ -809,7 +809,7 @@ impl Backend {
         };
 
         if old_patterns != new_patterns {
-            tracing::info!(
+            tracing::debug!(
                 "Translation file patterns changed: {:?} -> {:?}, re-registering watchers",
                 old_patterns,
                 new_patterns

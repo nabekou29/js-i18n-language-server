@@ -66,7 +66,7 @@ impl WorkspaceIndexer {
     }
 
     pub fn reset_indexing_state(&self) {
-        tracing::info!("Resetting indexing state");
+        tracing::debug!("Resetting indexing state");
         self.indexing_completed.store(false, Ordering::Release);
         self.translations_indexed.store(false, Ordering::Release);
     }
@@ -135,7 +135,7 @@ impl WorkspaceIndexer {
         let max_concurrent_files =
             settings.indexing.num_threads.unwrap_or_else(Self::default_num_threads);
 
-        tracing::info!(
+        tracing::debug!(
             workspace_path = %workspace_path.display(),
             max_concurrent = max_concurrent_files,
             "Indexing workspace"
@@ -245,7 +245,7 @@ impl WorkspaceIndexer {
 
         self.indexing_completed.store(true, Ordering::Release);
 
-        tracing::info!(
+        tracing::debug!(
             translation_files = translation_files.len(),
             source_files = files.len(),
             "Indexing complete"
