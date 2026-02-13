@@ -183,8 +183,11 @@ async fn handle_delete_unused_keys(
         return Ok(None);
     };
 
+    if uri.scheme() != "file" {
+        return Ok(None);
+    }
+
     let Some(file_path) = Backend::uri_to_path(&uri) else {
-        tracing::warn!("Failed to convert URI to path: {}", parsed_args.uri);
         return Ok(None);
     };
 
@@ -217,7 +220,7 @@ async fn handle_delete_unused_keys(
     };
 
     if unused_keys.is_empty() {
-        tracing::info!("no unused translation keys found");
+        tracing::debug!("no unused translation keys found");
         return Ok(Some(serde_json::json!({
             "deletedCount": 0,
             "deletedKeys": []
@@ -276,6 +279,10 @@ async fn handle_get_key_at_position(
         tracing::warn!("Invalid URI: {}", parsed_args.uri);
         return Ok(None);
     };
+
+    if uri.scheme() != "file" {
+        return Ok(None);
+    }
 
     let Some(file_path) = Backend::uri_to_path(&uri) else {
         return Ok(None);
@@ -353,8 +360,11 @@ async fn handle_get_decorations(
         return Ok(Some(serde_json::json!([])));
     };
 
+    if uri.scheme() != "file" {
+        return Ok(Some(serde_json::json!([])));
+    }
+
     let Some(file_path) = Backend::uri_to_path(&uri) else {
-        tracing::warn!("Failed to convert URI to path: {}", parsed_args.uri);
         return Ok(Some(serde_json::json!([])));
     };
 
