@@ -39,6 +39,14 @@ pub async fn handle_completion(
         return Ok(None);
     };
 
+    // Acquire config before db to respect lock ordering (config_manager → db → source_files)
+    let (key_separator, primary_languages) = {
+        let settings = backend.config_manager.lock().await.get_settings().clone();
+        (settings.key_separator, settings.primary_languages)
+    };
+
+    // Acquire db before source_files to prevent stale IDs after reset_state()
+    let db = backend.state.db.lock().await;
     let source_file = {
         let source_files = backend.state.source_files.lock().await;
         source_files.get(&file_path).copied()
@@ -49,13 +57,6 @@ pub async fn handle_completion(
         return Ok(None);
     };
 
-    // Acquire config before db to respect lock ordering (config_manager → db → translations)
-    let (key_separator, primary_languages) = {
-        let settings = backend.config_manager.lock().await.get_settings().clone();
-        (settings.key_separator, settings.primary_languages)
-    };
-
-    let db = backend.state.db.lock().await;
     let text = source_file.text(&*db);
     let language = source_file.language(&*db);
 
@@ -304,13 +305,13 @@ pub async fn handle_prepare_rename(
         return Ok(None);
     };
 
+    let key_separator = backend.get_key_separator().await;
+    // Acquire db before source_files to prevent stale IDs after reset_state()
+    let db = backend.state.db.lock().await;
     let source_file = {
         let source_files = backend.state.source_files.lock().await;
         source_files.get(&file_path).copied()
     };
-
-    let key_separator = backend.get_key_separator().await;
-    let db = backend.state.db.lock().await;
     let source_position = crate::types::SourcePosition::from(position);
 
     if let Some(source_file) = source_file {

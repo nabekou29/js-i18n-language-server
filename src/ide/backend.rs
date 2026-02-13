@@ -181,10 +181,15 @@ impl Backend {
     }
 
     /// Resets state and initializes index. Creates new Salsa database to clear old cache.
+    ///
+    /// Holds all locks atomically so concurrent handlers never see a partial
+    /// state (new DB + old SourceFile/Translation IDs → boxcar panic).
     async fn reset_state(&self) {
-        *self.state.db.lock().await = I18nDatabaseImpl::default();
-        self.state.source_files.lock().await.clear();
-        self.state.translations.lock().await.clear();
+        let (mut db, mut source_files, mut translations) = self.state.lock_all().await;
+        *db = I18nDatabaseImpl::default();
+        source_files.clear();
+        translations.clear();
+        drop((db, source_files, translations));
         self.workspace_indexer.reset_indexing_state();
     }
 
@@ -254,13 +259,11 @@ impl Backend {
         file_path: &Path,
         position: crate::types::SourcePosition,
     ) -> Option<KeyContext> {
-        let source_file = {
-            let source_files = self.state.source_files.lock().await;
-            source_files.get(file_path).copied()
-        };
-
         let key_separator = self.get_key_separator().await;
-        let db = self.state.db.lock().await;
+        // Acquire db before source_files to prevent stale IDs after reset_state()
+        let (db, source_files) = self.state.lock_db_and_source_files().await;
+        let source_file = source_files.get(file_path).copied();
+        drop(source_files);
 
         if let Some(source_file) = source_file {
             crate::syntax::key_usage_at_position(&*db, source_file, position, key_separator).map(
@@ -298,46 +301,48 @@ impl Backend {
     pub(crate) async fn send_diagnostics_to_opened_files(&self) {
         use crate::input::source::ProgrammingLanguage;
 
-        let opened_files = self.state.opened_files.lock().await;
-        let file_count = opened_files.len();
+        // Collect all diagnostics while holding locks, then send after releasing.
+        // This prevents stale SourceFile IDs from reset_state() racing with per-file lock cycles.
+        let diagnostics_to_send: Vec<(
+            tower_lsp::lsp_types::Url,
+            Vec<tower_lsp::lsp_types::Diagnostic>,
+        )> = {
+            let opened_files = self.state.opened_files.lock().await;
+            let file_count = opened_files.len();
+            tracing::info!(file_count, "Sending diagnostics to opened files");
 
-        tracing::info!(file_count, "Sending diagnostics to opened files");
+            let config = self.get_diagnostic_config().await;
+            let db = self.state.db.lock().await;
+            let source_files = self.state.source_files.lock().await;
+            let translations = self.state.translations.lock().await;
 
-        for uri in opened_files.iter() {
-            let Some(file_path) = Self::uri_to_path(uri) else {
-                continue;
-            };
+            opened_files
+                .iter()
+                .filter_map(|uri| {
+                    let file_path = Self::uri_to_path(uri)?;
+                    if ProgrammingLanguage::from_uri(uri.as_str()).is_none() {
+                        tracing::debug!("Skipping diagnostics for unsupported file type: {}", uri);
+                        return None;
+                    }
+                    let &source_file = source_files.get(&file_path).or_else(|| {
+                        tracing::debug!("Source file not found: {}", file_path.display());
+                        None
+                    })?;
+                    let diagnostics = crate::ide::diagnostics::generate_diagnostics(
+                        &*db,
+                        source_file,
+                        &translations,
+                        &config.options,
+                        &config.key_separator,
+                        config.namespace_separator.as_deref(),
+                        config.default_namespace.as_deref(),
+                    );
+                    Some((uri.clone(), diagnostics))
+                })
+                .collect()
+        };
 
-            if ProgrammingLanguage::from_uri(uri.as_str()).is_none() {
-                tracing::debug!("Skipping diagnostics for unsupported file type: {}", uri);
-                continue;
-            }
-
-            let source_file = {
-                let source_files = self.state.source_files.lock().await;
-                source_files.get(&file_path).copied()
-            };
-
-            let Some(source_file) = source_file else {
-                tracing::debug!("Source file not found: {}", file_path.display());
-                continue;
-            };
-
-            let diagnostics = {
-                let config = self.get_diagnostic_config().await;
-                let db = self.state.db.lock().await;
-                let translations = self.state.translations.lock().await;
-                crate::ide::diagnostics::generate_diagnostics(
-                    &*db,
-                    source_file,
-                    &translations,
-                    &config.options,
-                    &config.key_separator,
-                    config.namespace_separator.as_deref(),
-                    config.default_namespace.as_deref(),
-                )
-            };
-
+        for (uri, diagnostics) in diagnostics_to_send {
             self.client.publish_diagnostics(uri.clone(), diagnostics, None).await;
             tracing::debug!(uri = %uri, "Diagnostics sent");
         }
@@ -355,13 +360,13 @@ impl Backend {
 
         let key_separator = &settings.key_separator;
 
-        // Collect data before releasing lock
         let source_file_vec: Vec<crate::input::source::SourceFile> =
             self.state.source_files.lock().await.values().copied().collect();
 
         let diagnostics_to_send: Vec<(String, Vec<tower_lsp::lsp_types::Diagnostic>)> = {
-            let translations = self.state.translations.lock().await;
+            // Acquire db before translations to respect lock ordering
             let db = self.state.db.lock().await;
+            let translations = self.state.translations.lock().await;
 
             tracing::info!(
                 translation_count = translations.len(),
@@ -448,7 +453,7 @@ impl Backend {
         }
 
         // Update SourceFile without holding source_files lock during Salsa operations
-        let source_file = {
+        {
             let existing = if force_create {
                 None
             } else {
@@ -459,7 +464,6 @@ impl Backend {
             if let Some(existing) = existing {
                 let mut db = self.state.db.lock().await;
                 existing.set_text(&mut *db).to(text);
-                existing
             } else {
                 let db = self.state.db.lock().await;
                 let source_file = SourceFile::new(&*db, uri.to_string(), text, language);
@@ -467,9 +471,8 @@ impl Backend {
 
                 let mut source_files = self.state.source_files.lock().await;
                 source_files.insert(file_path.clone(), source_file);
-                source_file
             }
-        };
+        }
 
         tracing::debug!(uri = %uri, "Source file updated");
 
@@ -483,6 +486,13 @@ impl Backend {
         let diagnostics = {
             let config = self.get_diagnostic_config().await;
             let db = self.state.db.lock().await;
+            // Re-lookup source_file: reset_state() may have cleared the map during wait
+            let source_files = self.state.source_files.lock().await;
+            let Some(&source_file) = source_files.get(&file_path) else {
+                tracing::debug!(uri = %uri, "Source file removed during wait, skipping diagnostics");
+                return;
+            };
+            drop(source_files);
             let translations = self.state.translations.lock().await;
             crate::ide::diagnostics::generate_diagnostics(
                 &*db,
