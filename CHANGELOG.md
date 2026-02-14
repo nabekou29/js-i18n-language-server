@@ -1,4 +1,15 @@
 
+## [0.4.4] - 2026-02-14
+
+### Documentation
+
+- Add icon and editor extension links to README
+
+### Features
+
+- Ignore didChangeConfiguration when .js-i18n.json exists
+
+
 ## [0.4.3] - 2026-02-14
 
 ### Bug Fixes
