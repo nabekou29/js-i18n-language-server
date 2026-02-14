@@ -36,6 +36,7 @@ use crate::input::translation::{
 pub struct WorkspaceIndexer {
     indexing_completed: Arc<AtomicBool>,
     translations_indexed: Arc<AtomicBool>,
+    workspace_active: Arc<AtomicBool>,
     translations_notify: Arc<Notify>,
 }
 
@@ -51,6 +52,7 @@ impl WorkspaceIndexer {
         Self {
             indexing_completed: Arc::new(AtomicBool::new(false)),
             translations_indexed: Arc::new(AtomicBool::new(false)),
+            workspace_active: Arc::new(AtomicBool::new(false)),
             translations_notify: Arc::new(Notify::new()),
         }
     }
@@ -65,10 +67,16 @@ impl WorkspaceIndexer {
         self.translations_indexed.load(Ordering::Acquire)
     }
 
+    #[must_use]
+    pub fn is_workspace_active(&self) -> bool {
+        self.workspace_active.load(Ordering::Acquire)
+    }
+
     pub fn reset_indexing_state(&self) {
         tracing::debug!("Resetting indexing state");
         self.indexing_completed.store(false, Ordering::Release);
         self.translations_indexed.store(false, Ordering::Release);
+        self.workspace_active.store(false, Ordering::Release);
     }
 
     /// Returns 40% of CPU cores (minimum 1 thread).
@@ -147,12 +155,35 @@ impl WorkspaceIndexer {
             ));
         };
 
-        let files =
-            Self::find_files(workspace_path, |path| file_matcher.is_source_file_relative(path));
-
+        // Discover translation files first for activation check
         let translation_files = Self::find_files(workspace_path, |path| {
             file_matcher.is_translation_file_relative(path)
         });
+
+        // Determine workspace activation:
+        // Active if config file exists, or if any translation file's nearest
+        // package.json is at the workspace root (i.e., this IS the i18n project).
+        let is_active = config_manager.has_config_file()
+            || translation_files.iter().any(|f| {
+                Self::find_nearest_project_root(f, workspace_path)
+                    .is_some_and(|root| root == workspace_path)
+            });
+
+        self.workspace_active.store(is_active, Ordering::Release);
+
+        if !is_active {
+            tracing::info!(
+                translation_file_count = translation_files.len(),
+                "Workspace inactive: no i18n project at workspace root"
+            );
+            self.translations_indexed.store(true, Ordering::Release);
+            self.translations_notify.notify_waiters();
+            self.indexing_completed.store(true, Ordering::Release);
+            return Ok(());
+        }
+
+        let files =
+            Self::find_files(workspace_path, |path| file_matcher.is_source_file_relative(path));
 
         #[allow(clippy::cast_possible_truncation)] // File count won't exceed u32::MAX
         let total_files = (files.len() + translation_files.len()) as u32;
@@ -295,6 +326,23 @@ impl WorkspaceIndexer {
         .await;
 
         result.ok().flatten()
+    }
+
+    /// Walk up from a file path to find the nearest directory containing `package.json`.
+    ///
+    /// Stops at `workspace_root` (inclusive). Returns `None` if no `package.json` found.
+    fn find_nearest_project_root(file: &Path, workspace_root: &Path) -> Option<PathBuf> {
+        let mut dir = file.parent();
+        while let Some(d) = dir {
+            if d.join("package.json").exists() {
+                return Some(d.to_path_buf());
+            }
+            if d == workspace_root {
+                break;
+            }
+            dir = d.parent();
+        }
+        None
     }
 
     /// Walk workspace and return files matching the filter.
@@ -679,5 +727,93 @@ mod tests {
         let result = indexer.update_file(&db, &uri, content, ".");
 
         assert!(result.is_some());
+    }
+
+    // --- find_nearest_project_root tests ---
+
+    #[rstest]
+    fn test_find_nearest_project_root_in_subdir() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // root/
+        //   repo-1/
+        //     package.json
+        //     src/locales/en.json
+        fs::create_dir_all(temp_dir.path().join("repo-1/src/locales")).unwrap();
+        fs::write(temp_dir.path().join("repo-1/package.json"), "{}").unwrap();
+        let translation = temp_dir.path().join("repo-1/src/locales/en.json");
+        fs::write(&translation, "{}").unwrap();
+
+        let result = WorkspaceIndexer::find_nearest_project_root(&translation, temp_dir.path());
+
+        assert_eq!(result, Some(temp_dir.path().join("repo-1")));
+    }
+
+    #[rstest]
+    fn test_find_nearest_project_root_at_workspace_root() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // my-app/
+        //   package.json
+        //   src/locales/en.json
+        fs::create_dir_all(temp_dir.path().join("src/locales")).unwrap();
+        fs::write(temp_dir.path().join("package.json"), "{}").unwrap();
+        let translation = temp_dir.path().join("src/locales/en.json");
+        fs::write(&translation, "{}").unwrap();
+
+        let result = WorkspaceIndexer::find_nearest_project_root(&translation, temp_dir.path());
+
+        assert_eq!(result, Some(temp_dir.path().to_path_buf()));
+    }
+
+    #[rstest]
+    fn test_find_nearest_project_root_no_package_json() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // root/
+        //   src/locales/en.json    (no package.json anywhere)
+        fs::create_dir_all(temp_dir.path().join("src/locales")).unwrap();
+        let translation = temp_dir.path().join("src/locales/en.json");
+        fs::write(&translation, "{}").unwrap();
+
+        let result = WorkspaceIndexer::find_nearest_project_root(&translation, temp_dir.path());
+
+        assert_eq!(result, None);
+    }
+
+    #[rstest]
+    fn test_find_nearest_project_root_does_not_go_above_workspace() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // parent/              ← package.json here (should NOT be found)
+        //   workspace/         ← workspace root (no package.json)
+        //     locales/en.json
+        fs::create_dir_all(temp_dir.path().join("workspace/locales")).unwrap();
+        fs::write(temp_dir.path().join("package.json"), "{}").unwrap();
+        let workspace_root = temp_dir.path().join("workspace");
+        let translation = workspace_root.join("locales/en.json");
+        fs::write(&translation, "{}").unwrap();
+
+        let result = WorkspaceIndexer::find_nearest_project_root(&translation, &workspace_root);
+
+        // Should not find the parent's package.json
+        assert_eq!(result, None);
+    }
+
+    #[rstest]
+    fn test_new_workspace_active_default() {
+        let indexer = WorkspaceIndexer::new();
+
+        assert!(!indexer.is_workspace_active());
+    }
+
+    #[rstest]
+    fn test_reset_indexing_state_clears_workspace_active() {
+        let indexer = WorkspaceIndexer::new();
+        indexer.workspace_active.store(true, Ordering::Release);
+
+        indexer.reset_indexing_state();
+
+        assert!(!indexer.is_workspace_active());
     }
 }

@@ -432,6 +432,14 @@ impl Backend {
             return;
         };
 
+        if !self.workspace_indexer.is_workspace_active() {
+            tracing::debug!(
+                "Skipping file: workspace is not active for i18n: {}",
+                file_path.display()
+            );
+            return;
+        }
+
         if !self.is_source_file(&file_path).await {
             tracing::debug!(
                 "Skipping SourceFile creation for file not matching includePatterns: {}",
