@@ -1,4 +1,11 @@
 
+## [0.5.0] - 2026-02-14
+
+### Bug Fixes
+
+- Skip workspace activation when launched from monorepo root
+
+
 ## [0.4.4] - 2026-02-14
 
 ### Documentation
