@@ -15,6 +15,7 @@ pub struct ConfigManager {
     current_settings: I18nSettings,
     workspace_root: Option<PathBuf>,
     file_matcher: Option<FileMatcher>,
+    has_config_file: bool,
 }
 
 impl Default for ConfigManager {
@@ -26,20 +27,28 @@ impl Default for ConfigManager {
 impl ConfigManager {
     #[must_use]
     pub fn new() -> Self {
-        Self { current_settings: I18nSettings::default(), workspace_root: None, file_matcher: None }
+        Self {
+            current_settings: I18nSettings::default(),
+            workspace_root: None,
+            file_matcher: None,
+            has_config_file: false,
+        }
     }
 
     /// Loads settings from the workspace root.
     pub fn load_settings(&mut self, workspace_root: Option<PathBuf>) -> Result<(), ConfigError> {
         tracing::debug!("Loading settings for workspace: {:?}", workspace_root);
 
-        let settings = if let Some(root) = &workspace_root {
-            loader::load_from_workspace(root)?.map_or_else(I18nSettings::default, |ws| {
-                tracing::debug!("Loaded workspace settings: {:?}", ws);
-                ws
-            })
+        let (settings, has_config_file) = if let Some(root) = &workspace_root {
+            loader::load_from_workspace(root)?.map_or_else(
+                || (I18nSettings::default(), false),
+                |ws| {
+                    tracing::debug!("Loaded workspace settings: {:?}", ws);
+                    (ws, true)
+                },
+            )
         } else {
-            I18nSettings::default()
+            (I18nSettings::default(), false)
         };
 
         settings.validate().map_err(ConfigError::ValidationErrors)?;
@@ -57,7 +66,12 @@ impl ConfigManager {
         self.current_settings = settings;
         self.workspace_root = workspace_root;
         self.file_matcher = file_matcher;
-        tracing::debug!("Settings loaded successfully: {:?}", self.current_settings);
+        self.has_config_file = has_config_file;
+        tracing::debug!(
+            "Settings loaded successfully (config_file={}): {:?}",
+            has_config_file,
+            self.current_settings
+        );
 
         Ok(())
     }
@@ -68,6 +82,7 @@ impl ConfigManager {
         new_settings.validate().map_err(ConfigError::ValidationErrors)?;
 
         self.current_settings = new_settings;
+        self.has_config_file = false;
         tracing::debug!("Settings updated successfully");
 
         Ok(())
@@ -84,6 +99,11 @@ impl ConfigManager {
     }
 
     #[must_use]
+    pub const fn has_config_file(&self) -> bool {
+        self.has_config_file
+    }
+
+    #[must_use]
     pub const fn file_matcher(&self) -> Option<&FileMatcher> {
         self.file_matcher.as_ref()
     }
@@ -94,6 +114,7 @@ impl ConfigManager {
 mod tests {
     use std::fs;
 
+    use googletest::prelude::*;
     use rstest::rstest;
     use tempfile::TempDir;
 
@@ -164,5 +185,37 @@ mod tests {
         let result = manager.update_settings(new_settings);
 
         assert!(result.is_err());
+    }
+
+    #[rstest]
+    fn test_has_config_file_false_by_default() {
+        let manager = ConfigManager::new();
+
+        assert_that!(manager.has_config_file(), eq(false));
+    }
+
+    #[rstest]
+    fn test_update_settings_clears_has_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join(".js-i18n.json"), r#"{"keySeparator": "-"}"#).unwrap();
+
+        let mut manager = ConfigManager::new();
+        manager.load_settings(Some(temp_dir.path().to_path_buf())).unwrap();
+        assert_that!(manager.has_config_file(), eq(true));
+
+        // Simulates config file deletion: reset to defaults
+        manager.update_settings(I18nSettings::default()).unwrap();
+        assert_that!(manager.has_config_file(), eq(false));
+    }
+
+    #[rstest]
+    fn test_has_config_file_true_when_config_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join(".js-i18n.json"), r#"{"keySeparator": "-"}"#).unwrap();
+
+        let mut manager = ConfigManager::new();
+        manager.load_settings(Some(temp_dir.path().to_path_buf())).unwrap();
+
+        assert_that!(manager.has_config_file(), eq(true));
     }
 }

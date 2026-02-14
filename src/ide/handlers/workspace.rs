@@ -14,6 +14,17 @@ pub async fn handle_did_change_configuration(
 ) {
     tracing::debug!(settings = %params.settings, "didChangeConfiguration received");
 
+    // Config file is the single source of truth when it exists
+    {
+        let config_manager = backend.config_manager.lock().await;
+        if config_manager.has_config_file() {
+            tracing::debug!(
+                "Ignoring didChangeConfiguration: .js-i18n.json config file is present"
+            );
+            return;
+        }
+    }
+
     let new_settings = serde_json::from_value::<crate::config::I18nSettings>(
         params.settings.clone(),
     )
