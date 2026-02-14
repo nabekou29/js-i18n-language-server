@@ -1,4 +1,17 @@
 
+## [0.4.3] - 2026-02-14
+
+### Bug Fixes
+
+- Prevent Salsa boxcar panic from stale IDs after reset_state
+- Include namespace-unresolved usages in references and rename
+- Skip non-file URI schemes in execute command handlers
+
+### Refactor
+
+- Change default log level to info and add startup log
+
+
 ## [0.4.2] - 2026-02-12
 
 ### Bug Fixes
