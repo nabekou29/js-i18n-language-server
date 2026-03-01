@@ -28,6 +28,25 @@ playground/
 │   ├── useTranslations.tsx         # useTranslations の様々なパターン
 │   └── richText.tsx                # t.rich, t.markup, t.raw のパターン
 │
+├── svelte-i18n/                    # svelte-i18n のパターン (実動 Vite プロジェクト)
+│   ├── .js-i18n.json               # LSP 設定
+│   ├── package.json                # svelte, svelte-i18n, vite
+│   ├── vite.config.js
+│   ├── index.html
+│   ├── locales/
+│   │   ├── en.json
+│   │   └── ja.json
+│   └── src/
+│       ├── i18n.js                 # svelte-i18n 初期化
+│       ├── main.js                 # アプリ起動
+│       ├── App.svelte              # ルートコンポーネント
+│       ├── BasicUsage.svelte       # $_, $t, $format 基本パターン
+│       ├── FormatVariants.svelte   # $format, $json, $date, $number, $time
+│       ├── ObjectForm.svelte       # $_({ id, values, locale, default })
+│       ├── Interpolation.svelte    # 補間、plural、select (ICU MessageFormat)
+│       ├── NestedKeys.svelte       # ドット記法のネストキー
+│       └── ReactiveUsage.svelte    # $derived, 条件分岐, ループ
+│
 └── react-i18next-custom-settings/  # カスタム設定のパターン
     ├── .js-i18n.json               # keySeparator: "_" の設定
     ├── locales/
@@ -73,6 +92,29 @@ playground/
 | `t.rich("key", { tag: ... })` | richText.tsx | リッチテキスト |
 | `t.markup("key", { tag: ... })` | richText.tsx | マークアップ |
 | `t.raw("key")` | richText.tsx | 生テキスト |
+
+### svelte-i18n
+
+**注**: このプロジェクトは実際に動作する Vite + Svelte アプリです。
+`cd playground/svelte-i18n && npm install && npm run dev` で起動できます。
+
+| パターン | ファイル | 説明 |
+|----------|----------|------|
+| `$_('key')` | BasicUsage.svelte | 基本的な翻訳 (テンプレート & script) |
+| `$t('key')` | BasicUsage.svelte | `$_` のエイリアス |
+| `$format('key')` | FormatVariants.svelte | 明示的フォーマッター名 |
+| `$json('key')` | FormatVariants.svelte | JSON 生値の取得 |
+| `$date(date, opts)` | FormatVariants.svelte | 日付フォーマット (キーなし) |
+| `$number(num, opts)` | FormatVariants.svelte | 数値フォーマット (キーなし) |
+| `$time(date, opts)` | FormatVariants.svelte | 時刻フォーマット (キーなし) |
+| `$_({ id: 'key', ... })` | ObjectForm.svelte | オブジェクト形式 |
+| `$_('key', { values })` | Interpolation.svelte | 変数埋め込み |
+| `{count, plural, ...}` | Interpolation.svelte | ICU 複数形 (翻訳ファイル内) |
+| `{gender, select, ...}` | Interpolation.svelte | ICU 選択 (翻訳ファイル内) |
+| `$_('a.b.c')` | NestedKeys.svelte | ネストキー |
+| `$derived($_('key'))` | ReactiveUsage.svelte | リアクティブ宣言 |
+| `{#if}{$_('key')}{/if}` | ReactiveUsage.svelte | 条件分岐内での使用 |
+| `{#each}{$_('key')}{/each}` | ReactiveUsage.svelte | ループ内での使用 |
 
 ### カスタム設定 (react-i18next-custom-settings)
 

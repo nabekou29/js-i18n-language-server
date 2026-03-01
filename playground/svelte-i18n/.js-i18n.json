@@ -1,0 +1,6 @@
+{
+  "includePatterns": ["**/*.{js,svelte}"],
+  "translationFiles": {
+    "includePatterns": ["locales/**/*.json"]
+  }
+}
