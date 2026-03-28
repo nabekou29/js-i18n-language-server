@@ -11,6 +11,7 @@ struct QueryFile {
     name: &'static str,
 }
 
+// JS and TSX share the same query text (includes JSX patterns)
 const JS_QUERIES: &[QueryFile] = &[
     QueryFile {
         content: include_str!("../../../queries/javascript/react-i18next.scm"),
@@ -23,6 +24,7 @@ const JS_QUERIES: &[QueryFile] = &[
     },
 ];
 
+// TS queries omit JSX patterns
 const TS_QUERIES: &[QueryFile] = &[
     QueryFile {
         content: include_str!("../../../queries/typescript/react-i18next.scm"),
@@ -35,30 +37,31 @@ const TS_QUERIES: &[QueryFile] = &[
     },
 ];
 
-const TSX_QUERIES: &[QueryFile] = &[
-    QueryFile {
-        content: include_str!("../../../queries/tsx/react-i18next.scm"),
-        name: "react-i18next",
-    },
-    QueryFile { content: include_str!("../../../queries/tsx/i18next.scm"), name: "i18next" },
-    QueryFile { content: include_str!("../../../queries/tsx/next-intl.scm"), name: "next-intl" },
-];
+const SVELTE_I18N_QUERIES: &[QueryFile] =
+    &[QueryFile { content: include_str!("../../../queries/svelte-i18n.scm"), name: "svelte-i18n" }];
 
 static JS_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
 static TS_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
 static TSX_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
+static SVELTE_QUERY_CACHE: OnceLock<Vec<Query>> = OnceLock::new();
 
 fn parse_queries(language: ProgrammingLanguage) -> Vec<Query> {
     let tree_sitter_lang = language.tree_sitter_language();
 
-    let query_files = match language {
-        ProgrammingLanguage::JavaScript | ProgrammingLanguage::Jsx => JS_QUERIES,
-        ProgrammingLanguage::TypeScript => TS_QUERIES,
-        ProgrammingLanguage::Tsx => TSX_QUERIES,
+    let base: &[QueryFile] = match language {
+        ProgrammingLanguage::JavaScript | ProgrammingLanguage::Jsx | ProgrammingLanguage::Tsx => {
+            JS_QUERIES
+        }
+        ProgrammingLanguage::TypeScript | ProgrammingLanguage::Svelte => TS_QUERIES,
     };
 
-    query_files
-        .iter()
+    let extra: &[QueryFile] = match language {
+        ProgrammingLanguage::Svelte => SVELTE_I18N_QUERIES,
+        _ => &[],
+    };
+
+    base.iter()
+        .chain(extra)
         .filter_map(|qf| {
             Query::new(&tree_sitter_lang, qf.content)
                 .map_err(|e| tracing::error!("Failed to parse {} query: {e:?}", qf.name))
@@ -79,6 +82,9 @@ pub fn load_queries(language: ProgrammingLanguage) -> &'static [Query] {
         }
         ProgrammingLanguage::Tsx => {
             TSX_QUERY_CACHE.get_or_init(|| parse_queries(ProgrammingLanguage::Tsx))
+        }
+        ProgrammingLanguage::Svelte => {
+            SVELTE_QUERY_CACHE.get_or_init(|| parse_queries(ProgrammingLanguage::Svelte))
         }
     }
 }

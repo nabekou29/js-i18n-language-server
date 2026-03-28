@@ -20,6 +20,7 @@ pub enum ProgrammingLanguage {
     Jsx,
     TypeScript,
     Tsx,
+    Svelte,
 }
 
 impl ProgrammingLanguage {
@@ -32,6 +33,7 @@ impl ProgrammingLanguage {
             Some("ts") => Some(Self::TypeScript),
             Some("jsx") => Some(Self::Jsx),
             Some("js") => Some(Self::JavaScript),
+            Some("svelte") => Some(Self::Svelte),
             _ => None,
         }
     }
@@ -40,7 +42,7 @@ impl ProgrammingLanguage {
     pub fn tree_sitter_language(&self) -> tree_sitter::Language {
         match self {
             Self::JavaScript | Self::Jsx => tree_sitter_javascript::LANGUAGE.into(),
-            Self::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            Self::TypeScript | Self::Svelte => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
         }
     }
@@ -58,6 +60,7 @@ mod tests {
     #[case::ts("file.ts", Some(ProgrammingLanguage::TypeScript))]
     #[case::jsx("file.jsx", Some(ProgrammingLanguage::Jsx))]
     #[case::js("file.js", Some(ProgrammingLanguage::JavaScript))]
+    #[case::svelte("file.svelte", Some(ProgrammingLanguage::Svelte))]
     #[case::multiple_dots("file.config.ts", Some(ProgrammingLanguage::TypeScript))]
     #[case::json("file.json", None)]
     #[case::no_ext("file", None)]
