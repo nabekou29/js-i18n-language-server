@@ -1,0 +1,75 @@
+{
+  "common": {
+    "hello": "Hello",
+    "goodbye": "Goodbye",
+    "welcome": "Welcome, {name}!",
+    "buttons": {
+      "save": "Save",
+      "cancel": "Cancel",
+      "delete": "Delete"
+    }
+  },
+  "home": {
+    "title": "Home Page",
+    "description": "Welcome to our website",
+    "hero": {
+      "heading": "Build amazing apps",
+      "subheading": "with svelte-i18n"
+    }
+  },
+  "items": {
+    "count": "{count, plural, =0 {No items} one {{count} item} other {{count} items}}",
+    "selected": "{count, plural, =0 {Nothing selected} one {{count} item selected} other {{count} items selected}}"
+  },
+  "user": {
+    "greeting": "{gender, select, male {Mr. {name}} female {Ms. {name}} other {{name}}}",
+    "role": "{role, select, admin {Administrator} editor {Editor} other {Viewer}}"
+  },
+  "nested": {
+    "deep": {
+      "key": "Deeply nested value",
+      "another": "Another deep value"
+    },
+    "level1": {
+      "level2": {
+        "level3": "Three levels deep"
+      }
+    }
+  },
+  "format": {
+    "example": "This is a formatted message"
+  },
+  "json_data": {
+    "colors": ["Red", "Green", "Blue"],
+    "config": {
+      "theme": "light",
+      "version": "1.0"
+    }
+  },
+  "reactive": {
+    "counter": "Count: {count}",
+    "status": "{online, select, true {Online} other {Offline}}",
+    "time": "Current time: {time}"
+  },
+  "conditions": {
+    "logged_in": "Welcome back, {name}!",
+    "logged_out": "Please log in",
+    "admin": "Admin Panel",
+    "user": "User Dashboard"
+  },
+  "loop": {
+    "fruit": "{name}"
+  },
+  "app": {
+    "title": "svelte-i18n Playground",
+    "language": "Language",
+    "section": {
+      "basic": "Basic Usage",
+      "format": "Format Variants",
+      "object": "Object Form",
+      "interpolation": "Interpolation & ICU",
+      "nested": "Nested Keys",
+      "reactive": "Reactive Usage"
+    }
+  }
+}

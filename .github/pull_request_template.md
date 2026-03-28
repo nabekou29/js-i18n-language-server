@@ -1,0 +1,21 @@
+## Summary
+
+<!-- What does this PR do and why? Focus on the "why" — reviewers can see the diff. -->
+
+## How to test
+
+<!-- Steps for reviewers to verify the change. Remove this section for trivial changes. -->
+
+## Related issues
+
+<!-- Link related issues: "Closes #123" or "Relates to #456". Remove if none. -->
+
+## Checklist
+
+<!-- Remove items that don't apply. -->
+
+- [ ] Related issues are linked above
+- [ ] No new dependencies without justification
+- [ ] Breaking changes to config are documented
+- [ ] Documentation updated (`README.md`, `docs/`)
+- [ ] Tests added/updated for new behavior

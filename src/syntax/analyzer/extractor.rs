@@ -43,8 +43,8 @@ fn extract_function_name(node: Node<'_>, source_bytes: &[u8]) -> Option<String> 
     }
 }
 
-/// Known global translation functions (e.g., `i18next.t`, `i18n.t`)
-const KNOWN_GLOBAL_TRANS_FNS: &[&str] = &["i18next.t", "i18n.t"];
+/// Known global translation functions (e.g., `i18next.t`, `i18n.t`, `$_`)
+const KNOWN_GLOBAL_TRANS_FNS: &[&str] = &["i18next.t", "i18n.t", "$_", "$t", "$format", "$json"];
 
 /// Allowed method names for translation function method calls (e.g., `t.rich()`)
 const ALLOWED_TRANS_FN_METHODS: &[&str] = &["rich", "markup", "raw"];
@@ -549,6 +549,29 @@ mod tests {
             .iter()
             .map(|(name, content)| {
                 Query::new(&tsx_lang, content)
+                    .unwrap_or_else(|e| panic!("Failed to parse {name} query: {e}"))
+            })
+            .collect()
+    }
+
+    #[fixture]
+    fn ts_lang() -> Language {
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()
+    }
+
+    #[fixture]
+    fn svelte_queries(ts_lang: Language) -> Vec<Query> {
+        let query_files = [
+            ("react-i18next", include_str!("../../../queries/typescript/react-i18next.scm")),
+            ("i18next", include_str!("../../../queries/typescript/i18next.scm")),
+            ("next-intl", include_str!("../../../queries/typescript/next-intl.scm")),
+            ("svelte-i18n", include_str!("../../../queries/svelte-i18n.scm")),
+        ];
+
+        query_files
+            .iter()
+            .map(|(name, content)| {
+                Query::new(&ts_lang, content)
                     .unwrap_or_else(|e| panic!("Failed to parse {name} query: {e}"))
             })
             .collect()
@@ -1382,6 +1405,145 @@ function Component() {
                     field!(TransFnCall.key, eq("key5")),
                     field!(TransFnCall.namespace, some(eq("common")))
                 ]
+            ]
+        );
+    }
+
+    // --- svelte-i18n: global store functions ---
+
+    #[rstest]
+    fn svelte_i18n_dollar_underscore(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"$_("common.hello")"#;
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("common.hello")),
+                field!(TransFnCall.namespace, none()),
+                field!(TransFnCall.key_prefix, none())
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn svelte_i18n_dollar_t(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"$t("common.goodbye")"#;
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("common.goodbye"))]]);
+    }
+
+    #[rstest]
+    fn svelte_i18n_dollar_format(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"$format("format.example")"#;
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("format.example"))]]);
+    }
+
+    #[rstest]
+    fn svelte_i18n_dollar_json(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"$json("json_data.colors")"#;
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("json_data.colors"))]]);
+    }
+
+    #[rstest]
+    fn svelte_i18n_multiple_calls(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            $_("key1");
+            $t("key2");
+            $format("key3");
+        "#;
+        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![
+                all![field!(TransFnCall.key, eq("key1"))],
+                all![field!(TransFnCall.key, eq("key2"))],
+                all![field!(TransFnCall.key, eq("key3"))]
+            ]
+        );
+    }
+
+    // --- svelte-i18n: object form ---
+
+    #[rstest]
+    fn svelte_i18n_object_form_basic(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"$_({ id: "common.hello" })"#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("common.hello"))]]);
+    }
+
+    #[rstest]
+    fn svelte_i18n_object_form_with_values(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"$_({ id: "common.welcome", values: { name: "Alice" } })"#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("common.welcome"))]]);
+    }
+
+    #[rstest]
+    fn svelte_i18n_object_form_with_locale(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"$_({ id: "common.hello", locale: "en" })"#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("common.hello"))]]);
+    }
+
+    #[rstest]
+    fn svelte_i18n_object_form_dollar_t(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"$t({ id: "home.title" })"#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("home.title"))]]);
+    }
+
+    // --- svelte-i18n: unwrapFunctionStore ---
+
+    #[rstest]
+    fn svelte_i18n_unwrap_function_store(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"
+            const $format = unwrapFunctionStore(format);
+            $format("some.key");
+        "#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("some.key"))]]);
+    }
+
+    #[rstest]
+    fn svelte_i18n_unwrap_custom_name(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"
+            const translate = unwrapFunctionStore(_);
+            translate("hello.world");
+        "#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("hello.world"))]]);
+    }
+
+    // --- svelte-i18n: defineMessages ---
+
+    #[rstest]
+    fn svelte_i18n_define_messages(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"
+            const messages = defineMessages({
+                greeting: { id: "greeting" },
+                farewell: { id: "farewell" },
+            })
+        "#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![
+                all![field!(TransFnCall.key, eq("greeting"))],
+                all![field!(TransFnCall.key, eq("farewell"))]
             ]
         );
     }

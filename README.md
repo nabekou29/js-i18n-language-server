@@ -7,7 +7,7 @@
 
 Language Server for JavaScript/TypeScript i18n libraries.
 
-Provides IDE features (completion, hover, diagnostics, etc.) for translation keys in i18next, react-i18next, and next-intl projects.
+Provides IDE features (completion, hover, diagnostics, etc.) for translation keys in i18next, react-i18next, next-intl, and svelte-i18n projects.
 
 ## Editor Extensions
 

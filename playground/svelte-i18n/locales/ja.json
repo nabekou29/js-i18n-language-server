@@ -1,0 +1,75 @@
+{
+  "common": {
+    "hello": "こんにちは",
+    "goodbye": "さようなら",
+    "welcome": "ようこそ、{name}さん！",
+    "buttons": {
+      "save": "保存",
+      "cancel": "キャンセル",
+      "delete": "削除"
+    }
+  },
+  "home": {
+    "title": "ホームページ",
+    "description": "ウェブサイトへようこそ",
+    "hero": {
+      "heading": "素晴らしいアプリを構築",
+      "subheading": "svelte-i18n で"
+    }
+  },
+  "items": {
+    "count": "{count, plural, =0 {アイテムなし} other {{count}個のアイテム}}",
+    "selected": "{count, plural, =0 {未選択} other {{count}個選択中}}"
+  },
+  "user": {
+    "greeting": "{gender, select, male {{name}氏} female {{name}さん} other {{name}}}",
+    "role": "{role, select, admin {管理者} editor {編集者} other {閲覧者}}"
+  },
+  "nested": {
+    "deep": {
+      "key": "深くネストされた値",
+      "another": "もう一つの深い値"
+    },
+    "level1": {
+      "level2": {
+        "level3": "3階層の深さ"
+      }
+    }
+  },
+  "format": {
+    "example": "これはフォーマットされたメッセージです"
+  },
+  "json_data": {
+    "colors": ["赤", "緑", "青"],
+    "config": {
+      "theme": "ライト",
+      "version": "1.0"
+    }
+  },
+  "reactive": {
+    "counter": "カウント: {count}",
+    "status": "{online, select, true {オンライン} other {オフライン}}",
+    "time": "現在時刻: {time}"
+  },
+  "conditions": {
+    "logged_in": "おかえりなさい、{name}さん！",
+    "logged_out": "ログインしてください",
+    "admin": "管理パネル",
+    "user": "ユーザーダッシュボード"
+  },
+  "loop": {
+    "fruit": "{name}"
+  },
+  "app": {
+    "title": "svelte-i18n プレイグラウンド",
+    "language": "言語",
+    "section": {
+      "basic": "基本的な使い方",
+      "format": "フォーマットバリアント",
+      "object": "オブジェクト形式",
+      "interpolation": "補間 & ICU",
+      "nested": "ネストキー",
+      "reactive": "リアクティブ使用"
+    }
+  }
+}

@@ -13,7 +13,7 @@ Configuration can be provided via:
     "includePatterns": ["**/{locales,messages}/**/*.json"],
     "excludePatterns": []
   },
-  "includePatterns": ["**/*.{js,jsx,ts,tsx}"],
+  "includePatterns": ["**/*.{js,jsx,ts,tsx,svelte}"],
   "excludePatterns": ["node_modules/**"],
   "keySeparator": ".",
   "namespaceSeparator": null,
