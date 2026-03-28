@@ -115,6 +115,8 @@ playground/
 | `$derived($_('key'))` | ReactiveUsage.svelte | リアクティブ宣言 |
 | `{#if}{$_('key')}{/if}` | ReactiveUsage.svelte | 条件分岐内での使用 |
 | `{#each}{$_('key')}{/each}` | ReactiveUsage.svelte | ループ内での使用 |
+| `unwrapFunctionStore(store)` | advanced.js | コンポーネント外での翻訳関数 |
+| `defineMessages({...})` | advanced.js | 翻訳キーの静的定義 |
 
 ### カスタム設定 (react-i18next-custom-settings)
 
