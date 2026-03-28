@@ -17,5 +17,5 @@
 - [ ] Related issues are linked above
 - [ ] No new dependencies without justification
 - [ ] Breaking changes to config are documented
-- [ ] Documentation updated (`README.md`, `README.ja.md`)
+- [ ] Documentation updated (`README.md`, `docs/`)
 - [ ] Tests added/updated for new behavior
