@@ -1502,4 +1502,49 @@ function Component() {
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("home.title"))]]);
     }
+
+    // --- svelte-i18n: unwrapFunctionStore ---
+
+    #[rstest]
+    fn svelte_i18n_unwrap_function_store(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"
+            const $format = unwrapFunctionStore(format);
+            $format("some.key");
+        "#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("some.key"))]]);
+    }
+
+    #[rstest]
+    fn svelte_i18n_unwrap_custom_name(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"
+            const translate = unwrapFunctionStore(_);
+            translate("hello.world");
+        "#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("hello.world"))]]);
+    }
+
+    // --- svelte-i18n: defineMessages ---
+
+    #[rstest]
+    fn svelte_i18n_define_messages(svelte_queries: Vec<Query>, ts_lang: Language) {
+        let code = r#"
+            const messages = defineMessages({
+                greeting: { id: "greeting" },
+                farewell: { id: "farewell" },
+            })
+        "#;
+        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![
+                all![field!(TransFnCall.key, eq("greeting"))],
+                all![field!(TransFnCall.key, eq("farewell"))]
+            ]
+        );
+    }
 }
