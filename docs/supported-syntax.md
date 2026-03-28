@@ -5,6 +5,7 @@
 - [i18next](https://www.i18next.com/)
 - [react-i18next](https://react.i18next.com/)
 - [next-intl](https://next-intl-docs.vercel.app/)
+- [svelte-i18n](https://github.com/kaisermann/svelte-i18n)
 
 ## Translation Function Calls
 
@@ -98,11 +99,60 @@ t("name")  // → "form.fields.name"
 </Translation>
 ```
 
+## svelte-i18n
+
+Svelte store-based translation functions. Works in `.svelte` files (both `<script>` and template) and plain `.js`/`.ts` files.
+
+```svelte
+<script>
+  import { _, t, format, json } from 'svelte-i18n'
+
+  // String form
+  $_('key')
+  $t('key')
+  $format('key')
+  $json('key')
+
+  // With values
+  $_('key', { values: { name: 'World' } })
+
+  // Object form
+  $_({ id: 'key' })
+  $_({ id: 'key', values: { name: 'Alice' }, locale: 'en', default: 'Fallback' })
+</script>
+
+<!-- Template expressions -->
+<p>{$_('key')}</p>
+<p>{condition ? $_('a') : $_('b')}</p>
+<button onclick={() => alert($_('msg'))}>Click</button>
+{@const label = $_('key')}
+```
+
+### Non-component usage (plain JS/TS files)
+
+```typescript
+import { _, format, unwrapFunctionStore, defineMessages } from 'svelte-i18n'
+
+// unwrapFunctionStore: use translation functions outside Svelte components
+const $format = unwrapFunctionStore(format)
+$format('key')
+
+const translate = unwrapFunctionStore(_)
+translate('key')
+
+// defineMessages: statically define translation keys
+const messages = defineMessages({
+  greeting: { id: 'greeting' },
+  farewell: { id: 'farewell' },
+})
+```
+
 ## File Types
 
-| Extension | tree-sitter Parser |
-|-----------|-------------------|
-| `.js` | JavaScript |
-| `.jsx` | JavaScript (with JSX) |
-| `.ts` | TypeScript |
-| `.tsx` | TSX |
+| Extension | tree-sitter Parser | Notes |
+|-----------|-------------------|-------|
+| `.js` | JavaScript | |
+| `.jsx` | JavaScript (with JSX) | |
+| `.ts` | TypeScript | |
+| `.tsx` | TSX | |
+| `.svelte` | TypeScript (extracted) | `<script>` blocks and template expressions are extracted and parsed as TypeScript |
