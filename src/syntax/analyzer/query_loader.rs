@@ -55,8 +55,11 @@ fn parse_queries(language: ProgrammingLanguage) -> Vec<Query> {
         ProgrammingLanguage::TypeScript | ProgrammingLanguage::Svelte => TS_QUERIES,
     };
 
+    // svelte-i18n queries apply to JS/TS/Svelte (not JSX/TSX which are React-specific)
     let extra: &[QueryFile] = match language {
-        ProgrammingLanguage::Svelte => SVELTE_I18N_QUERIES,
+        ProgrammingLanguage::JavaScript
+        | ProgrammingLanguage::TypeScript
+        | ProgrammingLanguage::Svelte => SVELTE_I18N_QUERIES,
         _ => &[],
     };
 
