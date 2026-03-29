@@ -25,6 +25,12 @@ t("key", { interpolation: { escapeValue: false }, value: getData() })
 // Global calls
 i18n.t("key")
 i18next.t("key")
+
+// Selector API (i18next v25.4.0+)
+t(($) => $.key)
+t(($) => $.nested.key.path)
+t(($) => $.key, { count: 1 })
+t($ => $.key)  // Without parens
 ```
 
 ## Translation Function Acquisition
@@ -58,6 +64,7 @@ react-i18next JSX component patterns.
 <Trans i18nKey="key">Fallback content</Trans>
 <Trans i18nKey={"key"} />  // JSX expression supported
 <Trans i18nKey="key" t={customT} />  // Custom t function
+<Trans i18nKey={($) => $.key} />  // Selector API
 
 // Translation component (render props)
 <Translation>
@@ -97,6 +104,10 @@ t("name")  // → "form.fields.name"
 <Translation keyPrefix="form.fields">
   {(t) => t("name")}  {/* → "form.fields.name" */}
 </Translation>
+
+// Selector API with keyPrefix
+const { t } = useTranslation("ns", { keyPrefix: "form.fields" })
+t(($) => $.name)  // → "form.fields.name"
 ```
 
 ## svelte-i18n

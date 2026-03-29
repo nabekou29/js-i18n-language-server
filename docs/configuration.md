@@ -34,6 +34,11 @@ Configuration can be provided via:
   },
   "indexing": {
     "numThreads": null
+  },
+  "frameworks": {
+    "i18next": {
+      "preferSelector": false
+    }
   }
 }
 ```
@@ -188,6 +193,34 @@ Example:
 `number?` (default: 40% of CPU cores)
 
 Number of parallel threads for workspace indexing.
+
+---
+
+## frameworks
+
+Per-framework configuration.
+
+### frameworks.i18next.preferSelector
+
+`boolean` (default: `false`)
+
+When `true`, completions at empty arguments (`t(|)`) insert i18next [Selector API](https://www.locize.com/blog/i18next-typescript-selector-api/) format instead of string format.
+
+| Value | Completion result |
+|-------|-------------------|
+| `false` | `t("common.hello")` |
+| `true` | `t(($) => $.common.hello)` |
+
+Example:
+```json
+{
+  "frameworks": {
+    "i18next": {
+      "preferSelector": true
+    }
+  }
+}
+```
 
 ---
 

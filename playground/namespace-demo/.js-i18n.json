@@ -6,5 +6,10 @@
   "keySeparator": ".",
   "namespaceSeparator": ":",
   "defaultNamespace": "translation",
-  "primaryLanguages": ["en", "ja"]
+  "primaryLanguages": ["en", "ja"],
+  "frameworks": {
+    "i18next": {
+      "preferSelector": true
+    }
+  }
 }
