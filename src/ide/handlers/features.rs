@@ -152,6 +152,12 @@ pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Opti
             default_namespace.as_deref(),
         );
 
+        let plural_strategy =
+            crate::input::source::ProgrammingLanguage::from_uri(&file_path.to_string_lossy())
+                .map_or(crate::framework::PluralStrategy::SuffixBased, |lang| {
+                    crate::framework::FrameworkConfig::for_language(lang).plural_strategy
+                });
+
         let key = crate::interned::TransKey::new(&*db, key_part);
         crate::ide::hover::generate_hover_content(
             &*db,
@@ -160,6 +166,7 @@ pub async fn handle_hover(backend: &Backend, params: HoverParams) -> Result<Opti
             &key_separator,
             current_language.as_deref(),
             primary_languages.as_deref(),
+            plural_strategy,
         )
     };
 
