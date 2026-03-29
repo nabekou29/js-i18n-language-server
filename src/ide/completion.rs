@@ -203,30 +203,26 @@ pub fn generate_completions(
     completion_items
 }
 
-/// Extracts selector completion context from arrow function argument text.
+/// Extracts selector completion context from selector argument text.
 ///
-/// Parses text like `$ => $.common.hello` and returns body positions, param name, and partial key.
+/// Handles both full arrow function (`$ => $.common.hello`) and body-only (`$.common.hello`).
 #[allow(clippy::cast_possible_truncation)]
 fn extract_selector_context(
     arg_text: &str,
-    _arg_start_char: usize,
     arg_end_char: usize,
     arg_line: u32,
     cursor_char: usize,
     key_separator: &str,
-) -> Option<(Position, Position, String, String)> {
-    let arrow_pos = arg_text.find("=>")?;
-    let after_arrow = arg_text[arrow_pos + 2..].trim_start();
-    let body_start_char = arg_end_char - after_arrow.len();
+) -> (Position, Position, String, String) {
+    // Handle both `$ => $.key` (full arrow) and `$.key` (body only)
+    let body_text = arg_text.find("=>").map_or(arg_text, |pos| arg_text[pos + 2..].trim_start());
+    let body_start_char = arg_end_char - body_text.len();
 
-    let param_end = after_arrow.find(['.', '[']).unwrap_or(after_arrow.len());
-    let param_name = &after_arrow[..param_end];
+    let param_end = body_text.find(['.', '[']).unwrap_or(body_text.len());
+    let param_name = &body_text[..param_end];
 
-    let key_text_offset = if after_arrow.as_bytes().get(param_end) == Some(&b'.') {
-        param_end + 1
-    } else {
-        param_end
-    };
+    let key_text_offset =
+        if body_text.as_bytes().get(param_end) == Some(&b'.') { param_end + 1 } else { param_end };
 
     let key_start_char = body_start_char + key_text_offset;
 
@@ -245,7 +241,7 @@ fn extract_selector_context(
     let body_start = Position::new(arg_line, body_start_char as u32);
     let body_end = Position::new(arg_line, arg_end_char as u32);
 
-    Some((body_start, body_end, param_name.to_string(), partial_key))
+    (body_start, body_end, param_name.to_string(), partial_key)
 }
 
 /// Extracts completion context using tree-sitter.
@@ -304,17 +300,20 @@ pub fn extract_completion_context_tree_sitter(
 
         let arg_text = &arg_start_line[arg_start_char..arg_end_char];
 
-        // Selector API: t($ => $.common.hello) or t(($) => $.common.hello)
-        if arg_text.contains("=>")
-            && let Some((body_start, body_end, param_name, partial_key)) = extract_selector_context(
+        // Selector API: arrow function body like `$.common.hello` or full `$ => $.common.hello`
+        let is_selector_text = arg_text.contains("=>")
+            || (!arg_text.starts_with('"')
+                && !arg_text.starts_with('\'')
+                && !arg_text.starts_with('(')
+                && arg_text.find(['.', '[']).is_some());
+        if is_selector_text {
+            let (body_start, body_end, param_name, partial_key) = extract_selector_context(
                 arg_text,
-                arg_start_char,
                 arg_end_char,
                 arg_range.start.line,
                 character as usize,
                 key_separator,
-            )
-        {
+            );
             return Some(CompletionContext {
                 partial_key,
                 quote_context: QuoteContext::Selector { body_start, body_end, param_name },

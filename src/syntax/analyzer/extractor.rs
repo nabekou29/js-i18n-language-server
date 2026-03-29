@@ -607,9 +607,11 @@ fn parse_call_trans_fn_captures<'a>(
         let selector_key =
             extract_selector_key(selector_node, source_bytes, key_separator).unwrap_or_default();
 
-        // Extend the range past trailing accessor operators (`.` or `[`) that tree-sitter
-        // excludes from the arrow function node for incomplete expressions like `$ => $.common.`
-        let extended_range = extend_range_past_accessors(selector_node, source_bytes);
+        // Use the body node (e.g., `$.common.hello`) for the range instead of the full
+        // arrow function, so that go-to-definition and rename target only the key expression.
+        // Extend past trailing accessor operators for incomplete expressions like `$.common.`
+        let body_node = selector_node.child_by_field_name("body").unwrap_or(selector_node);
+        let extended_range = extend_range_past_accessors(body_node, source_bytes);
 
         return Ok(CallTransFnDetail {
             trans_fn_name: trans_fn_name.unwrap_or_else(|| "t".to_string()),
