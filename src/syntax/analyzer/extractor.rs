@@ -2103,4 +2103,81 @@ function Component() {
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("foo.bar"))]);
     }
+
+    #[rstest]
+    fn test_selector_api_subscript_string_index(queries: Vec<Query>, js_lang: Language) {
+        // $["key"] subscript with string index
+        let code = r#"
+            const { t } = useTranslation();
+            const msg = t($ => $["hello"]);
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_subscript_unknown_index(queries: Vec<Query>, js_lang: Language) {
+        // $[variable] — unsupported subscript type, should produce a call with partial key
+        let code = r"
+            const { t } = useTranslation();
+            const msg = t($ => $[someVar]);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        // extract_selector_key fails → unwrap_or_default → empty key
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq(""))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_tsx_parens(tsx_queries: Vec<Query>, tsx_lang: Language) {
+        // TSX with ($) — exercises required_parameter path in extract_arrow_param_name
+        let code = r"
+            const { t } = useTranslation();
+            const msg = t(($) => $.nested.key);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &tsx_lang, ProgrammingLanguage::Tsx, &tsx_queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("nested.key"))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_custom_key_separator(queries: Vec<Query>, js_lang: Language) {
+        // Non-dot key separator: member expression `.` is joined with `_`
+        let code = r"
+            const { t } = useTranslation();
+            const msg = t($ => $.common.hello);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, "_")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common_hello"))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_param_only(queries: Vec<Query>, js_lang: Language) {
+        // `$ => $` — just the parameter, no property access
+        let code = r"
+            const { t } = useTranslation();
+            const msg = t($ => $);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        // Empty key (root)
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq(""))]);
+    }
 }

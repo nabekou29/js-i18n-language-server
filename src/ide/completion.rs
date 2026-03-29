@@ -1382,4 +1382,162 @@ const msg = t(($) => $.common.hello);
             panic!("Expected TextEdit");
         }
     }
+
+    #[rstest]
+    fn generate_completions_selector_non_dot_separator() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "/test/en.json".to_string(),
+            HashMap::from([("common_hello".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let body_start = Position::new(1, 10);
+        let body_end = Position::new(1, 25);
+        let quote_context =
+            QuoteContext::Selector { body_start, body_end, param_name: "$".to_string() };
+
+        // key_separator="_" → insert_key is "common_hello", converted to "$.common.hello"
+        let items = generate_completions(
+            &db,
+            &translations,
+            &CompletionOptions {
+                partial_key: None,
+                quote_context: &quote_context,
+                key_prefix: None,
+                effective_language: None,
+                key_separator: "_",
+                prefer_selector: false,
+            },
+        );
+
+        assert_eq!(items.len(), 1);
+        if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert_eq!(edit.new_text, "$.common.hello");
+        } else {
+            panic!("Expected TextEdit");
+        }
+    }
+
+    #[rstest]
+    fn generate_completions_selector_empty_key() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "/test/en.json".to_string(),
+            HashMap::from([(String::new(), "Root".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let body_start = Position::new(1, 10);
+        let body_end = Position::new(1, 11);
+        let quote_context =
+            QuoteContext::Selector { body_start, body_end, param_name: "$".to_string() };
+
+        let items = generate_completions(
+            &db,
+            &translations,
+            &CompletionOptions {
+                partial_key: None,
+                quote_context: &quote_context,
+                key_prefix: None,
+                effective_language: None,
+                key_separator: ".",
+                prefer_selector: false,
+            },
+        );
+
+        assert_eq!(items.len(), 1);
+        if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            // Empty key → just the param name
+            assert_eq!(edit.new_text, "$");
+        } else {
+            panic!("Expected TextEdit");
+        }
+    }
+
+    #[rstest]
+    fn generate_completions_no_quotes_prefer_selector_non_dot_separator() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "/test/en.json".to_string(),
+            HashMap::from([("common_hello".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let position = Position::new(1, 5);
+        let quote_context = QuoteContext::NoQuotes { position };
+
+        // prefer_selector + non-dot separator → "common_hello" → "($) => $.common.hello"
+        let items = generate_completions(
+            &db,
+            &translations,
+            &CompletionOptions {
+                partial_key: None,
+                quote_context: &quote_context,
+                key_prefix: None,
+                effective_language: None,
+                key_separator: "_",
+                prefer_selector: true,
+            },
+        );
+
+        assert_eq!(items.len(), 1);
+        if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert_eq!(edit.new_text, "($) => $.common.hello");
+        } else {
+            panic!("Expected TextEdit");
+        }
+    }
+
+    #[rstest]
+    fn extract_completion_context_selector_body_only() {
+        // When arg_key_range is body-only (no `=>`), selector detection still works
+        let text = r"
+const { t } = useTranslation();
+const msg = t($ => $.common.hello);
+";
+        let language = ProgrammingLanguage::JavaScript;
+
+        // Cursor on `hello` (col 21 = 'h' of hello)
+        let result = extract_completion_context_tree_sitter(text, language, 2, 21, ".");
+
+        assert_that!(result.is_some(), eq(true));
+        let context = result.unwrap();
+        assert_that!(matches!(context.quote_context, QuoteContext::Selector { .. }), eq(true));
+    }
+
+    #[rstest]
+    fn extract_completion_context_selector_non_dot_separator() {
+        let text = r"
+const { t } = useTranslation();
+const msg = t($ => $.common.hello);
+";
+        let language = ProgrammingLanguage::JavaScript;
+
+        // With key_separator="_", member `.` maps to `_` in partial key
+        // Cursor at col 28 ('h' of hello), partial = "common_" (member `.` → separator `_`)
+        let result = extract_completion_context_tree_sitter(text, language, 2, 28, "_");
+
+        assert_that!(result.is_some(), eq(true));
+        let context = result.unwrap();
+        assert_that!(context.partial_key, eq("common_"));
+    }
 }
