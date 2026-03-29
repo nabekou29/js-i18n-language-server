@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod db;
+pub mod framework;
 pub mod ide;
 pub mod indexer;
 pub mod input;

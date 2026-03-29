@@ -7,6 +7,7 @@ use serde::{
 use tower_lsp::lsp_types::Range;
 
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::namespace::{
     filter_by_namespace,
     resolve_usage_namespace,
@@ -34,6 +35,8 @@ pub fn get_translation_decorations(
     namespace_separator: Option<&str>,
     default_namespace: Option<&str>,
 ) -> Vec<TranslationDecoration> {
+    let plural_strategy =
+        crate::framework::FrameworkConfig::for_language(source_file.language(db)).plural_strategy;
     let key_usages = crate::syntax::analyze_source(db, source_file, key_separator.to_string());
 
     let mut decorations = Vec::new();
@@ -46,7 +49,7 @@ pub fn get_translation_decorations(
             resolve_usage_namespace(db, usage, namespace_separator, default_namespace);
         let filtered = filter_by_namespace(db, translations, resolved_ns.as_deref());
 
-        let value = get_translation_value(db, &filtered, &key_part, language);
+        let value = get_translation_value(db, &filtered, &key_part, language, plural_strategy);
 
         if let Some(value) = value {
             decorations.push(TranslationDecoration { range, key: full_key_text.clone(), value });
@@ -61,6 +64,7 @@ fn get_translation_value(
     translations: &[&Translation],
     key_text: &str,
     language: Option<&str>,
+    plural_strategy: PluralStrategy,
 ) -> Option<String> {
     translations.iter().filter(|t| language.is_none_or(|lang| t.language(db) == lang)).find_map(
         |t| {
@@ -71,7 +75,7 @@ fn get_translation_value(
             }
 
             // Plural fallback: prefer _other variant, then first available
-            let variants = find_plural_variants(key_text, keys);
+            let variants = find_plural_variants(key_text, keys, plural_strategy);
             variants
                 .iter()
                 .find(|(k, _)| k.ends_with("_other"))

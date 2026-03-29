@@ -212,7 +212,14 @@ async fn handle_delete_unused_keys(
 
         let unused: Vec<String> = all_keys
             .keys()
-            .filter(|key| !crate::ide::diagnostics::is_key_used(key, &used_keys, &key_separator))
+            .filter(|key| {
+                !crate::ide::diagnostics::is_key_used(
+                    key,
+                    &used_keys,
+                    &key_separator,
+                    crate::framework::PluralStrategy::SuffixBased,
+                )
+            })
             .cloned()
             .collect();
 

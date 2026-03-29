@@ -148,8 +148,12 @@ async fn generate_translation_file_code_actions(
                 &settings.key_separator,
                 settings.namespace_separator.as_deref(),
             ) {
-                let is_unused =
-                    !crate::ide::diagnostics::is_key_used(&key_text, &used_keys, &key_separator);
+                let is_unused = !crate::ide::diagnostics::is_key_used(
+                    &key_text,
+                    &used_keys,
+                    &key_separator,
+                    crate::framework::PluralStrategy::SuffixBased,
+                );
                 let action =
                     promote_to_quickfix_if_unused(action, is_unused, diagnostics, position);
                 actions.push(action);
@@ -163,7 +167,14 @@ async fn generate_translation_file_code_actions(
 
         let unused_key_count = all_keys
             .keys()
-            .filter(|key| !crate::ide::diagnostics::is_key_used(key, &used_keys, &key_separator))
+            .filter(|key| {
+                !crate::ide::diagnostics::is_key_used(
+                    key,
+                    &used_keys,
+                    &key_separator,
+                    crate::framework::PluralStrategy::SuffixBased,
+                )
+            })
             .count();
 
         if unused_key_count > 0 {

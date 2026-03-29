@@ -10,6 +10,7 @@ use tower_lsp::lsp_types::{
 
 use crate::config::Severity;
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::key_match::is_child_key;
 use crate::ide::namespace::{
     filter_by_namespace,
@@ -84,6 +85,8 @@ pub fn generate_diagnostics(
 
     tracing::debug!("Generating diagnostics for source file '{}'", source_file.uri(db));
 
+    let plural_strategy =
+        crate::framework::FrameworkConfig::for_language(source_file.language(db)).plural_strategy;
     let key_usages = analyze_source(db, source_file, key_separator.to_string());
 
     for usage in key_usages {
@@ -113,7 +116,9 @@ pub fn generate_diagnostics(
         let missing_languages: Vec<String> = language_keys
             .iter()
             .filter(|(lang, _)| target_languages.contains(lang.as_str()))
-            .filter(|(_, keys)| !key_exists_or_has_children(&key_part, keys, key_separator))
+            .filter(|(_, keys)| {
+                !key_exists_or_has_children(&key_part, keys, key_separator, plural_strategy)
+            })
             .map(|(lang, _)| lang.clone())
             .collect();
 
@@ -192,7 +197,9 @@ pub fn generate_unused_key_diagnostics(
             continue;
         }
 
-        let is_used = is_key_used(key, &used_keys, key_separator);
+        // Default to SuffixBased: unused key diagnostics aggregate across all
+        // source files, so we use the conservative strategy to avoid false positives.
+        let is_used = is_key_used(key, &used_keys, key_separator, PluralStrategy::SuffixBased);
 
         if !is_used && let Some(range) = key_ranges.get(key) {
             diagnostics.push(Diagnostic {
@@ -241,7 +248,12 @@ fn build_ignore_matcher(patterns: &[String]) -> Option<globset::GlobSet> {
 /// - `key = "hoge.fuga.piyo"`, `used_keys = {"hoge.fuga"}` -> true (prefix match)
 /// - `key = "items[0]"`, `used_keys = {"items"}` -> true (array prefix match)
 /// - `key = "items_one"`, `used_keys = {"items"}` -> true (plural base key used)
-pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &str) -> bool {
+pub(crate) fn is_key_used(
+    key: &str,
+    used_keys: &HashSet<String>,
+    separator: &str,
+    plural_strategy: PluralStrategy,
+) -> bool {
     if used_keys.contains(key) {
         return true;
     }
@@ -251,7 +263,7 @@ pub(crate) fn is_key_used(key: &str, used_keys: &HashSet<String>, separator: &st
         return true;
     }
 
-    get_plural_base_key(key).is_some_and(|base_key| used_keys.contains(base_key))
+    get_plural_base_key(key, plural_strategy).is_some_and(|base_key| used_keys.contains(base_key))
 }
 
 /// Checks if any key starts with the given prefix (reverse prefix match).
@@ -282,11 +294,12 @@ fn key_exists_or_has_children(
     key: &str,
     available_keys: &HashSet<String>,
     separator: &str,
+    plural_strategy: PluralStrategy,
 ) -> bool {
     if available_keys.contains(key) {
         return true;
     }
-    if has_plural_variants(key, available_keys) {
+    if has_plural_variants(key, available_keys, plural_strategy) {
         return true;
     }
     has_keys_with_prefix(key, available_keys, separator)
@@ -576,9 +589,18 @@ mod tests {
         let used_keys: HashSet<String> =
             ["common.hello", "common.goodbye"].iter().map(|s| s.to_string()).collect();
 
-        assert_that!(is_key_used("common.hello", &used_keys, "."), eq(true));
-        assert_that!(is_key_used("common.goodbye", &used_keys, "."), eq(true));
-        assert_that!(is_key_used("common.missing", &used_keys, "."), eq(false));
+        assert_that!(
+            is_key_used("common.hello", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            is_key_used("common.goodbye", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            is_key_used("common.missing", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(false)
+        );
     }
 
     #[rstest]
@@ -586,22 +608,46 @@ mod tests {
         // When t('hoge.fuga') is used, hoge.fuga.piyo is considered used
         let used_keys: HashSet<String> = ["hoge.fuga"].iter().map(|s| s.to_string()).collect();
 
-        assert_that!(is_key_used("hoge.fuga", &used_keys, "."), eq(true));
-        assert_that!(is_key_used("hoge.fuga.piyo", &used_keys, "."), eq(true));
-        assert_that!(is_key_used("hoge.fuga.piyo.deep", &used_keys, "."), eq(true));
+        assert_that!(
+            is_key_used("hoge.fuga", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            is_key_used("hoge.fuga.piyo", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            is_key_used("hoge.fuga.piyo.deep", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
         // hoge.fugaX does not prefix match (doesn't start with hoge.fuga.)
-        assert_that!(is_key_used("hoge.fugaX", &used_keys, "."), eq(false));
-        assert_that!(is_key_used("other.key", &used_keys, "."), eq(false));
+        assert_that!(
+            is_key_used("hoge.fugaX", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(false)
+        );
+        assert_that!(
+            is_key_used("other.key", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(false)
+        );
     }
 
     #[rstest]
     fn test_is_key_used_with_custom_separator() {
         let used_keys: HashSet<String> = ["hoge:fuga"].iter().map(|s| s.to_string()).collect();
 
-        assert_that!(is_key_used("hoge:fuga", &used_keys, ":"), eq(true));
-        assert_that!(is_key_used("hoge:fuga:piyo", &used_keys, ":"), eq(true));
+        assert_that!(
+            is_key_used("hoge:fuga", &used_keys, ":", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            is_key_used("hoge:fuga:piyo", &used_keys, ":", PluralStrategy::SuffixBased),
+            eq(true)
+        );
         // Dot is not the separator, so no prefix match
-        assert_that!(is_key_used("hoge:fuga.piyo", &used_keys, ":"), eq(false));
+        assert_that!(
+            is_key_used("hoge:fuga.piyo", &used_keys, ":", PluralStrategy::SuffixBased),
+            eq(false)
+        );
     }
 
     #[rstest]
@@ -878,15 +924,30 @@ mod tests {
         let keys: HashSet<String> =
             ["nested.key", "nested.foo", "single"].iter().map(|s| s.to_string()).collect();
 
-        assert_that!(key_exists_or_has_children("single", &keys, "."), eq(true));
-        assert_that!(key_exists_or_has_children("nested.key", &keys, "."), eq(true));
+        assert_that!(
+            key_exists_or_has_children("single", &keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            key_exists_or_has_children("nested.key", &keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
 
         // Reverse prefix match (child keys exist)
-        assert_that!(key_exists_or_has_children("nested", &keys, "."), eq(true));
+        assert_that!(
+            key_exists_or_has_children("nested", &keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
 
-        assert_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
+        assert_that!(
+            key_exists_or_has_children("missing", &keys, ".", PluralStrategy::SuffixBased),
+            eq(false)
+        );
         // "singl" is not a prefix of "single" (requires separator)
-        assert_that!(key_exists_or_has_children("singl", &keys, "."), eq(false));
+        assert_that!(
+            key_exists_or_has_children("singl", &keys, ".", PluralStrategy::SuffixBased),
+            eq(false)
+        );
     }
 
     #[rstest]
@@ -968,12 +1029,24 @@ mod tests {
         // When t('items') is used, items[0] is considered used
         let used_keys: HashSet<String> = ["items"].iter().map(|s| s.to_string()).collect();
 
-        assert_that!(is_key_used("items", &used_keys, "."), eq(true));
-        assert_that!(is_key_used("items[0]", &used_keys, "."), eq(true));
-        assert_that!(is_key_used("items[0].name", &used_keys, "."), eq(true));
-        assert_that!(is_key_used("items[1]", &used_keys, "."), eq(true));
+        assert_that!(is_key_used("items", &used_keys, ".", PluralStrategy::SuffixBased), eq(true));
+        assert_that!(
+            is_key_used("items[0]", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            is_key_used("items[0].name", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            is_key_used("items[1]", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
         // itemsX does not match (no separator/bracket)
-        assert_that!(is_key_used("itemsX", &used_keys, "."), eq(false));
+        assert_that!(
+            is_key_used("itemsX", &used_keys, ".", PluralStrategy::SuffixBased),
+            eq(false)
+        );
     }
 
     #[rstest]
@@ -991,10 +1064,19 @@ mod tests {
         let keys: HashSet<String> =
             ["items[0]", "items[1]", "single"].iter().map(|s| s.to_string()).collect();
 
-        assert_that!(key_exists_or_has_children("single", &keys, "."), eq(true));
+        assert_that!(
+            key_exists_or_has_children("single", &keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
         // Array children exist
-        assert_that!(key_exists_or_has_children("items", &keys, "."), eq(true));
-        assert_that!(key_exists_or_has_children("missing", &keys, "."), eq(false));
+        assert_that!(
+            key_exists_or_has_children("items", &keys, ".", PluralStrategy::SuffixBased),
+            eq(true)
+        );
+        assert_that!(
+            key_exists_or_has_children("missing", &keys, ".", PluralStrategy::SuffixBased),
+            eq(false)
+        );
     }
 
     // ===== Namespace-aware diagnostics tests =====

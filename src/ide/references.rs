@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::Location;
 
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::namespace::resolve_usage_namespace;
 use crate::ide::plural::get_plural_base_key;
 use crate::input::source::SourceFile;
@@ -28,7 +29,9 @@ pub fn find_references<S: std::hash::BuildHasher>(
     namespace_separator: Option<&str>,
     default_namespace: Option<&str>,
 ) -> Vec<Location> {
-    let base_key = get_plural_base_key(key_part);
+    // References are looked up from translation files (JSON), which don't have a
+    // ProgrammingLanguage. Default to SuffixBased so i18next plural references work.
+    let base_key = get_plural_base_key(key_part, PluralStrategy::SuffixBased);
 
     source_files
         .values()

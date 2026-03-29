@@ -15,6 +15,8 @@ use tree_sitter::{
     StreamingIteratorMut,
 };
 
+use crate::framework::FrameworkConfig;
+use crate::input::source::ProgrammingLanguage;
 use crate::syntax::analyzer::scope::{
     ScopeInfo,
     Scopes,
@@ -43,20 +45,14 @@ fn extract_function_name(node: Node<'_>, source_bytes: &[u8]) -> Option<String> 
     }
 }
 
-/// Known global translation functions (e.g., `i18next.t`, `i18n.t`, `$_`)
-const KNOWN_GLOBAL_TRANS_FNS: &[&str] = &["i18next.t", "i18n.t", "$_", "$t", "$format", "$json"];
-
-/// Allowed method names for translation function method calls (e.g., `t.rich()`)
-const ALLOWED_TRANS_FN_METHODS: &[&str] = &["rich", "markup", "raw"];
-
 /// Determines whether a function name represents a translation function.
 ///
 /// Returns true if:
-/// - The name is `t` (always allowed)
+/// - The name is `t` (always allowed — universal convention)
 /// - The name is registered in the current scope
-/// - The name is a known global function (`i18next.t`, `i18n.t`)
+/// - The name is a known global function for this framework
 /// - The name is a method call on `t` or a scoped function (e.g., `t.rich`, `myT.markup`)
-fn is_trans_fn(trans_fn_name: &str, scopes: &Scopes<'_>) -> bool {
+fn is_trans_fn(trans_fn_name: &str, scopes: &Scopes<'_>, config: &FrameworkConfig) -> bool {
     if trans_fn_name == "t" {
         return true;
     }
@@ -65,12 +61,12 @@ fn is_trans_fn(trans_fn_name: &str, scopes: &Scopes<'_>) -> bool {
         return true;
     }
 
-    if KNOWN_GLOBAL_TRANS_FNS.contains(&trans_fn_name) {
+    if config.known_global_trans_fns.contains(&trans_fn_name) {
         return true;
     }
 
     if let Some((base, method)) = trans_fn_name.split_once('.')
-        && ALLOWED_TRANS_FN_METHODS.contains(&method)
+        && config.allowed_trans_fn_methods.contains(&method)
     {
         return base == "t" || scopes.has_scope(base);
     }
@@ -82,13 +78,17 @@ fn is_trans_fn(trans_fn_name: &str, scopes: &Scopes<'_>) -> bool {
 ///
 /// Converts method calls like `t.rich` to their base name `t` for scope resolution.
 /// Returns the original name if it's directly registered in scope or is a known global function.
-fn preprocess_trans_fn_name_for_scope<'a>(trans_fn_name: &'a str, scopes: &Scopes<'_>) -> &'a str {
+fn preprocess_trans_fn_name_for_scope<'a>(
+    trans_fn_name: &'a str,
+    scopes: &Scopes<'_>,
+    config: &FrameworkConfig,
+) -> &'a str {
     if scopes.has_scope(trans_fn_name) {
         return trans_fn_name;
     }
 
     if let Some((base, method)) = trans_fn_name.split_once('.')
-        && ALLOWED_TRANS_FN_METHODS.contains(&method)
+        && config.allowed_trans_fn_methods.contains(&method)
         && (base == "t" || scopes.has_scope(base))
     {
         return base;
@@ -132,9 +132,11 @@ fn get_node_range(node: Node<'_>) -> Range {
 pub fn analyze_trans_fn_calls(
     source: &str,
     language: &Language,
+    programming_language: ProgrammingLanguage,
     queries: &[Query],
     key_separator: &str,
 ) -> Result<Vec<TransFnCall>, AnalyzerError> {
+    let config = FrameworkConfig::for_language(programming_language);
     let mut parser = Parser::new();
     parser.set_language(language).map_err(AnalyzerError::LanguageSetup)?;
     let tree = parser.parse(source, None).ok_or(AnalyzerError::ParseFailed)?;
@@ -201,7 +203,7 @@ pub fn analyze_trans_fn_calls(
         match capture_name {
             CaptureName::GetTransFn => {
                 let Ok(trans_fn) =
-                    parse_get_trans_fn_captures(query, node, source_bytes, cap_names)
+                    parse_get_trans_fn_captures(query, node, source_bytes, cap_names, config)
                 else {
                     continue;
                 };
@@ -221,13 +223,16 @@ pub fn analyze_trans_fn_calls(
                     continue;
                 };
 
-                if !is_trans_fn(&call_trans_fn.trans_fn_name, &scopes) {
+                if !is_trans_fn(&call_trans_fn.trans_fn_name, &scopes, config) {
                     continue;
                 }
 
                 // Preprocess function name for scope lookup (e.g., t.rich -> t)
-                let scope_name =
-                    preprocess_trans_fn_name_for_scope(&call_trans_fn.trans_fn_name, &scopes);
+                let scope_name = preprocess_trans_fn_name_for_scope(
+                    &call_trans_fn.trans_fn_name,
+                    &scopes,
+                    config,
+                );
 
                 cleanup_out_of_scopes(&mut scopes, scope_name, node);
 
@@ -331,6 +336,7 @@ fn parse_get_trans_fn_captures(
     capture_node: Node<'_>,
     source_bytes: &[u8],
     cap_names: &[&str],
+    config: &FrameworkConfig,
 ) -> Result<GetTransFnDetail, AnalyzerError> {
     let mut trans_fn_name: Option<String> = None;
     let mut namespace = None;
@@ -379,26 +385,16 @@ fn parse_get_trans_fn_captures(
         }
     }
 
-    // If we have args_node and func_name, extract library-specific arguments
+    // Delegate library-specific argument parsing to the framework config
     if let (Some(args), Some(func)) = (args_node, &func_name) {
         let string_args = extract_string_arguments(args, source_bytes);
 
-        if func.ends_with("getFixedT") {
-            // i18next: getFixedT(lang, ns?, keyPrefix?)
-            // - Index 0: lang (ignored)
-            // - Index 1: namespace
-            // - Index 2: keyPrefix
-            if string_args.len() >= 2 {
-                namespace = string_args.get(1).and_then(Option::clone);
+        if let Some(parsed) = config.parse_get_trans_fn_args(func, &string_args) {
+            if parsed.namespace.is_some() {
+                namespace = parsed.namespace;
             }
-            if string_args.len() >= 3 {
-                key_prefix = string_args.get(2).and_then(Option::clone);
-            }
-        } else if func == "useTranslations" {
-            // next-intl: useTranslations(namespace?)
-            // The namespace in next-intl acts as a key prefix
-            if let Some(Some(ns)) = string_args.first() {
-                key_prefix = Some(ns.clone());
+            if parsed.key_prefix.is_some() {
+                key_prefix = parsed.key_prefix;
             }
         }
     }
@@ -584,7 +580,9 @@ mod tests {
             const message = t("hello.world");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -604,7 +602,9 @@ mod tests {
             const message3 = t("key3");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -623,7 +623,9 @@ mod tests {
             const message = translate("custom.key");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -648,7 +650,9 @@ mod tests {
             }
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -673,7 +677,9 @@ mod tests {
             t("outer.key2");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -705,7 +711,9 @@ mod tests {
             }
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -732,7 +740,9 @@ mod tests {
             t("original.key2");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -753,7 +763,9 @@ mod tests {
             const message = t("button.save");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -779,7 +791,9 @@ mod tests {
             t("no.prefix.again");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -799,7 +813,9 @@ mod tests {
             const message = t("simple.key");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -816,7 +832,9 @@ mod tests {
     fn test_empty_code(queries: Vec<Query>, js_lang: Language) {
         let code = "";
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, is_empty());
     }
@@ -828,7 +846,9 @@ mod tests {
             const message = t("undefined.key");
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         // Default scope "t" exists, so the call is detected
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("undefined.key"))]);
@@ -853,7 +873,9 @@ mod tests {
             t(`template.${key}`);
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         // Only string literals are valid
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("valid.key"))]);
@@ -885,8 +907,9 @@ mod tests {
             "
         );
 
-        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
-            .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
+        let calls =
+            analyze_trans_fn_calls(&code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
         assert_that!(
             calls,
@@ -933,8 +956,9 @@ mod tests {
             "
         );
 
-        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
-            .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
+        let calls =
+            analyze_trans_fn_calls(&code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, starts_with("key."))]);
     }
@@ -959,8 +983,9 @@ mod tests {
             "
         );
 
-        let calls = analyze_trans_fn_calls(&code, &js_lang, &queries, ".")
-            .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
+        let calls =
+            analyze_trans_fn_calls(&code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap_or_else(|_| panic!("Failed to parse code for test case"));
 
         assert_that!(calls, is_empty());
     }
@@ -999,7 +1024,9 @@ mod tests {
             }
             "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         // Actual parse order: function definitions are parsed first
         assert_that!(
@@ -1026,7 +1053,9 @@ mod tests {
             const message = t("hello.world");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello.world"))]);
     }
@@ -1038,7 +1067,9 @@ mod tests {
             const message = t("save");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("buttons.save"))]);
     }
@@ -1052,7 +1083,9 @@ mod tests {
             const message = t("hello");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
     }
@@ -1064,7 +1097,9 @@ mod tests {
             const message = t("hello");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
     }
@@ -1076,7 +1111,9 @@ mod tests {
             const message = t.rich("hello", { strong: (chunks) => chunks });
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
     }
@@ -1090,7 +1127,9 @@ mod tests {
             return <Trans i18nKey="welcome" t={t} />;
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("welcome"))]);
     }
@@ -1102,7 +1141,9 @@ mod tests {
             return <Trans i18nKey="welcome" />;
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         // Even without t attribute, matches using "t" in scope
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("welcome"))]);
@@ -1115,7 +1156,9 @@ mod tests {
             return <Trans i18nKey="greeting" t={t}>Hello <strong>World</strong></Trans>;
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("greeting"))]);
     }
@@ -1130,7 +1173,9 @@ mod tests {
             );
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
     }
@@ -1145,7 +1190,9 @@ mod tests {
             );
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
     }
@@ -1159,7 +1206,9 @@ mod tests {
             const message = i18next.t("global.key");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -1177,7 +1226,9 @@ mod tests {
             const message = i18n.t("another.key");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("another.key"))]);
     }
@@ -1189,7 +1240,9 @@ mod tests {
             const message = t("bare.key");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -1207,7 +1260,9 @@ mod tests {
             const message = t.rich("rich.key", { strong: (chunks) => chunks });
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("rich.key"))]);
     }
@@ -1220,7 +1275,9 @@ mod tests {
             const message = t.rich("scoped.key", { strong: (chunks) => chunks });
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("namespace.scoped.key"))]);
     }
@@ -1232,7 +1289,9 @@ mod tests {
             const message = foo.bar("ignored.key");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, is_empty());
     }
@@ -1266,7 +1325,9 @@ mod tests {
             const message = t("hello");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, len(eq(1)));
         assert_that!(calls[0].key.as_str(), eq("hello"));
@@ -1283,7 +1344,9 @@ mod tests {
             const message = t("hello");
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, len(eq(1)));
         assert_that!(calls[0].key.as_str(), eq("hello"));
@@ -1299,7 +1362,9 @@ mod tests {
             const message = t("hello", { ns: "errors" });
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         // explicit_namespace overrides the scope namespace
         assert_that!(
@@ -1318,7 +1383,9 @@ mod tests {
             const message = t("hello", { ns: "common" });
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -1336,7 +1403,9 @@ mod tests {
             const message = t("hello", { count: 5, ns: "errors" });
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -1364,7 +1433,9 @@ function Component() {
 }
 ";
 
-        let calls = analyze_trans_fn_calls(code, &tsx_lang, &tsx_queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &tsx_lang, ProgrammingLanguage::Tsx, &tsx_queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("key.complex"))]);
     }
@@ -1380,7 +1451,9 @@ function Component() {
             const msg5 = t("key5", { postProcess: "interval" });
         "#;
 
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -1414,7 +1487,9 @@ function Component() {
     #[rstest]
     fn svelte_i18n_dollar_underscore(queries: Vec<Query>, js_lang: Language) {
         let code = r#"$_("common.hello")"#;
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -1429,7 +1504,9 @@ function Component() {
     #[rstest]
     fn svelte_i18n_dollar_t(queries: Vec<Query>, js_lang: Language) {
         let code = r#"$t("common.goodbye")"#;
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("common.goodbye"))]]);
     }
@@ -1437,7 +1514,9 @@ function Component() {
     #[rstest]
     fn svelte_i18n_dollar_format(queries: Vec<Query>, js_lang: Language) {
         let code = r#"$format("format.example")"#;
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("format.example"))]]);
     }
@@ -1445,7 +1524,9 @@ function Component() {
     #[rstest]
     fn svelte_i18n_dollar_json(queries: Vec<Query>, js_lang: Language) {
         let code = r#"$json("json_data.colors")"#;
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("json_data.colors"))]]);
     }
@@ -1457,7 +1538,9 @@ function Component() {
             $t("key2");
             $format("key3");
         "#;
-        let calls = analyze_trans_fn_calls(code, &js_lang, &queries, ".").unwrap();
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
 
         assert_that!(
             calls,
@@ -1474,7 +1557,14 @@ function Component() {
     #[rstest]
     fn svelte_i18n_object_form_basic(svelte_queries: Vec<Query>, ts_lang: Language) {
         let code = r#"$_({ id: "common.hello" })"#;
-        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("common.hello"))]]);
     }
@@ -1482,7 +1572,14 @@ function Component() {
     #[rstest]
     fn svelte_i18n_object_form_with_values(svelte_queries: Vec<Query>, ts_lang: Language) {
         let code = r#"$_({ id: "common.welcome", values: { name: "Alice" } })"#;
-        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("common.welcome"))]]);
     }
@@ -1490,7 +1587,14 @@ function Component() {
     #[rstest]
     fn svelte_i18n_object_form_with_locale(svelte_queries: Vec<Query>, ts_lang: Language) {
         let code = r#"$_({ id: "common.hello", locale: "en" })"#;
-        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("common.hello"))]]);
     }
@@ -1498,7 +1602,14 @@ function Component() {
     #[rstest]
     fn svelte_i18n_object_form_dollar_t(svelte_queries: Vec<Query>, ts_lang: Language) {
         let code = r#"$t({ id: "home.title" })"#;
-        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("home.title"))]]);
     }
@@ -1511,7 +1622,14 @@ function Component() {
             const $format = unwrapFunctionStore(format);
             $format("some.key");
         "#;
-        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("some.key"))]]);
     }
@@ -1522,7 +1640,14 @@ function Component() {
             const translate = unwrapFunctionStore(_);
             translate("hello.world");
         "#;
-        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
 
         assert_that!(calls, elements_are![all![field!(TransFnCall.key, eq("hello.world"))]]);
     }
@@ -1537,7 +1662,14 @@ function Component() {
                 farewell: { id: "farewell" },
             })
         "#;
-        let calls = analyze_trans_fn_calls(code, &ts_lang, &svelte_queries, ".").unwrap();
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
 
         assert_that!(
             calls,
@@ -1546,5 +1678,49 @@ function Component() {
                 all![field!(TransFnCall.key, eq("farewell"))]
             ]
         );
+    }
+
+    // --- Framework isolation tests ---
+
+    #[rstest]
+    fn tsx_does_not_recognize_svelte_globals(tsx_queries: Vec<Query>, tsx_lang: Language) {
+        let code = r#"$_("key")"#;
+        let calls =
+            analyze_trans_fn_calls(code, &tsx_lang, ProgrammingLanguage::Tsx, &tsx_queries, ".")
+                .unwrap();
+        assert_that!(calls, is_empty());
+    }
+
+    #[rstest]
+    fn svelte_does_not_recognize_i18next_globals(svelte_queries: Vec<Query>, ts_lang: Language) {
+        // i18next.t is a member expression; Svelte's FrameworkConfig excludes it
+        let code = r#"i18next.t("key")"#;
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
+        assert_that!(calls, is_empty());
+    }
+
+    #[rstest]
+    fn svelte_does_not_recognize_method_calls(svelte_queries: Vec<Query>, ts_lang: Language) {
+        // t.rich is allowed for i18next/next-intl but not for Svelte
+        let code = r#"
+            const { t } = useTranslation();
+            t.rich("key");
+        "#;
+        let calls = analyze_trans_fn_calls(
+            code,
+            &ts_lang,
+            ProgrammingLanguage::Svelte,
+            &svelte_queries,
+            ".",
+        )
+        .unwrap();
+        assert_that!(calls, is_empty());
     }
 }

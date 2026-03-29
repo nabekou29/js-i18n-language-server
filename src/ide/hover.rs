@@ -3,6 +3,7 @@
 use std::fmt::Write as _;
 
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::key_match::is_child_key;
 use crate::ide::plural::find_plural_variants;
 use crate::input::translation::Translation;
@@ -32,6 +33,7 @@ pub fn generate_hover_content(
     key_separator: &str,
     current_language: Option<&str>,
     primary_languages: Option<&[String]>,
+    plural_strategy: PluralStrategy,
 ) -> Option<String> {
     let key_text = key.text(db);
 
@@ -49,7 +51,7 @@ pub fn generate_hover_content(
         }
 
         // Check plural variants
-        let plural_variants = find_plural_variants(key_text, keys);
+        let plural_variants = find_plural_variants(key_text, keys, plural_strategy);
         if !plural_variants.is_empty() {
             let formatted = format_plural_variants(&plural_variants, key_text);
             translations_found.push((language, formatted));
@@ -227,7 +229,15 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None);
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        );
 
         assert_that!(content, some(contains_substring("**Translation Key:** `common.hello`")));
         assert_that!(content.as_ref().unwrap(), contains_substring("**en**: Hello"));
@@ -256,7 +266,16 @@ mod tests {
         let translations = vec![ja_translation, en_translation];
 
         // Without sort priority, alphabetical order is used
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Key is included
         assert_that!(content, contains_substring("**Translation Key:** `common.hello`"));
@@ -286,7 +305,15 @@ mod tests {
         let key = TransKey::new(&db, "nonexistent.key".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None);
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        );
 
         assert_that!(content, none());
     }
@@ -298,7 +325,15 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations: Vec<Translation> = vec![];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None);
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        );
 
         assert_that!(content, none());
     }
@@ -325,7 +360,16 @@ mod tests {
         let key = TransKey::new(&db, "common.hello".to_string());
         let translations = vec![en_translation, ja_translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Only en is included
         assert_that!(content, contains_substring("**en**: Hello"));
@@ -350,7 +394,16 @@ mod tests {
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Key is included
         assert_that!(content, contains_substring("**Translation Key:** `nested`"));
@@ -379,7 +432,16 @@ mod tests {
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Sorted alphabetically
         let alpha_pos = content.find("`.alpha`").unwrap();
@@ -406,7 +468,16 @@ mod tests {
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Value is truncated with "..."
         assert_that!(content, contains_substring("..."));
@@ -436,7 +507,16 @@ mod tests {
         let key = TransKey::new(&db, "nested".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // "... and 1 more" is displayed
         assert_that!(content, contains_substring("... and 1 more"));
@@ -485,8 +565,16 @@ mod tests {
         let translations = vec![en_translation, ja_translation, zh_translation];
 
         // Specify current_language = "ja"
-        let content =
-            generate_hover_content(&db, key, &translations, ".", Some("ja"), None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            Some("ja"),
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // ja is displayed first
         let ja_pos = content.find("**ja**").unwrap();
@@ -526,8 +614,16 @@ mod tests {
 
         // Specify primary_languages = ["zh", "ja"]
         let primary = vec!["zh".to_string(), "ja".to_string()];
-        let content =
-            generate_hover_content(&db, key, &translations, ".", None, Some(&primary)).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            Some(&primary),
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Displayed in order: zh, ja, en
         let zh_pos = content.find("**zh**").unwrap();
@@ -566,9 +662,16 @@ mod tests {
         // current_language = "en", primary_languages = ["zh", "ja"]
         // current has highest priority
         let primary = vec!["zh".to_string(), "ja".to_string()];
-        let content =
-            generate_hover_content(&db, key, &translations, ".", Some("en"), Some(&primary))
-                .unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            Some("en"),
+            Some(&primary),
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Displayed in order: en, zh, ja
         let en_pos = content.find("**en**").unwrap();
@@ -596,7 +699,16 @@ mod tests {
         let key = TransKey::new(&db, "items".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Key is included
         assert_that!(content, contains_substring("**Translation Key:** `items`"));
@@ -627,7 +739,16 @@ mod tests {
         let key = TransKey::new(&db, "place".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Plural variants are displayed
         assert_that!(content, contains_substring("(plural)"));
@@ -656,7 +777,16 @@ mod tests {
         let key = TransKey::new(&db, "items".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Exact match value is displayed
         assert_that!(content, contains_substring("**en**: Items (exact)"));
@@ -682,7 +812,16 @@ mod tests {
         let key = TransKey::new(&db, "items".to_string());
         let translations = vec![translation];
 
-        let content = generate_hover_content(&db, key, &translations, ".", None, None).unwrap();
+        let content = generate_hover_content(
+            &db,
+            key,
+            &translations,
+            ".",
+            None,
+            None,
+            PluralStrategy::SuffixBased,
+        )
+        .unwrap();
 
         // Key is included
         assert_that!(content, contains_substring("**Translation Key:** `items`"));

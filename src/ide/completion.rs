@@ -163,21 +163,33 @@ pub fn extract_completion_context_tree_sitter(
     character: u32,
     key_separator: &str,
 ) -> Option<CompletionContext> {
+    let preprocessed = crate::syntax::preprocess(text, language);
     let tree_sitter_lang = language.tree_sitter_language();
     let queries = load_queries(language);
 
-    let trans_fn_calls =
-        analyze_trans_fn_calls(text, &tree_sitter_lang, queries, key_separator).unwrap_or_default();
+    let trans_fn_calls = analyze_trans_fn_calls(
+        &preprocessed.source,
+        &tree_sitter_lang,
+        language,
+        queries,
+        key_separator,
+    )
+    .unwrap_or_default();
 
     let cursor_position = Position::new(line, character);
 
     for call in &trans_fn_calls {
-        let arg_range = call.arg_key_node;
+        // Remap virtual-doc ranges back to original file coordinates
+        let arg_range = preprocessed
+            .position_map
+            .as_ref()
+            .map_or(call.arg_key_node, |pm| pm.remap(call.arg_key_node));
 
         if !SourceRange::from(arg_range).contains(SourcePosition::from(cursor_position)) {
             continue;
         }
 
+        // Use original text for line content (positions are already remapped)
         let lines: Vec<&str> = text.lines().collect();
 
         if arg_range.start.line != arg_range.end.line {
