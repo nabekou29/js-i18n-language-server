@@ -47,6 +47,7 @@ pub struct CompletionContext {
 }
 
 /// Options for `generate_completions`.
+#[derive(Debug)]
 pub struct CompletionOptions<'a> {
     pub partial_key: Option<&'a str>,
     pub quote_context: &'a QuoteContext,

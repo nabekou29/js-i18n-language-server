@@ -242,14 +242,14 @@ impl Default for TranslationFilesConfig {
 }
 
 /// Per-framework configuration.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FrameworksConfig {
     pub i18next: Option<I18nextConfig>,
 }
 
 /// i18next-specific settings.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct I18nextConfig {
     /// When `true`, completions at `t(|)` insert selector format `($) => $.key`
