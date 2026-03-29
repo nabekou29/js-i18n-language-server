@@ -227,6 +227,22 @@ mod tests {
     }
 
     #[rstest]
+    fn analyze_source_vue_te_and_tm() {
+        let db = I18nDatabaseImpl::default();
+        let source = "<script setup>\nimport { useI18n } from 'vue-i18n'\nconst { t, te, tm } = useI18n()\nt('greeting')\nte('optional')\ntm('message')\n</script>";
+        let file = SourceFile::new(
+            &db,
+            "test.vue".to_string(),
+            source.to_string(),
+            ProgrammingLanguage::Vue,
+        );
+
+        let usages = analyze_source(&db, file, ".".to_string());
+        let keys: Vec<String> = usages.iter().map(|u| u.key(&db).text(&db).to_string()).collect();
+        assert_that!(keys, contains_each![eq("greeting"), eq("optional"), eq("message")]);
+    }
+
+    #[rstest]
     fn preprocess_vue_extracts_virtual_doc() {
         let text = "<script>\n  $t('key')\n</script>";
         let result = preprocess(text, ProgrammingLanguage::Vue);

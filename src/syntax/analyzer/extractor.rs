@@ -216,19 +216,21 @@ pub fn analyze_trans_fn_calls(
 
         match capture_name {
             CaptureName::GetTransFn => {
-                let Ok(trans_fn) =
+                let Ok(trans_fns) =
                     parse_get_trans_fn_captures(query, node, source_bytes, cap_names, config)
                 else {
                     continue;
                 };
 
-                cleanup_out_of_scopes(&mut scopes, &trans_fn.trans_fn_name, node);
+                for trans_fn in trans_fns {
+                    cleanup_out_of_scopes(&mut scopes, &trans_fn.trans_fn_name, node);
 
-                let scope_node = get_closest_node(node, &["statement_block", "jsx_element"])
-                    .unwrap_or(root_node);
+                    let scope_node = get_closest_node(node, &["statement_block", "jsx_element"])
+                        .unwrap_or(root_node);
 
-                let trans_fn_name = trans_fn.trans_fn_name.clone();
-                scopes.push_scope(trans_fn_name, ScopeInfo::new(scope_node, trans_fn));
+                    let trans_fn_name = trans_fn.trans_fn_name.clone();
+                    scopes.push_scope(trans_fn_name, ScopeInfo::new(scope_node, trans_fn));
+                }
             }
             CaptureName::CallTransFn => {
                 let Ok(call_trans_fn) = parse_call_trans_fn_captures(
@@ -467,8 +469,8 @@ fn parse_get_trans_fn_captures(
     source_bytes: &[u8],
     cap_names: &[&str],
     config: &FrameworkConfig,
-) -> Result<GetTransFnDetail, AnalyzerError> {
-    let mut trans_fn_name: Option<String> = None;
+) -> Result<Vec<GetTransFnDetail>, AnalyzerError> {
+    let mut trans_fn_names: Vec<String> = Vec::new();
     let mut namespace = None;
     let mut namespace_items: Vec<String> = Vec::new();
     let mut key_prefix = None;
@@ -494,7 +496,11 @@ fn parse_get_trans_fn_captures(
 
             match capture_name {
                 CaptureName::GetTransFnName => {
-                    trans_fn_name = extract_node_text(capture.node, source_bytes);
+                    if let Some(name) = extract_node_text(capture.node, source_bytes)
+                        && !trans_fn_names.contains(&name)
+                    {
+                        trans_fn_names.push(name);
+                    }
                 }
                 CaptureName::Namespace => {
                     namespace = extract_node_text(capture.node, source_bytes);
@@ -529,11 +535,21 @@ fn parse_get_trans_fn_captures(
         }
     }
 
-    let trans_fn_name = trans_fn_name.ok_or(AnalyzerError::ParseFailed)?;
+    if trans_fn_names.is_empty() {
+        return Err(AnalyzerError::ParseFailed);
+    }
 
     let namespaces = if namespace_items.is_empty() { None } else { Some(namespace_items) };
 
-    Ok(GetTransFnDetail { trans_fn_name, namespace, namespaces, key_prefix })
+    Ok(trans_fn_names
+        .into_iter()
+        .map(|name| GetTransFnDetail {
+            trans_fn_name: name,
+            namespace: namespace.clone(),
+            namespaces: namespaces.clone(),
+            key_prefix: key_prefix.clone(),
+        })
+        .collect())
 }
 
 /// Parses call translation function captures from a tree-sitter node
