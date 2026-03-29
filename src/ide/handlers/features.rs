@@ -40,9 +40,11 @@ pub async fn handle_completion(
     };
 
     // Acquire config before db to respect lock ordering (config_manager → db → source_files)
-    let (key_separator, primary_languages) = {
+    let (key_separator, primary_languages, prefer_selector) = {
         let settings = backend.config_manager.lock().await.get_settings().clone();
-        (settings.key_separator, settings.primary_languages)
+        let prefer_selector =
+            settings.frameworks.i18next.as_ref().is_some_and(|c| c.prefer_selector);
+        (settings.key_separator, settings.primary_languages, prefer_selector)
     };
 
     // Acquire db before source_files to prevent stale IDs after reset_state()
@@ -96,11 +98,14 @@ pub async fn handle_completion(
     let items = crate::ide::completion::generate_completions(
         &*db,
         &translations,
-        partial_key_opt,
-        &context.quote_context,
-        context.key_prefix.as_deref(),
-        effective_language.as_deref(),
-        &key_separator,
+        &crate::ide::completion::CompletionOptions {
+            partial_key: partial_key_opt,
+            quote_context: &context.quote_context,
+            key_prefix: context.key_prefix.as_deref(),
+            effective_language: effective_language.as_deref(),
+            key_separator: &key_separator,
+            prefer_selector,
+        },
     );
     drop(db);
     drop(translations);

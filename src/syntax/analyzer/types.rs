@@ -25,6 +25,7 @@ pub enum CaptureName {
     ExplicitNamespace,
     KeyPrefix,
     GetTransFnArgs,
+    SelectorFn,
 }
 
 impl CaptureName {
@@ -43,6 +44,7 @@ impl CaptureName {
             Self::ExplicitNamespace => "i18n.explicit_namespace",
             Self::KeyPrefix => "i18n.trans_key_prefix",
             Self::GetTransFnArgs => "i18n.get_trans_fn_args",
+            Self::SelectorFn => "i18n.selector_fn",
         }
     }
 }
@@ -67,6 +69,7 @@ impl FromStr for CaptureName {
             "i18n.explicit_namespace" => Ok(Self::ExplicitNamespace),
             "i18n.trans_key_prefix" => Ok(Self::KeyPrefix),
             "i18n.get_trans_fn_args" => Ok(Self::GetTransFnArgs),
+            "i18n.selector_fn" => Ok(Self::SelectorFn),
             _ => Err(ParseCaptureNameError),
         }
     }
@@ -91,6 +94,9 @@ pub struct CallTransFnDetail<'a> {
     pub key_node: Node<'a>,
     pub arg_key_node: Node<'a>,
     pub explicit_namespace: Option<String>,
+    /// Overrides the range computed from `arg_key_node` when set.
+    /// Used by Selector API to extend the range past trailing accessor operators.
+    pub arg_key_range: Option<Range>,
 }
 
 #[derive(Debug, Clone, Default)]

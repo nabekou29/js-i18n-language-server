@@ -42,10 +42,35 @@
     ) @i18n.trans_args
 ) @i18n.call_trans_fn
 
+;; Selector API: t($ => $.a.b.c)
+(call_expression
+  function: [
+    (identifier) @i18n.call_trans_fn_name
+    (member_expression) @i18n.call_trans_fn_name
+  ]
+  arguments: (arguments
+    (arrow_function) @i18n.selector_fn
+    (_)*
+  ) @i18n.trans_args
+) @i18n.call_trans_fn
+
 ;; Capture explicit namespace: t("key", { ns: "namespace" })
 (call_expression
   arguments: (arguments
     (string)
+    (object
+      (pair
+        key: (property_identifier) @_ns_key (#eq? @_ns_key "ns")
+        value: (string (string_fragment) @i18n.explicit_namespace)
+      )
+    )
+  )
+)
+
+;; Capture explicit namespace (Selector API): t($ => $.key, { ns: "namespace" })
+(call_expression
+  arguments: (arguments
+    (arrow_function)
     (object
       (pair
         key: (property_identifier) @_ns_key (#eq? @_ns_key "ns")
@@ -91,6 +116,21 @@
   )?
 ) @i18n.call_trans_fn
 
+;; Trans コンポーネント (self-closing, Selector API)
+(jsx_self_closing_element
+  name: (identifier) @trans (#eq? @trans "Trans")
+  attribute: (jsx_attribute
+    (property_identifier) @i18n_key (#eq? @i18n_key "i18nKey")
+    (jsx_expression
+      (arrow_function) @i18n.selector_fn
+    )
+  )
+  attribute: (jsx_attribute
+    (property_identifier) @attr_t (#eq? @attr_t "t")
+    (jsx_expression (identifier) @i18n.call_trans_fn_name)
+  )?
+) @i18n.call_trans_fn
+
 ;; Trans コンポーネント (opening element)
 (jsx_opening_element
   name: (identifier) @trans (#eq? @trans "Trans")
@@ -100,6 +140,21 @@
       (string (string_fragment) @i18n.trans_key) @i18n.trans_key_arg
       (jsx_expression (string (string_fragment) @i18n.trans_key) @i18n.trans_key_arg)
     ]
+  )
+  attribute: (jsx_attribute
+    (property_identifier) @attr_t (#eq? @attr_t "t")
+    (jsx_expression (identifier) @i18n.call_trans_fn_name)
+  )?
+) @i18n.call_trans_fn
+
+;; Trans コンポーネント (opening element, Selector API)
+(jsx_opening_element
+  name: (identifier) @trans (#eq? @trans "Trans")
+  attribute: (jsx_attribute
+    (property_identifier) @i18n_key (#eq? @i18n_key "i18nKey")
+    (jsx_expression
+      (arrow_function) @i18n.selector_fn
+    )
   )
   attribute: (jsx_attribute
     (property_identifier) @attr_t (#eq? @attr_t "t")
