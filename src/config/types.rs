@@ -66,6 +66,8 @@ pub struct I18nSettings {
 
     /// Fallback language priority when `currentLanguage` is unset.
     pub primary_languages: Option<Vec<String>>,
+
+    pub frameworks: FrameworksConfig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, Default)]
@@ -239,6 +241,22 @@ impl Default for TranslationFilesConfig {
     }
 }
 
+/// Per-framework configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FrameworksConfig {
+    pub i18next: Option<I18nextConfig>,
+}
+
+/// i18next-specific settings.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct I18nextConfig {
+    /// When `true`, completions at `t(|)` insert selector format `($) => $.key`
+    /// instead of string format `"key"`.
+    pub prefer_selector: bool,
+}
+
 impl Default for I18nSettings {
     fn default() -> Self {
         Self {
@@ -251,6 +269,7 @@ impl Default for I18nSettings {
             indexing: IndexingConfig::default(),
             diagnostics: DiagnosticsConfig::default(),
             primary_languages: None,
+            frameworks: FrameworksConfig::default(),
         }
     }
 }
@@ -584,5 +603,22 @@ mod tests {
         assert_that!(error_message, contains_substring("cannot be empty"));
         assert_that!(error_message, contains_substring("2. includePatterns"));
         assert_that!(error_message, contains_substring("At least one pattern"));
+    }
+
+    #[rstest]
+    fn deserialize_frameworks_config() {
+        let json = r#"{"frameworks": {"i18next": {"preferSelector": true}}}"#;
+        let settings: I18nSettings = serde_json::from_str(json).unwrap();
+
+        assert_that!(settings.frameworks.i18next.is_some(), eq(true));
+        assert_that!(settings.frameworks.i18next.unwrap().prefer_selector, eq(true));
+    }
+
+    #[rstest]
+    fn deserialize_frameworks_config_defaults() {
+        let json = "{}";
+        let settings: I18nSettings = serde_json::from_str(json).unwrap();
+
+        assert_that!(settings.frameworks.i18next, none());
     }
 }
