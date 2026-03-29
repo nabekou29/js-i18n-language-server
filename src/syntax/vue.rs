@@ -293,8 +293,24 @@ fn extract_tag_attributes(
     }
 }
 
+/// Emit a synthetic `$t('key')` call, aligning the key position in the virtual
+/// document with `original_key_col` in the original file.
+fn emit_synthetic_t_call(
+    key: &str,
+    original_key_col: usize,
+    line_num: u32,
+    virtual_doc: &mut String,
+    position_map: &mut PositionMap,
+    virtual_line: &mut u32,
+) {
+    let synthetic = format!("$t('{key}')");
+    let key_offset_in_synthetic = synthetic.find(key).unwrap_or(4);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+    let col_offset = original_key_col as i32 - key_offset_in_synthetic as i32;
+    push_expression(&synthetic, line_num, col_offset, virtual_doc, position_map, virtual_line);
+}
+
 /// Extract `<i18n-t keypath="key">`, `<I18nT keypath="key">`, `<i18n path="key">` components.
-/// Synthesizes `$t('key')` calls for detected keys.
 fn extract_i18n_component(
     tag_content: &str,
     tag_byte_offset: usize,
@@ -317,14 +333,10 @@ fn extract_i18n_component(
         if let Some(close_quote) = tag_content[value_start..].find('"') {
             let key = &tag_content[value_start..value_start + close_quote];
             if !key.is_empty() {
-                // Synthesize $t('key') call
-                let synthetic = format!("$t('{key}')");
-                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                let col_offset = (tag_byte_offset + value_start) as i32;
-                push_expression(
-                    &synthetic,
+                emit_synthetic_t_call(
+                    key,
+                    tag_byte_offset + value_start,
                     line_num,
-                    col_offset,
                     virtual_doc,
                     position_map,
                     virtual_line,
@@ -335,7 +347,6 @@ fn extract_i18n_component(
 }
 
 /// Extract `v-t="'key'"` or `v-t="{ path: 'key' }"` directive.
-/// Synthesizes `$t('key')` calls for detected keys.
 fn extract_v_t_directive(
     tag_content: &str,
     tag_byte_offset: usize,
@@ -344,7 +355,6 @@ fn extract_v_t_directive(
     position_map: &mut PositionMap,
     virtual_line: &mut u32,
 ) {
-    // Match v-t="..." attribute
     let search = "v-t=\"";
     let Some(vt_pos) = tag_content.find(search) else { return };
     let value_start = vt_pos + search.len();
@@ -358,21 +368,32 @@ fn extract_v_t_directive(
 
     // String syntax: v-t="'key'"
     if let Some(key) = extract_string_literal(trimmed) {
-        let synthetic = format!("$t('{key}')");
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let col_offset = (tag_byte_offset + value_start) as i32;
-        push_expression(&synthetic, line_num, col_offset, virtual_doc, position_map, virtual_line);
+        // key starts after the opening quote: value_start + 1
+        let original_key_col = tag_byte_offset + value_start + 1;
+        emit_synthetic_t_call(
+            key,
+            original_key_col,
+            line_num,
+            virtual_doc,
+            position_map,
+            virtual_line,
+        );
         return;
     }
 
     // Object syntax: v-t="{ path: 'key' }"
     if trimmed.starts_with('{')
-        && let Some(key) = extract_object_path_value(trimmed)
+        && let Some((key, key_offset)) = extract_object_path_value_with_offset(value)
     {
-        let synthetic = format!("$t('{key}')");
-        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        let col_offset = (tag_byte_offset + value_start) as i32;
-        push_expression(&synthetic, line_num, col_offset, virtual_doc, position_map, virtual_line);
+        let original_key_col = tag_byte_offset + value_start + key_offset;
+        emit_synthetic_t_call(
+            key,
+            original_key_col,
+            line_num,
+            virtual_doc,
+            position_map,
+            virtual_line,
+        );
     }
 }
 
@@ -386,14 +407,22 @@ fn extract_string_literal(s: &str) -> Option<&str> {
     }
 }
 
-/// Extract the `path` property value from an object literal like `{ path: 'key' }`.
-fn extract_object_path_value(s: &str) -> Option<&str> {
-    // Simple parsing for `path: 'value'` or `path: "value"` within the object
+/// Extract the `path` property value and its byte offset from an object literal.
+/// Returns `(key, byte_offset_of_key_within_s)`.
+fn extract_object_path_value_with_offset(s: &str) -> Option<(&str, usize)> {
     let path_patterns = ["path:", "path :"];
     for pattern in path_patterns {
         if let Some(idx) = s.find(pattern) {
-            let after = s[idx + pattern.len()..].trim();
-            return extract_string_literal(after.split([',', '}']).next().unwrap_or("").trim());
+            let after_pattern = idx + pattern.len();
+            let after = s[after_pattern..].trim();
+            let trimmed_offset = after_pattern + (s[after_pattern..].len() - after.len());
+            let literal_part = after.split([',', '}']).next().unwrap_or("").trim();
+            if let Some(key) = extract_string_literal(literal_part) {
+                // key starts after the opening quote
+                let quote_pos = s[trimmed_offset..].find(['\'', '"']).unwrap_or(0);
+                let key_offset = trimmed_offset + quote_pos + 1;
+                return Some((key, key_offset));
+            }
         }
     }
     None
@@ -708,6 +737,61 @@ t('hello')
         let result = extract(vue);
 
         assert_that!(result.virtual_doc, contains_substring("$t('message.hello')"));
+    }
+
+    #[rstest]
+    fn extract_v_t_string_position_mapping() {
+        // <p v-t="'message.hello'"></p>
+        //         ^              ^
+        //         col 8 (quote)  col 22
+        // Key "message.hello" starts at col 9 in the original.
+        let vue = "<p v-t=\"'message.hello'\"></p>";
+        let result = extract(vue);
+
+        assert_that!(result.virtual_doc, contains_substring("$t('message.hello')"));
+
+        // In the virtual doc, "message.hello" is inside $t('message.hello')
+        // at character offset 4. The original key starts at column 9.
+        let virtual_range = Range {
+            start: Position { line: 0, character: 4 },
+            end: Position { line: 0, character: 17 },
+        };
+        let remapped = result.position_map.remap(virtual_range);
+        assert_that!(remapped.start.character, eq(9));
+    }
+
+    #[rstest]
+    fn extract_v_t_object_position_mapping() {
+        // <p v-t="{ path: 'message.goodbye' }"></p>
+        //                  ^
+        //                  col 17
+        let vue = "<p v-t=\"{ path: 'message.goodbye' }\"></p>";
+        let result = extract(vue);
+
+        assert_that!(result.virtual_doc, contains_substring("$t('message.goodbye')"));
+
+        let virtual_range = Range {
+            start: Position { line: 0, character: 4 },
+            end: Position { line: 0, character: 19 },
+        };
+        let remapped = result.position_map.remap(virtual_range);
+        assert_that!(remapped.start.character, eq(17));
+    }
+
+    #[rstest]
+    fn extract_i18n_t_keypath_position_mapping() {
+        // <i18n-t keypath="terms" tag="p"></i18n-t>
+        //                  ^
+        //                  col 17
+        let vue = "<i18n-t keypath=\"terms\" tag=\"p\"></i18n-t>";
+        let result = extract(vue);
+
+        let virtual_range = Range {
+            start: Position { line: 0, character: 4 },
+            end: Position { line: 0, character: 9 },
+        };
+        let remapped = result.position_map.remap(virtual_range);
+        assert_that!(remapped.start.character, eq(17));
     }
 
     // --- Skipping non-template regions ---
