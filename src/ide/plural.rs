@@ -5,7 +5,7 @@ use std::collections::{
     HashSet,
 };
 
-pub use crate::framework::PluralStrategy;
+use crate::framework::PluralStrategy;
 
 /// Longer suffixes must come first to avoid `_one` matching `place_ordinal_one`.
 pub const PLURAL_SUFFIXES: &[&str] = &[

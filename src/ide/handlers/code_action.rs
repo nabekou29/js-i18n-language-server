@@ -152,7 +152,7 @@ async fn generate_translation_file_code_actions(
                     &key_text,
                     &used_keys,
                     &key_separator,
-                    crate::ide::plural::PluralStrategy::SuffixBased,
+                    crate::framework::PluralStrategy::SuffixBased,
                 );
                 let action =
                     promote_to_quickfix_if_unused(action, is_unused, diagnostics, position);
@@ -172,7 +172,7 @@ async fn generate_translation_file_code_actions(
                     key,
                     &used_keys,
                     &key_separator,
-                    crate::ide::plural::PluralStrategy::SuffixBased,
+                    crate::framework::PluralStrategy::SuffixBased,
                 )
             })
             .count();

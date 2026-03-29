@@ -3,11 +3,9 @@
 use std::fmt::Write as _;
 
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::key_match::is_child_key;
-use crate::ide::plural::{
-    PluralStrategy,
-    find_plural_variants,
-};
+use crate::ide::plural::find_plural_variants;
 use crate::input::translation::Translation;
 use crate::interned::TransKey;
 

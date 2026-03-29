@@ -6,6 +6,7 @@ use tower_lsp::lsp_types::{
 };
 
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::key_match::is_child_key;
 use crate::ide::plural::PLURAL_SUFFIXES;
 use crate::input::translation::Translation;
@@ -40,9 +41,13 @@ pub fn find_definitions(
         // 1. Exact match
         // 2. Plural variant fallback
         // 3. Child key prefix fallback
+        // Definitions are looked up from translation files (JSON) which have no
+        // ProgrammingLanguage. Default to SuffixBased for i18next compatibility.
         let range = key_ranges
             .get(key_text.as_str())
-            .or_else(|| find_plural_variant_range(key_text, key_ranges))
+            .or_else(|| {
+                find_plural_variant_range(key_text, key_ranges, PluralStrategy::SuffixBased)
+            })
             .or_else(|| find_child_key_range(key_text, key_separator, key_ranges));
 
         let Some(range) = range else {
@@ -61,7 +66,11 @@ pub fn find_definitions(
 fn find_plural_variant_range<'a>(
     key_text: &str,
     key_ranges: &'a std::collections::HashMap<String, SourceRange>,
+    strategy: PluralStrategy,
 ) -> Option<&'a SourceRange> {
+    if strategy == PluralStrategy::Icu {
+        return None;
+    }
     PLURAL_SUFFIXES.iter().find_map(|suffix| {
         let variant_key = format!("{key_text}{suffix}");
         key_ranges.get(&variant_key)

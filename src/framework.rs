@@ -95,7 +95,11 @@ impl FrameworkConfig {
         let mut plural = PluralStrategy::Icu;
 
         for lib in libraries {
-            known.extend_from_slice(lib.known_global_trans_fns());
+            for &g in lib.known_global_trans_fns() {
+                if !known.contains(&g) {
+                    known.push(g);
+                }
+            }
             for &m in lib.allowed_trans_fn_methods() {
                 if !methods.contains(&m) {
                     methods.push(m);

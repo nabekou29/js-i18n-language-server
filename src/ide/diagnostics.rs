@@ -10,13 +10,13 @@ use tower_lsp::lsp_types::{
 
 use crate::config::Severity;
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::key_match::is_child_key;
 use crate::ide::namespace::{
     filter_by_namespace,
     resolve_usage_namespace,
 };
 use crate::ide::plural::{
-    PluralStrategy,
     get_plural_base_key,
     has_plural_variants,
 };

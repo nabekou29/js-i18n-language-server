@@ -217,7 +217,7 @@ async fn handle_delete_unused_keys(
                     key,
                     &used_keys,
                     &key_separator,
-                    crate::ide::plural::PluralStrategy::SuffixBased,
+                    crate::framework::PluralStrategy::SuffixBased,
                 )
             })
             .cloned()

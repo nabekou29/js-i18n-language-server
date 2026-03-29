@@ -6,11 +6,9 @@ use std::path::PathBuf;
 use tower_lsp::lsp_types::Location;
 
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::namespace::resolve_usage_namespace;
-use crate::ide::plural::{
-    PluralStrategy,
-    get_plural_base_key,
-};
+use crate::ide::plural::get_plural_base_key;
 use crate::input::source::SourceFile;
 use crate::syntax::analyze_source;
 

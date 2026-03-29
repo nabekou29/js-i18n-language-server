@@ -7,14 +7,12 @@ use serde::{
 use tower_lsp::lsp_types::Range;
 
 use crate::db::I18nDatabase;
+use crate::framework::PluralStrategy;
 use crate::ide::namespace::{
     filter_by_namespace,
     resolve_usage_namespace,
 };
-use crate::ide::plural::{
-    PluralStrategy,
-    find_plural_variants,
-};
+use crate::ide::plural::find_plural_variants;
 use crate::input::source::SourceFile;
 use crate::input::translation::Translation;
 

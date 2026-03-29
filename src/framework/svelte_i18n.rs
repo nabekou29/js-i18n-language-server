@@ -20,6 +20,4 @@ impl I18nLibrary for SvelteI18n {
     fn plural_strategy(&self) -> PluralStrategy {
         PluralStrategy::Icu
     }
-
-    // No get_trans_fn argument parsing needed — uses default (None)
 }
