@@ -4,9 +4,9 @@
 //! `<script>` blocks and template expressions, building a virtual document
 //! that can be parsed by tree-sitter TypeScript.
 
-use tower_lsp::lsp_types::{
-    Position,
-    Range,
+use super::position_map::{
+    PositionMap,
+    PositionMapEntry,
 };
 
 /// Result of extracting JS/TS from a `.svelte` file.
@@ -16,52 +16,6 @@ pub struct SvelteExtraction {
     pub virtual_doc: String,
     /// Maps virtual document positions back to original `.svelte` file positions.
     pub position_map: PositionMap,
-}
-
-/// Maps positions in the virtual document to positions in the original `.svelte` file.
-#[derive(Debug, Default)]
-pub struct PositionMap {
-    entries: Vec<PositionMapEntry>,
-}
-
-#[derive(Debug)]
-struct PositionMapEntry {
-    /// Starting line in the virtual document.
-    virtual_line_start: u32,
-    /// Number of lines this entry covers (for script blocks).
-    virtual_line_count: u32,
-    /// Corresponding starting line in the original file.
-    original_line: u32,
-    /// Column offset: `original_col` = `virtual_col` + `column_offset`.
-    column_offset: i32,
-}
-
-impl PositionMap {
-    /// Remap a `Range` from virtual document coordinates to original file coordinates.
-    #[must_use]
-    pub fn remap(&self, range: Range) -> Range {
-        Range { start: self.remap_position(range.start), end: self.remap_position(range.end) }
-    }
-
-    fn remap_position(&self, pos: Position) -> Position {
-        for entry in self.entries.iter().rev() {
-            if pos.line >= entry.virtual_line_start
-                && pos.line < entry.virtual_line_start + entry.virtual_line_count
-            {
-                let line_offset = pos.line - entry.virtual_line_start;
-                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-                return Position {
-                    line: entry.original_line + line_offset,
-                    character: (i64::from(pos.character) + i64::from(entry.column_offset)) as u32,
-                };
-            }
-        }
-        pos
-    }
-
-    fn push(&mut self, entry: PositionMapEntry) {
-        self.entries.push(entry);
-    }
 }
 
 /// Extract JS/TS regions from a Svelte source file.
@@ -357,7 +311,10 @@ fn find_closing_brace(chars: &[char], open_pos: usize) -> Option<usize> {
 mod tests {
     use googletest::prelude::*;
     use rstest::*;
-    use tower_lsp::lsp_types::Position;
+    use tower_lsp::lsp_types::{
+        Position,
+        Range,
+    };
 
     use super::*;
 

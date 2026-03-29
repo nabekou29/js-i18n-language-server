@@ -1,5 +1,8 @@
 pub mod analyzer;
+pub mod position_map;
 pub mod svelte;
+
+use std::borrow::Cow;
 
 use crate::db::I18nDatabase;
 use crate::input::source::{
@@ -8,12 +11,34 @@ use crate::input::source::{
 };
 use crate::interned::TransKey;
 use crate::ir::key_usage::KeyUsage;
+use crate::syntax::position_map::SourcePreprocessed;
 use crate::types::{
     SourcePosition,
     SourceRange,
 };
 
+/// Preprocess source text for analysis.
+///
+/// Embedded-template languages (Svelte) extract JS/TS regions into a virtual document.
+/// Other languages pass through unchanged, avoiding allocation via `Cow::Borrowed`.
+pub(crate) fn preprocess(text: &str, language: ProgrammingLanguage) -> SourcePreprocessed<'_> {
+    match language {
+        ProgrammingLanguage::Svelte => {
+            let extraction = svelte::extract(text);
+            SourcePreprocessed {
+                source: Cow::Owned(extraction.virtual_doc),
+                position_map: Some(extraction.position_map),
+            }
+        }
+        _ => SourcePreprocessed { source: Cow::Borrowed(text), position_map: None },
+    }
+}
+
 /// Analyzes a source file and extracts key usages.
+///
+/// Uses a unified pipeline: preprocess → parse → remap positions.
+/// Embedded-template languages (Svelte) extract JS/TS regions first;
+/// other languages pass through unchanged.
 #[salsa::tracked]
 #[allow(clippy::needless_pass_by_value)]
 pub fn analyze_source(
@@ -24,16 +49,14 @@ pub fn analyze_source(
     let text = file.text(db);
     let language = file.language(db);
 
-    if language == ProgrammingLanguage::Svelte {
-        return analyze_svelte_source(db, text, &key_separator);
-    }
-
+    let preprocessed = preprocess(text, language);
     let tree_sitter_lang = language.tree_sitter_language();
     let queries = analyzer::query_loader::load_queries(language);
 
     let trans_fn_calls = analyzer::extractor::analyze_trans_fn_calls(
-        text,
+        &preprocessed.source,
         &tree_sitter_lang,
+        language,
         queries,
         &key_separator,
     )
@@ -43,36 +66,10 @@ pub fn analyze_source(
         .into_iter()
         .map(|call| {
             let key = TransKey::new(db, call.key);
-            let range: SourceRange = call.arg_key_node.into();
-            KeyUsage::new(db, key, range, call.namespace, call.namespaces)
-        })
-        .collect()
-}
-
-/// Svelte-specific analysis: extract JS/TS regions, parse, and remap positions.
-fn analyze_svelte_source<'db>(
-    db: &'db dyn I18nDatabase,
-    text: &str,
-    key_separator: &str,
-) -> Vec<KeyUsage<'db>> {
-    let extraction = svelte::extract(text);
-    let ts_lang = ProgrammingLanguage::TypeScript.tree_sitter_language();
-    let queries = analyzer::query_loader::load_queries(ProgrammingLanguage::Svelte);
-
-    let trans_fn_calls = analyzer::extractor::analyze_trans_fn_calls(
-        &extraction.virtual_doc,
-        &ts_lang,
-        queries,
-        key_separator,
-    )
-    .unwrap_or_default();
-
-    trans_fn_calls
-        .into_iter()
-        .map(|call| {
-            let key = TransKey::new(db, call.key);
-            let remapped_range = extraction.position_map.remap(call.arg_key_node);
-            let range: SourceRange = remapped_range.into();
+            let range: SourceRange = preprocessed
+                .position_map
+                .as_ref()
+                .map_or_else(|| call.arg_key_node.into(), |pm| pm.remap(call.arg_key_node).into());
             KeyUsage::new(db, key, range, call.namespace, call.namespaces)
         })
         .collect()
