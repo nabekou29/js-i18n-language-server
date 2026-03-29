@@ -198,7 +198,7 @@ fn extract_template_line(
         }
 
         // HTML tag attributes: look for directive/binding attributes
-        if chars.get(i).copied() == Some('<') && i + 1 < chars.len() && chars[i + 1].is_alphabetic()
+        if chars.get(i).copied() == Some('<') && chars.get(i + 1).is_some_and(|c| c.is_alphabetic())
         {
             let tag_end = find_tag_end(&chars, i);
             let byte_start = char_offset_to_byte(line, i);
@@ -266,8 +266,7 @@ fn extract_tag_attributes(
             // Find ="..."
             if let Some(eq_pos) = tag_content[pos..].find('=') {
                 let abs_eq = pos + eq_pos;
-                if abs_eq + 1 < bytes.len()
-                    && bytes[abs_eq + 1] == b'"'
+                if bytes.get(abs_eq + 1) == Some(&b'"')
                     && let Some(close_quote) = tag_content[abs_eq + 2..].find('"')
                 {
                     let expr_start = abs_eq + 2;
@@ -466,8 +465,10 @@ fn find_mustache_close(chars: &[char], start: usize) -> Option<usize> {
     let mut in_string = false;
     let mut string_char = ' ';
 
-    while i + 1 < chars.len() {
-        let c = chars[i];
+    while let Some(&c) = chars.get(i) {
+        if i + 1 >= chars.len() {
+            break;
+        }
 
         if in_string {
             if c == string_char && chars.get(i.wrapping_sub(1)).copied() != Some('\\') {
@@ -499,9 +500,7 @@ fn find_tag_end(chars: &[char], start: usize) -> Option<usize> {
     let mut in_quote = false;
     let mut quote_char = ' ';
 
-    while i < chars.len() {
-        let c = chars[i];
-
+    while let Some(&c) = chars.get(i) {
         if in_quote {
             if c == quote_char {
                 in_quote = false;
