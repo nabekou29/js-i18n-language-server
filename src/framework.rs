@@ -151,3 +151,141 @@ impl FrameworkConfig {
         self.libraries.iter().find_map(|lib| lib.parse_get_trans_fn_args(func_name, string_args))
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::expect_used, clippy::panic)]
+mod tests {
+    use googletest::prelude::*;
+    use rstest::*;
+
+    use super::*;
+
+    // --- applicable_libraries ---
+
+    #[rstest]
+    #[case::jsx(ProgrammingLanguage::Jsx, 2)]
+    #[case::tsx(ProgrammingLanguage::Tsx, 2)]
+    #[case::js(ProgrammingLanguage::JavaScript, 3)]
+    #[case::ts(ProgrammingLanguage::TypeScript, 3)]
+    #[case::svelte(ProgrammingLanguage::Svelte, 1)]
+    fn applicable_libraries_count(#[case] lang: ProgrammingLanguage, #[case] expected: usize) {
+        assert_that!(applicable_libraries(lang).len(), eq(expected));
+    }
+
+    // --- FrameworkConfig merge ---
+
+    #[rstest]
+    fn jsx_config_has_i18next_globals_but_not_svelte() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::Jsx);
+
+        assert!(config.known_global_trans_fns.contains(&"i18next.t"));
+        assert!(config.known_global_trans_fns.contains(&"i18n.t"));
+        assert!(!config.known_global_trans_fns.contains(&"$_"));
+    }
+
+    #[rstest]
+    fn jsx_config_has_next_intl_methods() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::Jsx);
+
+        assert!(config.allowed_trans_fn_methods.contains(&"rich"));
+        assert!(config.allowed_trans_fn_methods.contains(&"markup"));
+        assert!(config.allowed_trans_fn_methods.contains(&"raw"));
+    }
+
+    #[rstest]
+    fn js_config_includes_all_frameworks() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::JavaScript);
+
+        assert!(config.known_global_trans_fns.contains(&"i18next.t"));
+        assert!(config.known_global_trans_fns.contains(&"$_"));
+        assert!(config.known_global_trans_fns.contains(&"$t"));
+        assert!(config.allowed_trans_fn_methods.contains(&"rich"));
+    }
+
+    #[rstest]
+    fn svelte_config_has_only_svelte_i18n() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::Svelte);
+
+        assert!(config.known_global_trans_fns.contains(&"$_"));
+        assert!(!config.known_global_trans_fns.contains(&"i18next.t"));
+        assert_that!(config.allowed_trans_fn_methods, is_empty());
+    }
+
+    // --- PluralStrategy merge ---
+
+    #[rstest]
+    fn js_plural_strategy_is_suffix_based() {
+        // i18next (SuffixBased) wins over next-intl/svelte-i18n (Icu)
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::JavaScript);
+        assert_that!(config.plural_strategy, eq(PluralStrategy::SuffixBased));
+    }
+
+    #[rstest]
+    fn svelte_plural_strategy_is_icu() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::Svelte);
+        assert_that!(config.plural_strategy, eq(PluralStrategy::Icu));
+    }
+
+    #[rstest]
+    fn tsx_plural_strategy_is_suffix_based() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::Tsx);
+        assert_that!(config.plural_strategy, eq(PluralStrategy::SuffixBased));
+    }
+
+    // --- parse_get_trans_fn_args delegation ---
+
+    #[rstest]
+    fn js_delegates_get_fixed_t_to_i18next() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::JavaScript);
+        let args =
+            vec![Some("en".to_string()), Some("common".to_string()), Some("prefix".to_string())];
+
+        let parsed = config.parse_get_trans_fn_args("getFixedT", &args).unwrap();
+        assert_that!(parsed.namespace, some(eq("common")));
+        assert_that!(parsed.key_prefix, some(eq("prefix")));
+    }
+
+    #[rstest]
+    fn js_delegates_use_translations_to_next_intl() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::JavaScript);
+        let args = vec![Some("Messages".to_string())];
+
+        let parsed = config.parse_get_trans_fn_args("useTranslations", &args).unwrap();
+        assert_that!(parsed.namespace, none());
+        assert_that!(parsed.key_prefix, some(eq("Messages")));
+    }
+
+    #[rstest]
+    fn svelte_does_not_parse_get_fixed_t() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::Svelte);
+        let args = vec![Some("en".to_string())];
+
+        assert_that!(config.parse_get_trans_fn_args("getFixedT", &args), none());
+    }
+
+    #[rstest]
+    fn unknown_func_returns_none() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::JavaScript);
+        assert_that!(config.parse_get_trans_fn_args("unknownFunc", &[]), none());
+    }
+
+    // --- Deduplication ---
+
+    #[rstest]
+    fn no_duplicate_globals() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::JavaScript);
+        let mut seen = std::collections::HashSet::new();
+        for g in &config.known_global_trans_fns {
+            assert!(seen.insert(g), "duplicate global: {g}");
+        }
+    }
+
+    #[rstest]
+    fn no_duplicate_methods() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::JavaScript);
+        let mut seen = std::collections::HashSet::new();
+        for m in &config.allowed_trans_fn_methods {
+            assert!(seen.insert(m), "duplicate method: {m}");
+        }
+    }
+}

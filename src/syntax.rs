@@ -87,3 +87,105 @@ pub fn key_usage_at_position(
     let usages = analyze_source(db, file, key_separator);
     usages.into_iter().find(|usage| usage.range(db).contains(position))
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::expect_used, clippy::panic)]
+mod tests {
+    use googletest::prelude::*;
+    use rstest::*;
+
+    use super::*;
+    use crate::db::I18nDatabaseImpl;
+    use crate::input::source::ProgrammingLanguage;
+
+    #[rstest]
+    fn analyze_source_typescript() {
+        let db = I18nDatabaseImpl::default();
+        let source = r#"const { t } = useTranslation(); t("hello");"#;
+        let file = SourceFile::new(
+            &db,
+            "test.ts".to_string(),
+            source.to_string(),
+            ProgrammingLanguage::TypeScript,
+        );
+
+        let usages = analyze_source(&db, file, ".".to_string());
+        assert_that!(usages.len(), eq(1));
+        assert_that!(usages[0].key(&db).text(&db), eq("hello"));
+    }
+
+    #[rstest]
+    fn analyze_source_svelte_script_block() {
+        let db = I18nDatabaseImpl::default();
+        let source = "<script>\n  import { _ } from 'svelte-i18n';\n  $_('greeting');\n</script>";
+        let file = SourceFile::new(
+            &db,
+            "test.svelte".to_string(),
+            source.to_string(),
+            ProgrammingLanguage::Svelte,
+        );
+
+        let usages = analyze_source(&db, file, ".".to_string());
+        assert_that!(usages.len(), eq(1));
+        assert_that!(usages[0].key(&db).text(&db), eq("greeting"));
+    }
+
+    #[rstest]
+    fn analyze_source_svelte_template_expression() {
+        let db = I18nDatabaseImpl::default();
+        let source = "<p>{$_('template.key')}</p>";
+        let file = SourceFile::new(
+            &db,
+            "test.svelte".to_string(),
+            source.to_string(),
+            ProgrammingLanguage::Svelte,
+        );
+
+        let usages = analyze_source(&db, file, ".".to_string());
+        assert_that!(usages.len(), eq(1));
+        assert_that!(usages[0].key(&db).text(&db), eq("template.key"));
+    }
+
+    #[rstest]
+    fn analyze_source_svelte_remaps_positions() {
+        let db = I18nDatabaseImpl::default();
+        // Line 0: <script>
+        // Line 1:   $_('key')
+        // Line 2: </script>
+        let source = "<script>\n  $_('key')\n</script>";
+        let file = SourceFile::new(
+            &db,
+            "test.svelte".to_string(),
+            source.to_string(),
+            ProgrammingLanguage::Svelte,
+        );
+
+        let usages = analyze_source(&db, file, ".".to_string());
+        assert_that!(usages.len(), eq(1));
+
+        // The key 'key' should be remapped to original line 1 (inside <script>)
+        let range = usages[0].range(&db);
+        assert_that!(range.start.line, eq(1));
+    }
+
+    #[rstest]
+    fn preprocess_non_svelte_borrows() {
+        let text = "const t = useTranslation();";
+        let result = preprocess(text, ProgrammingLanguage::TypeScript);
+
+        assert!(result.position_map.is_none());
+        // Cow::Borrowed — no allocation
+        assert!(matches!(result.source, Cow::Borrowed(_)));
+        assert_eq!(&*result.source, text);
+    }
+
+    #[rstest]
+    fn preprocess_svelte_extracts_virtual_doc() {
+        let text = "<script>\n  $_('key')\n</script>";
+        let result = preprocess(text, ProgrammingLanguage::Svelte);
+
+        assert!(result.position_map.is_some());
+        assert!(matches!(result.source, Cow::Owned(_)));
+        assert!(result.source.contains("$_('key')"));
+    }
+}
