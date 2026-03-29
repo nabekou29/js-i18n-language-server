@@ -122,40 +122,15 @@ fn get_node_range(node: Node<'_>) -> Range {
     )
 }
 
-/// Extracts translation function calls from a Tree-sitter syntax tree.
+/// Collects, sorts, and deduplicates captures from all queries.
 ///
-/// # Errors
-/// Returns `AnalyzerError` if:
-/// - Language setup fails
-/// - Source code parsing fails
-/// - Query execution encounters issues
-pub fn analyze_trans_fn_calls(
-    source: &str,
-    language: &Language,
-    programming_language: ProgrammingLanguage,
+/// Returns captures sorted by source position with `GetTransFn` before `CallTransFn` at equal positions.
+fn collect_and_sort_captures<'a>(
     queries: &[Query],
-    key_separator: &str,
-) -> Result<Vec<TransFnCall>, AnalyzerError> {
-    let config = FrameworkConfig::for_language(programming_language);
-    let mut parser = Parser::new();
-    parser.set_language(language).map_err(AnalyzerError::LanguageSetup)?;
-    let tree = parser.parse(source, None).ok_or(AnalyzerError::ParseFailed)?;
-
-    let source_bytes = source.as_bytes();
-
-    let mut calls = Vec::new();
-    let root_node = tree.root_node();
-
-    let mut scopes = Scopes::new();
-
-    // Add default scope for bare `t` function
-    scopes.push_scope("t".to_string(), ScopeInfo::new(root_node, GetTransFnDetail::new("t")));
-
-    // Collect matches from all queries and process them in source position order.
-    // This ensures that translation function definitions (e.g., useTranslation) are
-    // processed before their call sites, even when defined in separate query files
-    // (e.g., i18next.scm and react-i18next.scm).
-    let mut all_captures: Vec<(usize, CaptureName, Node<'_>, usize)> = Vec::new();
+    root_node: Node<'a>,
+    source_bytes: &'a [u8],
+) -> Vec<(usize, CaptureName, Node<'a>, usize)> {
+    let mut all_captures: Vec<(usize, CaptureName, Node<'a>, usize)> = Vec::new();
 
     for (query_idx, query) in queries.iter().enumerate() {
         let cap_names = query.capture_names();
@@ -198,6 +173,40 @@ pub fn analyze_trans_fn_calls(
     // Multiple query patterns (e.g., string-based and selector-based t() calls) can match
     // the same node, producing duplicate CallTransFn entries.
     all_captures.dedup_by(|a, b| a.1 == b.1 && a.3 == b.3 && a.0 == b.0);
+
+    all_captures
+}
+
+/// Extracts translation function calls from a Tree-sitter syntax tree.
+///
+/// # Errors
+/// Returns `AnalyzerError` if:
+/// - Language setup fails
+/// - Source code parsing fails
+/// - Query execution encounters issues
+pub fn analyze_trans_fn_calls(
+    source: &str,
+    language: &Language,
+    programming_language: ProgrammingLanguage,
+    queries: &[Query],
+    key_separator: &str,
+) -> Result<Vec<TransFnCall>, AnalyzerError> {
+    let config = FrameworkConfig::for_language(programming_language);
+    let mut parser = Parser::new();
+    parser.set_language(language).map_err(AnalyzerError::LanguageSetup)?;
+    let tree = parser.parse(source, None).ok_or(AnalyzerError::ParseFailed)?;
+
+    let source_bytes = source.as_bytes();
+
+    let mut calls = Vec::new();
+    let root_node = tree.root_node();
+
+    let mut scopes = Scopes::new();
+
+    // Add default scope for bare `t` function
+    scopes.push_scope("t".to_string(), ScopeInfo::new(root_node, GetTransFnDetail::new("t")));
+
+    let all_captures = collect_and_sort_captures(queries, root_node, source_bytes);
 
     for (query_idx, capture_name, node, _) in all_captures {
         let Some(query) = queries.get(query_idx) else {
@@ -574,9 +583,10 @@ fn parse_call_trans_fn_captures<'a>(
     }
 
     // Handle Selector API: t($ => $.a.b.c)
+    // Use unwrap_or_default for incomplete selectors (e.g., `$ => $.common.`) to support completion
     if let Some(selector_node) = selector_fn_node {
-        let selector_key = extract_selector_key(selector_node, source_bytes, key_separator)
-            .ok_or(AnalyzerError::ParseFailed)?;
+        let selector_key =
+            extract_selector_key(selector_node, source_bytes, key_separator).unwrap_or_default();
 
         return Ok(CallTransFnDetail {
             trans_fn_name: trans_fn_name.unwrap_or_else(|| "t".to_string()),

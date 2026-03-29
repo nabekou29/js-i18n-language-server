@@ -34,6 +34,9 @@ pub enum QuoteContext {
 
     /// Inside quotes (e.g., `t("|")` or `t("com|mon")`)
     InsideQuotes { key_start: Position, key_end: Position, partial_key: String },
+
+    /// Inside a selector arrow function (e.g., `t($ => $.common.|)`)
+    Selector { body_start: Position, body_end: Position, param_name: String },
 }
 
 #[derive(Debug, Clone)]
@@ -141,6 +144,23 @@ pub fn generate_completions(
                     new_text: insert_key.clone(),
                 }));
             }
+            QuoteContext::Selector { body_start, body_end, param_name } => {
+                // Convert key to member expression syntax: "a.b.c" → "$.a.b.c"
+                let member_key = if key_separator == "." {
+                    insert_key.clone()
+                } else {
+                    insert_key.split(key_separator).collect::<Vec<_>>().join(".")
+                };
+                let new_text = if member_key.is_empty() {
+                    param_name.clone()
+                } else {
+                    format!("{param_name}.{member_key}")
+                };
+                item.text_edit = Some(CompletionTextEdit::Edit(TextEdit {
+                    range: Range::new(*body_start, *body_end),
+                    new_text,
+                }));
+            }
         }
 
         completion_items.push(item);
@@ -149,6 +169,51 @@ pub fn generate_completions(
     completion_items.sort_by(|a, b| a.label.cmp(&b.label));
 
     completion_items
+}
+
+/// Extracts selector completion context from arrow function argument text.
+///
+/// Parses text like `$ => $.common.hello` and returns body positions, param name, and partial key.
+#[allow(clippy::cast_possible_truncation)]
+fn extract_selector_context(
+    arg_text: &str,
+    _arg_start_char: usize,
+    arg_end_char: usize,
+    arg_line: u32,
+    cursor_char: usize,
+    key_separator: &str,
+) -> Option<(Position, Position, String, String)> {
+    let arrow_pos = arg_text.find("=>")?;
+    let after_arrow = arg_text[arrow_pos + 2..].trim_start();
+    let body_start_char = arg_end_char - after_arrow.len();
+
+    let param_end = after_arrow.find(['.', '[']).unwrap_or(after_arrow.len());
+    let param_name = &after_arrow[..param_end];
+
+    let key_text_offset = if after_arrow.as_bytes().get(param_end) == Some(&b'.') {
+        param_end + 1
+    } else {
+        param_end
+    };
+
+    let key_start_char = body_start_char + key_text_offset;
+
+    let partial_key = if cursor_char >= key_start_char && cursor_char <= arg_end_char {
+        let raw = &arg_text[(arg_text.len() - (arg_end_char - key_start_char))
+            ..(arg_text.len() - (arg_end_char - cursor_char))];
+        if key_separator == "." {
+            raw.to_string()
+        } else {
+            raw.split('.').collect::<Vec<_>>().join(key_separator)
+        }
+    } else {
+        String::new()
+    };
+
+    let body_start = Position::new(arg_line, body_start_char as u32);
+    let body_end = Position::new(arg_line, arg_end_char as u32);
+
+    Some((body_start, body_end, param_name.to_string(), partial_key))
 }
 
 /// Extracts completion context using tree-sitter.
@@ -206,6 +271,24 @@ pub fn extract_completion_context_tree_sitter(
         }
 
         let arg_text = &arg_start_line[arg_start_char..arg_end_char];
+
+        // Selector API: t($ => $.common.hello) or t(($) => $.common.hello)
+        if arg_text.contains("=>")
+            && let Some((body_start, body_end, param_name, partial_key)) = extract_selector_context(
+                arg_text,
+                arg_start_char,
+                arg_end_char,
+                arg_range.start.line,
+                character as usize,
+                key_separator,
+            )
+        {
+            return Some(CompletionContext {
+                partial_key,
+                quote_context: QuoteContext::Selector { body_start, body_end, param_name },
+                key_prefix: call.key_prefix.clone(),
+            });
+        }
 
         let first_char = arg_text.chars().next()?;
 
@@ -934,5 +1017,127 @@ const msg = foo();
         let items = generate_completions(&db, &translations, None, &quote_context, None, None, ".");
 
         assert!(items.is_empty());
+    }
+
+    // ===== Selector API completion tests =====
+
+    #[rstest]
+    fn extract_completion_context_selector_basic() {
+        let text = r"
+const { t } = useTranslation();
+const msg = t($ => $.common.hello);
+";
+        //                 ^ col 14       ^ col 28
+        let language = ProgrammingLanguage::JavaScript;
+
+        // Line 2: const msg = t($ => $.common.hello);
+        // Cursor at col 28 = 'h' of 'hello', partial_key up to cursor = "common."
+        let result = extract_completion_context_tree_sitter(text, language, 2, 28, ".");
+
+        assert_that!(result.is_some(), eq(true));
+        let context = result.unwrap();
+        assert_that!(context.partial_key, eq("common."));
+        assert_that!(matches!(context.quote_context, QuoteContext::Selector { .. }), eq(true));
+    }
+
+    #[rstest]
+    fn extract_completion_context_selector_with_parens() {
+        let text = r"
+const { t } = useTranslation();
+const msg = t(($) => $.common.hello);
+";
+        let language = ProgrammingLanguage::JavaScript;
+
+        // ($) => $.common.hello
+        // Cursor somewhere inside the key portion
+        let result = extract_completion_context_tree_sitter(text, language, 2, 31, ".");
+
+        assert_that!(result.is_some(), eq(true));
+        let context = result.unwrap();
+        assert_that!(context.partial_key, eq("common.h"));
+        assert_that!(matches!(context.quote_context, QuoteContext::Selector { .. }), eq(true));
+    }
+
+    #[rstest]
+    fn generate_completions_selector_text_edit() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "/test/en.json".to_string(),
+            HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let body_start = Position::new(1, 10);
+        let body_end = Position::new(1, 20);
+        let quote_context =
+            QuoteContext::Selector { body_start, body_end, param_name: "$".to_string() };
+
+        let items = generate_completions(
+            &db,
+            &translations,
+            Some("common."),
+            &quote_context,
+            None,
+            None,
+            ".",
+        );
+
+        assert_eq!(items.len(), 1);
+
+        // Selector inserts member expression: $.common.hello
+        if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert_eq!(edit.new_text, "$.common.hello");
+            assert_eq!(edit.range.start, body_start);
+            assert_eq!(edit.range.end, body_end);
+        } else {
+            panic!("Expected TextEdit");
+        }
+    }
+
+    #[rstest]
+    fn generate_completions_selector_with_key_prefix() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "/test/en.json".to_string(),
+            HashMap::from([("common.hello".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+
+        let translations = vec![en_translation];
+        let body_start = Position::new(1, 10);
+        let body_end = Position::new(1, 15);
+        let quote_context =
+            QuoteContext::Selector { body_start, body_end, param_name: "$".to_string() };
+
+        // With keyPrefix "common", insert_key becomes "hello"
+        let items = generate_completions(
+            &db,
+            &translations,
+            None,
+            &quote_context,
+            Some("common"),
+            None,
+            ".",
+        );
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "hello");
+
+        if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert_eq!(edit.new_text, "$.hello");
+        } else {
+            panic!("Expected TextEdit");
+        }
     }
 }
