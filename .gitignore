@@ -215,3 +215,7 @@ Temporary Items
 nohup.out
 
 .repro_minimal
+
+# Playground (npm)
+playground/*/node_modules/
+playground/*/dist/

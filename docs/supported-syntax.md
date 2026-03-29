@@ -6,6 +6,7 @@
 - [react-i18next](https://react.i18next.com/)
 - [next-intl](https://next-intl-docs.vercel.app/)
 - [svelte-i18n](https://github.com/kaisermann/svelte-i18n)
+- [vue-i18n](https://vue-i18n.intlify.dev/)
 
 ## Translation Function Calls
 
@@ -158,6 +159,82 @@ const messages = defineMessages({
 })
 ```
 
+## vue-i18n
+
+Vue.js i18n library support. Works in `.vue` files (both `<script>` and `<template>`) and plain `.js`/`.ts` files. Targets v9+ (Vue 3 Composition API) with v8 (Legacy API) compatibility.
+
+Also covers `petite-vue-i18n` and `@nuxtjs/i18n` (same API).
+
+### Composition API
+
+```vue
+<script setup>
+import { useI18n } from 'vue-i18n'
+
+// Destructuring
+const { t, te, tm } = useI18n()
+t('key')
+te('key')  // Key existence check
+tm('key')  // Raw message object
+
+// Object access pattern
+const i18n = useI18n()
+i18n.t('key')
+</script>
+```
+
+### Options API
+
+```vue
+<script>
+export default {
+  computed: {
+    title() { return this.$t('greeting') },
+    exists() { return this.$te('optional') }
+  }
+}
+</script>
+```
+
+### Template Patterns
+
+```vue
+<template>
+  <!-- Mustache interpolation -->
+  {{ $t('message.hello') }}
+
+  <!-- Attribute binding -->
+  <input :placeholder="$t('form.placeholder')" />
+
+  <!-- Directives -->
+  <span v-if="$te('optional')">{{ $t('optional') }}</span>
+  <span v-show="$te('visible')">{{ $t('visible') }}</span>
+
+  <!-- Translation component (v9+) -->
+  <i18n-t keypath="terms" tag="p">
+    <template #link><a href="/tos">{{ $t('tos') }}</a></template>
+  </i18n-t>
+
+  <!-- Translation component (v8) -->
+  <i18n path="terms" tag="p">
+    <a slot="link" href="/tos">{{ $t('tos') }}</a>
+  </i18n>
+
+  <!-- v-t directive -->
+  <p v-t="'message.hello'"></p>
+  <p v-t="{ path: 'message.hello', args: { name: userName } }"></p>
+</template>
+```
+
+### Global Functions
+
+| Function | Purpose |
+|----------|---------|
+| `$t(key)` | Translate |
+| `$tc(key, count)` | Pluralize (deprecated v10) |
+| `$te(key)` | Key existence check |
+| `$tm(key)` | Raw message object |
+
 ## File Types
 
 | Extension | tree-sitter Parser | Notes |
@@ -167,3 +244,4 @@ const messages = defineMessages({
 | `.ts` | TypeScript | |
 | `.tsx` | TSX | |
 | `.svelte` | TypeScript (extracted) | `<script>` blocks and template expressions are extracted and parsed as TypeScript |
+| `.vue` | TypeScript (extracted) | `<script>` blocks and template expressions are extracted and parsed as TypeScript |

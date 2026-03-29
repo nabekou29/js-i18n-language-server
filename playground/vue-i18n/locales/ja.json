@@ -1,0 +1,31 @@
+{
+  "app": {
+    "title": "Vue i18n サンプル",
+    "language": "言語選択"
+  },
+  "page": {
+    "title": "ページタイトル",
+    "description": "ページの説明"
+  },
+  "message": {
+    "hello": "こんにちは",
+    "welcome": "ようこそ、{name}さん！",
+    "goodbye": "さようなら"
+  },
+  "form": {
+    "placeholder": "テキストを入力...",
+    "submit": "送信"
+  },
+  "terms": "{link}をお読みください。",
+  "tos": "利用規約",
+  "optional": "オプションコンテンツ",
+  "visible": "表示コンテンツ",
+  "common": {
+    "ok": "OK",
+    "cancel": "キャンセル"
+  },
+  "plural": {
+    "car": "車がありません | 車が1台 | 車が{count}台",
+    "apple": "りんごがありません | りんごが1個 | りんごが{count}個"
+  }
+}

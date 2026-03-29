@@ -3,6 +3,7 @@
 pub mod i18next;
 pub mod next_intl;
 pub mod svelte_i18n;
+pub mod vue_i18n;
 
 use std::sync::OnceLock;
 
@@ -59,9 +60,10 @@ pub fn applicable_libraries(lang: ProgrammingLanguage) -> &'static [&'static dyn
             &[&i18next::I18next, &next_intl::NextIntl]
         }
         ProgrammingLanguage::JavaScript | ProgrammingLanguage::TypeScript => {
-            &[&i18next::I18next, &next_intl::NextIntl, &svelte_i18n::SvelteI18n]
+            &[&i18next::I18next, &next_intl::NextIntl, &svelte_i18n::SvelteI18n, &vue_i18n::VueI18n]
         }
         ProgrammingLanguage::Svelte => &[&svelte_i18n::SvelteI18n],
+        ProgrammingLanguage::Vue => &[&vue_i18n::VueI18n],
     }
 }
 
@@ -125,6 +127,7 @@ impl FrameworkConfig {
         static TS: OnceLock<FrameworkConfig> = OnceLock::new();
         static TSX: OnceLock<FrameworkConfig> = OnceLock::new();
         static SVELTE: OnceLock<FrameworkConfig> = OnceLock::new();
+        static VUE: OnceLock<FrameworkConfig> = OnceLock::new();
 
         match lang {
             ProgrammingLanguage::JavaScript => {
@@ -138,6 +141,7 @@ impl FrameworkConfig {
             ProgrammingLanguage::Svelte => {
                 SVELTE.get_or_init(|| Self::build(ProgrammingLanguage::Svelte))
             }
+            ProgrammingLanguage::Vue => VUE.get_or_init(|| Self::build(ProgrammingLanguage::Vue)),
         }
     }
 
@@ -165,9 +169,10 @@ mod tests {
     #[rstest]
     #[case::jsx(ProgrammingLanguage::Jsx, 2)]
     #[case::tsx(ProgrammingLanguage::Tsx, 2)]
-    #[case::js(ProgrammingLanguage::JavaScript, 3)]
-    #[case::ts(ProgrammingLanguage::TypeScript, 3)]
+    #[case::js(ProgrammingLanguage::JavaScript, 4)]
+    #[case::ts(ProgrammingLanguage::TypeScript, 4)]
     #[case::svelte(ProgrammingLanguage::Svelte, 1)]
+    #[case::vue(ProgrammingLanguage::Vue, 1)]
     fn applicable_libraries_count(#[case] lang: ProgrammingLanguage, #[case] expected: usize) {
         assert_that!(applicable_libraries(lang).len(), eq(expected));
     }
@@ -211,6 +216,19 @@ mod tests {
         assert_that!(config.allowed_trans_fn_methods, is_empty());
     }
 
+    #[rstest]
+    fn vue_config_has_only_vue_i18n() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::Vue);
+
+        assert!(config.known_global_trans_fns.contains(&"$t"));
+        assert!(config.known_global_trans_fns.contains(&"$tc"));
+        assert!(config.known_global_trans_fns.contains(&"$te"));
+        assert!(config.known_global_trans_fns.contains(&"$tm"));
+        assert!(!config.known_global_trans_fns.contains(&"i18next.t"));
+        assert!(!config.known_global_trans_fns.contains(&"$_"));
+        assert_that!(config.allowed_trans_fn_methods, is_empty());
+    }
+
     // --- PluralStrategy merge ---
 
     #[rstest]
@@ -223,6 +241,12 @@ mod tests {
     #[rstest]
     fn svelte_plural_strategy_is_icu() {
         let config = FrameworkConfig::for_language(ProgrammingLanguage::Svelte);
+        assert_that!(config.plural_strategy, eq(PluralStrategy::Icu));
+    }
+
+    #[rstest]
+    fn vue_plural_strategy_is_icu() {
+        let config = FrameworkConfig::for_language(ProgrammingLanguage::Vue);
         assert_that!(config.plural_strategy, eq(PluralStrategy::Icu));
     }
 

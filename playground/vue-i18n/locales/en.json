@@ -1,0 +1,31 @@
+{
+  "app": {
+    "title": "Vue i18n Examples",
+    "language": "Select Language"
+  },
+  "page": {
+    "title": "Page Title",
+    "description": "Page Description"
+  },
+  "message": {
+    "hello": "Hello",
+    "welcome": "Welcome, {name}!",
+    "goodbye": "Goodbye"
+  },
+  "form": {
+    "placeholder": "Enter text...",
+    "submit": "Submit"
+  },
+  "terms": "Please read the {link}.",
+  "tos": "Terms of Service",
+  "optional": "Optional content",
+  "visible": "Visible content",
+  "common": {
+    "ok": "OK",
+    "cancel": "Cancel"
+  },
+  "plural": {
+    "car": "no cars | one car | {count} cars",
+    "apple": "no apples | one apple | {count} apples"
+  }
+}
