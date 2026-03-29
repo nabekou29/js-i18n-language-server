@@ -1022,6 +1022,27 @@ const msg = foo();
     // ===== Selector API completion tests =====
 
     #[rstest]
+    fn extract_completion_context_selector_trailing_dot() {
+        // t($ => $.common.|)  — cursor right after the trailing dot
+        //                  ^ completion should trigger here
+        let text = r"
+const { t } = useTranslation();
+const msg = t($ => $.common.);
+";
+        let language = ProgrammingLanguage::JavaScript;
+
+        // Line 2: const msg = t($ => $.common.);
+        //                       ^14        ^27=. ^28=)
+        // The extended selector range includes the trailing '.', so cursor at col 28 is within range.
+        let result = extract_completion_context_tree_sitter(text, language, 2, 28, ".");
+
+        assert_that!(result.is_some(), eq(true));
+        let context = result.unwrap();
+        assert_that!(context.partial_key, eq("common."));
+        assert_that!(matches!(context.quote_context, QuoteContext::Selector { .. }), eq(true));
+    }
+
+    #[rstest]
     fn extract_completion_context_selector_basic() {
         let text = r"
 const { t } = useTranslation();

@@ -275,7 +275,9 @@ pub fn analyze_trans_fn_calls(
                         |prefix| format!("{}{}{}", prefix, key_separator, &call_trans_fn.key),
                     ),
                     arg_key: call_trans_fn.key.clone(),
-                    arg_key_node: get_node_range(arg_key_node),
+                    arg_key_node: call_trans_fn
+                        .arg_key_range
+                        .unwrap_or_else(|| get_node_range(arg_key_node)),
                     key_prefix,
                     namespace,
                     namespaces,
@@ -391,6 +393,23 @@ fn extract_selector_key_parts(
         }
         _ => None,
     }
+}
+
+/// Extends a node's range to include trailing accessor operators (`.` or `[`).
+///
+/// Tree-sitter excludes trailing accessors from incomplete expressions like `$.common.`,
+/// so we scan the source bytes and extend the range to cover them.
+#[allow(clippy::cast_possible_truncation)]
+fn extend_range_past_accessors(node: Node<'_>, source_bytes: &[u8]) -> Range {
+    let mut range = get_node_range(node);
+    let mut byte = node.end_byte();
+    while source_bytes.get(byte).is_some_and(|&b| matches!(b, b'.' | b'[')) {
+        byte += 1;
+    }
+    if byte > node.end_byte() {
+        range.end.character += (byte - node.end_byte()) as u32;
+    }
+    range
 }
 
 /// Extracts a translation key from a selector arrow function node.
@@ -588,12 +607,17 @@ fn parse_call_trans_fn_captures<'a>(
         let selector_key =
             extract_selector_key(selector_node, source_bytes, key_separator).unwrap_or_default();
 
+        // Extend the range past trailing accessor operators (`.` or `[`) that tree-sitter
+        // excludes from the arrow function node for incomplete expressions like `$ => $.common.`
+        let extended_range = extend_range_past_accessors(selector_node, source_bytes);
+
         return Ok(CallTransFnDetail {
             trans_fn_name: trans_fn_name.unwrap_or_else(|| "t".to_string()),
             key: selector_key,
             key_node: selector_node,
             arg_key_node: selector_node,
             explicit_namespace,
+            arg_key_range: Some(extended_range),
         });
     }
 
@@ -621,6 +645,7 @@ fn parse_call_trans_fn_captures<'a>(
         key_node: key_node.unwrap_or(arg_key_node),
         arg_key_node,
         explicit_namespace,
+        arg_key_range: None,
     })
 }
 
@@ -1856,6 +1881,22 @@ function Component() {
     }
 
     // ===== Selector API tests =====
+
+    #[rstest]
+    fn test_selector_api_incomplete_trailing_dot(queries: Vec<Query>, js_lang: Language) {
+        // Incomplete selector: trailing dot (mid-typing scenario for completion)
+        let code = r"
+            const { t } = useTranslation();
+            const msg = t($ => $.common.);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        // Should produce a TransFnCall (possibly with partial key) for completion support
+        assert_that!(calls.len(), ge(1));
+    }
 
     #[rstest]
     fn test_selector_api_basic(queries: Vec<Query>, js_lang: Language) {

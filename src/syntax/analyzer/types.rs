@@ -94,6 +94,9 @@ pub struct CallTransFnDetail<'a> {
     pub key_node: Node<'a>,
     pub arg_key_node: Node<'a>,
     pub explicit_namespace: Option<String>,
+    /// Overrides the range computed from `arg_key_node` when set.
+    /// Used by Selector API to extend the range past trailing accessor operators.
+    pub arg_key_range: Option<Range>,
 }
 
 #[derive(Debug, Clone, Default)]
