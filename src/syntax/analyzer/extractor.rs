@@ -194,6 +194,11 @@ pub fn analyze_trans_fn_calls(
         })
     });
 
+    // Deduplicate captures at the same position with the same type from the same query.
+    // Multiple query patterns (e.g., string-based and selector-based t() calls) can match
+    // the same node, producing duplicate CallTransFn entries.
+    all_captures.dedup_by(|a, b| a.1 == b.1 && a.3 == b.3 && a.0 == b.0);
+
     for (query_idx, capture_name, node, _) in all_captures {
         let Some(query) = queries.get(query_idx) else {
             continue;
@@ -217,9 +222,13 @@ pub fn analyze_trans_fn_calls(
                 scopes.push_scope(trans_fn_name, ScopeInfo::new(scope_node, trans_fn));
             }
             CaptureName::CallTransFn => {
-                let Ok(call_trans_fn) =
-                    parse_call_trans_fn_captures(query, node, source_bytes, cap_names)
-                else {
+                let Ok(call_trans_fn) = parse_call_trans_fn_captures(
+                    query,
+                    node,
+                    source_bytes,
+                    cap_names,
+                    key_separator,
+                ) else {
                     continue;
                 };
 
@@ -294,6 +303,99 @@ pub fn parse_key_with_namespace(
         || (None, key.to_string()),
         |(ns, key_part)| (Some(ns.to_string()), key_part.to_string()),
     )
+}
+
+/// Extracts the parameter name from an arrow function node.
+///
+/// Handles both `$ => ...` (`parameter` field) and `($) => ...` (`parameters`/`formal_parameters` field).
+/// In TypeScript/TSX, parameters are wrapped in `required_parameter` nodes.
+fn extract_arrow_param_name(arrow_fn: Node<'_>, source_bytes: &[u8]) -> Option<String> {
+    // `$ => ...` — single identifier parameter (JS only)
+    if let Some(param) = arrow_fn.child_by_field_name("parameter")
+        && param.kind() == "identifier"
+    {
+        return extract_node_text(param, source_bytes);
+    }
+    // `($) => ...` — formal_parameters wrapping an identifier or required_parameter
+    if let Some(params) = arrow_fn.child_by_field_name("parameters")
+        && params.kind() == "formal_parameters"
+    {
+        for i in 0..params.named_child_count() {
+            #[allow(clippy::cast_possible_truncation)]
+            if let Some(child) = params.named_child(i as u32) {
+                match child.kind() {
+                    // JavaScript: (identifier)
+                    "identifier" => return extract_node_text(child, source_bytes),
+                    // TypeScript/TSX: (required_parameter pattern: (identifier))
+                    "required_parameter" => {
+                        if let Some(pattern) = child.child_by_field_name("pattern")
+                            && pattern.kind() == "identifier"
+                        {
+                            return extract_node_text(pattern, source_bytes);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Recursively extracts key segments from a selector expression body.
+///
+/// Walks the `member_expression` / `subscript_expression` chain and collects property names.
+/// Returns `None` if the chain doesn't start with the expected parameter.
+fn extract_selector_key_parts(
+    node: Node<'_>,
+    param_name: &str,
+    source_bytes: &[u8],
+) -> Option<Vec<String>> {
+    match node.kind() {
+        "identifier" => {
+            // Terminal: should be the parameter (e.g., `$`)
+            let name = node.utf8_text(source_bytes).ok()?;
+            if name == param_name { Some(Vec::new()) } else { None }
+        }
+        "member_expression" => {
+            let object = node.child_by_field_name("object")?;
+            let property = node.child_by_field_name("property")?;
+            let prop_text = property.utf8_text(source_bytes).ok()?.to_string();
+            let mut parts = extract_selector_key_parts(object, param_name, source_bytes)?;
+            parts.push(prop_text);
+            Some(parts)
+        }
+        "subscript_expression" => {
+            let object = node.child_by_field_name("object")?;
+            let index = node.child_by_field_name("index")?;
+            let index_text = match index.kind() {
+                "number" => index.utf8_text(source_bytes).ok()?.to_string(),
+                "string" => {
+                    // Extract the fragment inside quotes
+                    index.named_child(0)?.utf8_text(source_bytes).ok()?.to_string()
+                }
+                _ => return None,
+            };
+            let mut parts = extract_selector_key_parts(object, param_name, source_bytes)?;
+            parts.push(index_text);
+            Some(parts)
+        }
+        _ => None,
+    }
+}
+
+/// Extracts a translation key from a selector arrow function node.
+///
+/// Parses `$ => $.a.b.c` into the key `"a.b.c"` using the given key separator.
+fn extract_selector_key(
+    arrow_fn: Node<'_>,
+    source_bytes: &[u8],
+    key_separator: &str,
+) -> Option<String> {
+    let param_name = extract_arrow_param_name(arrow_fn, source_bytes)?;
+    let body = arrow_fn.child_by_field_name("body")?;
+    let parts = extract_selector_key_parts(body, &param_name, source_bytes)?;
+    Some(parts.join(key_separator))
 }
 
 /// Extracts string arguments from an arguments node
@@ -421,6 +523,7 @@ fn parse_call_trans_fn_captures<'a>(
     capture_node: Node<'a>,
     source_bytes: &[u8],
     cap_names: &[&str],
+    key_separator: &str,
 ) -> Result<CallTransFnDetail<'a>, AnalyzerError> {
     let mut trans_fn_name: Option<String> = None;
     let mut key: Option<String> = None;
@@ -428,6 +531,7 @@ fn parse_call_trans_fn_captures<'a>(
     let mut key_arg_node: Option<Node<'a>> = None;
     let mut trans_args_node: Option<Node<'a>> = None;
     let mut explicit_namespace: Option<String> = None;
+    let mut selector_fn_node: Option<Node<'a>> = None;
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(query, capture_node, source_bytes);
@@ -461,9 +565,26 @@ fn parse_call_trans_fn_captures<'a>(
                     // The ns value from t("key", { ns: "common" })
                     explicit_namespace = extract_node_text(capture.node, source_bytes);
                 }
+                CaptureName::SelectorFn => {
+                    selector_fn_node = Some(capture.node);
+                }
                 _ => {}
             }
         }
+    }
+
+    // Handle Selector API: t($ => $.a.b.c)
+    if let Some(selector_node) = selector_fn_node {
+        let selector_key = extract_selector_key(selector_node, source_bytes, key_separator)
+            .ok_or(AnalyzerError::ParseFailed)?;
+
+        return Ok(CallTransFnDetail {
+            trans_fn_name: trans_fn_name.unwrap_or_else(|| "t".to_string()),
+            key: selector_key,
+            key_node: selector_node,
+            arg_key_node: selector_node,
+            explicit_namespace,
+        });
     }
 
     // Determine the argument node: use string argument if available, otherwise check for empty args
@@ -1722,5 +1843,211 @@ function Component() {
         )
         .unwrap();
         assert_that!(calls, is_empty());
+    }
+
+    // ===== Selector API tests =====
+
+    #[rstest]
+    fn test_selector_api_basic(queries: Vec<Query>, js_lang: Language) {
+        let code = r"
+            const { t } = useTranslation();
+            const message = t($ => $.my.nested.key);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("my.nested.key")),
+                field!(TransFnCall.arg_key, eq("my.nested.key"))
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_selector_api_with_parens(queries: Vec<Query>, js_lang: Language) {
+        let code = r"
+            const { t } = useTranslation();
+            const message = t(($) => $.my.key);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("my.key"))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_single_key(queries: Vec<Query>, js_lang: Language) {
+        let code = r"
+            const { t } = useTranslation();
+            const message = t($ => $.hello);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_with_namespace(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation("common");
+            const message = t($ => $.greeting);
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("greeting")),
+                field!(TransFnCall.namespace, some(eq("common")))
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_selector_api_with_explicit_namespace(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation("common");
+            const message = t($ => $.hello, { ns: "errors" });
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("hello")),
+                field!(TransFnCall.namespace, some(eq("errors")))
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_selector_api_with_key_prefix(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation("translation", { keyPrefix: "user.settings" });
+            const message = t($ => $.title);
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("user.settings.title")),
+                field!(TransFnCall.arg_key, eq("title"))
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_selector_api_with_interpolation(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation();
+            const message = t($ => $.greeting, { name: "World" });
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("greeting"))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_subscript_expression(queries: Vec<Query>, js_lang: Language) {
+        let code = r"
+            const { t } = useTranslation();
+            const message = t($ => $[0][1][2]);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("0.1.2"))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_mixed_with_string(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const { t } = useTranslation();
+            const msg1 = t("string.key");
+            const msg2 = t($ => $.selector.key);
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![
+                field!(TransFnCall.key, eq("string.key")),
+                field!(TransFnCall.key, eq("selector.key"))
+            ]
+        );
+    }
+
+    #[rstest]
+    fn test_selector_api_global_t(queries: Vec<Query>, js_lang: Language) {
+        let code = r"
+            const message = i18next.t($ => $.global.key);
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("global.key"))]);
+    }
+
+    #[rstest]
+    fn test_selector_api_get_fixed_t(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = i18n.getFixedT(null, "common", "buttons");
+            const message = t($ => $.save);
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(
+            calls,
+            elements_are![all![
+                field!(TransFnCall.key, eq("buttons.save")),
+                field!(TransFnCall.arg_key, eq("save"))
+            ]]
+        );
+    }
+
+    #[rstest]
+    fn test_selector_api_trans_component(tsx_queries: Vec<Query>, tsx_lang: Language) {
+        let code = r"
+            const { t } = useTranslation();
+            return <Trans i18nKey={($) => $.foo.bar} />;
+        ";
+
+        let calls =
+            analyze_trans_fn_calls(code, &tsx_lang, ProgrammingLanguage::Tsx, &tsx_queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("foo.bar"))]);
     }
 }

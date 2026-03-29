@@ -42,10 +42,35 @@
     ) @i18n.trans_args
 ) @i18n.call_trans_fn
 
+;; Selector API: t($ => $.a.b.c)
+(call_expression
+  function: [
+    (identifier) @i18n.call_trans_fn_name
+    (member_expression) @i18n.call_trans_fn_name
+  ]
+  arguments: (arguments
+    (arrow_function) @i18n.selector_fn
+    (_)*
+  ) @i18n.trans_args
+) @i18n.call_trans_fn
+
 ;; Capture explicit namespace: t("key", { ns: "namespace" })
 (call_expression
   arguments: (arguments
     (string)
+    (object
+      (pair
+        key: (property_identifier) @_ns_key (#eq? @_ns_key "ns")
+        value: (string (string_fragment) @i18n.explicit_namespace)
+      )
+    )
+  )
+)
+
+;; Capture explicit namespace (Selector API): t($ => $.key, { ns: "namespace" })
+(call_expression
+  arguments: (arguments
+    (arrow_function)
     (object
       (pair
         key: (property_identifier) @_ns_key (#eq? @_ns_key "ns")
