@@ -261,7 +261,7 @@ impl Default for I18nSettings {
     fn default() -> Self {
         Self {
             translation_files: TranslationFilesConfig::default(),
-            include_patterns: vec!["**/*.{js,jsx,ts,tsx,svelte}".to_string()],
+            include_patterns: vec!["**/*.{js,jsx,ts,tsx,svelte,vue}".to_string()],
             exclude_patterns: vec!["node_modules/**".to_string()],
             key_separator: ".".to_string(),
             namespace_separator: None,
@@ -428,7 +428,10 @@ mod tests {
         let settings: I18nSettings = serde_json::from_str(json).unwrap();
 
         assert_that!(settings.key_separator, eq("."));
-        assert_that!(settings.include_patterns, elements_are![eq("**/*.{js,jsx,ts,tsx,svelte}")]);
+        assert_that!(
+            settings.include_patterns,
+            elements_are![eq("**/*.{js,jsx,ts,tsx,svelte,vue}")]
+        );
         assert_that!(settings.exclude_patterns, elements_are![eq("node_modules/**")]);
         assert_that!(
             settings.translation_files.include_patterns,

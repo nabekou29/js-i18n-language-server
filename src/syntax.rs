@@ -1,6 +1,7 @@
 pub mod analyzer;
 pub mod position_map;
 pub mod svelte;
+pub mod vue;
 
 use std::borrow::Cow;
 
@@ -25,6 +26,13 @@ pub(crate) fn preprocess(text: &str, language: ProgrammingLanguage) -> SourcePre
     match language {
         ProgrammingLanguage::Svelte => {
             let extraction = svelte::extract(text);
+            SourcePreprocessed {
+                source: Cow::Owned(extraction.virtual_doc),
+                position_map: Some(extraction.position_map),
+            }
+        }
+        ProgrammingLanguage::Vue => {
+            let extraction = vue::extract(text);
             SourcePreprocessed {
                 source: Cow::Owned(extraction.virtual_doc),
                 position_map: Some(extraction.position_map),
@@ -166,6 +174,66 @@ mod tests {
         // The key 'key' should be remapped to original line 1 (inside <script>)
         let range = usages[0].range(&db);
         assert_that!(range.start.line, eq(1));
+    }
+
+    #[rstest]
+    fn analyze_source_vue_script_block() {
+        let db = I18nDatabaseImpl::default();
+        let source = "<script setup>\nimport { useI18n } from 'vue-i18n'\nconst { t } = useI18n()\nt('greeting')\n</script>";
+        let file = SourceFile::new(
+            &db,
+            "test.vue".to_string(),
+            source.to_string(),
+            ProgrammingLanguage::Vue,
+        );
+
+        let usages = analyze_source(&db, file, ".".to_string());
+        assert_that!(usages.len(), eq(1));
+        assert_that!(usages[0].key(&db).text(&db), eq("greeting"));
+    }
+
+    #[rstest]
+    fn analyze_source_vue_template_expression() {
+        let db = I18nDatabaseImpl::default();
+        let source = "<template><p>{{ $t('template.key') }}</p></template>";
+        let file = SourceFile::new(
+            &db,
+            "test.vue".to_string(),
+            source.to_string(),
+            ProgrammingLanguage::Vue,
+        );
+
+        let usages = analyze_source(&db, file, ".".to_string());
+        assert_that!(usages.len(), eq(1));
+        assert_that!(usages[0].key(&db).text(&db), eq("template.key"));
+    }
+
+    #[rstest]
+    fn analyze_source_vue_remaps_positions() {
+        let db = I18nDatabaseImpl::default();
+        let source = "<script>\n  $t('key')\n</script>";
+        let file = SourceFile::new(
+            &db,
+            "test.vue".to_string(),
+            source.to_string(),
+            ProgrammingLanguage::Vue,
+        );
+
+        let usages = analyze_source(&db, file, ".".to_string());
+        assert_that!(usages.len(), eq(1));
+
+        let range = usages[0].range(&db);
+        assert_that!(range.start.line, eq(1));
+    }
+
+    #[rstest]
+    fn preprocess_vue_extracts_virtual_doc() {
+        let text = "<script>\n  $t('key')\n</script>";
+        let result = preprocess(text, ProgrammingLanguage::Vue);
+
+        assert!(result.position_map.is_some());
+        assert!(matches!(result.source, Cow::Owned(_)));
+        assert!(result.source.contains("$t('key')"));
     }
 
     #[rstest]

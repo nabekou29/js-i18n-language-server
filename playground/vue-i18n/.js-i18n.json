@@ -1,0 +1,6 @@
+{
+  "includePatterns": ["**/*.{js,ts,vue}"],
+  "translationFiles": {
+    "includePatterns": ["locales/**/*.json"]
+  }
+}
