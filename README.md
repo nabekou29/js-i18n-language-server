@@ -7,7 +7,7 @@
 
 Language Server for JavaScript/TypeScript i18n libraries.
 
-Provides IDE features (completion, hover, diagnostics, etc.) for translation keys in i18next, react-i18next, next-intl, and svelte-i18n projects.
+Provides IDE features (completion, hover, diagnostics, etc.) for translation keys in your i18n projects.
 
 ## Editor Extensions
 
@@ -39,9 +39,9 @@ Create `.js-i18n.json` in your project root:
 ```json
 {
   "translationFiles": {
-    "filePattern": "**/locales/**/*.json"
+    "includePatterns": ["**/locales/**/*.json"]
   },
-  "includePatterns": ["src/**/*.{ts,tsx}"],
+  "includePatterns": ["src/**/*.{ts,tsx,svelte,vue}"],
   "excludePatterns": ["node_modules/**"]
 }
 ```
@@ -50,7 +50,13 @@ Create `.js-i18n.json` in your project root:
 
 - [Configuration Reference](./docs/configuration.md) - All configuration options
 - [LSP Features](./docs/lsp-features.md) - Standard methods and custom commands
-- [Supported Syntax](./docs/supported-syntax.md) - Recognized code patterns
+
+### Supported Frameworks
+
+- [i18next / react-i18next](./docs/frameworks/i18next.md)
+- [next-intl](./docs/frameworks/next-intl.md)
+- [svelte-i18n](./docs/frameworks/svelte-i18n.md)
+- [vue-i18n](./docs/frameworks/vue-i18n.md)
 
 ## License
 

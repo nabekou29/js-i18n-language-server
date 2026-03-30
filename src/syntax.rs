@@ -238,7 +238,7 @@ mod tests {
         );
 
         let usages = analyze_source(&db, file, ".".to_string());
-        let keys: Vec<String> = usages.iter().map(|u| u.key(&db).text(&db).to_string()).collect();
+        let keys: Vec<String> = usages.iter().map(|u| u.key(&db).text(&db).clone()).collect();
         assert_that!(keys, contains_each![eq("greeting"), eq("optional"), eq("message")]);
     }
 
