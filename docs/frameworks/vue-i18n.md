@@ -18,6 +18,8 @@ Support for [vue-i18n](https://vue-i18n.intlify.dev/) (v9+ / Vue 3). Also covers
 | `$d()` / `$n()` | ➖ | Date/number formatting (not translation keys) |
 | Plural (pipe-separated) | ✅ | Embedded in translation values |
 
+> ✅ Supported | 🔜 Planned | ➖ Not applicable | ❌ Not supported
+
 ## Supported Patterns
 
 ### Composition API

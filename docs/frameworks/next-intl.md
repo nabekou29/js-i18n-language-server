@@ -16,6 +16,8 @@ Support for [next-intl](https://next-intl.dev/).
 | `getTranslations()` | ❌ | Server Components async API |
 | Plural (ICU) | ✅ | Embedded in translation values |
 
+> ✅ Supported | 🔜 Planned | ➖ Not applicable | ❌ Not supported
+
 ## Supported Patterns
 
 ### Translation Function Calls

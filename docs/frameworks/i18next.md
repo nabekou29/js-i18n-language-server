@@ -17,6 +17,8 @@ Support for [i18next](https://www.i18next.com/) and [react-i18next](https://reac
 | `<Translation>` component | ✅ | With `keyPrefix` prop |
 | Plural (suffix-based) | ✅ | `_zero`, `_one`, `_two`, `_few`, `_many`, `_other` |
 
+> ✅ Supported | 🔜 Planned | ➖ Not applicable | ❌ Not supported
+
 ## Supported Patterns
 
 ### Translation Function Calls

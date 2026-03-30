@@ -15,6 +15,8 @@ Support for [svelte-i18n](https://github.com/kaisermann/svelte-i18n).
 | Svelte template expressions | ✅ | `{$_("key")}` in markup |
 | Plural (ICU) | ✅ | Embedded in translation values |
 
+> ✅ Supported | 🔜 Planned | ➖ Not applicable | ❌ Not supported
+
 ## Supported Patterns
 
 ### Store Functions
