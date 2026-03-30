@@ -13,7 +13,7 @@ Configuration can be provided via:
     "includePatterns": ["**/{locales,messages}/**/*.json"],
     "excludePatterns": []
   },
-  "includePatterns": ["**/*.{js,jsx,ts,tsx,svelte}"],
+  "includePatterns": ["**/*.{js,jsx,ts,tsx,svelte,vue}"],
   "excludePatterns": ["node_modules/**"],
   "keySeparator": ".",
   "namespaceSeparator": null,
@@ -35,11 +35,7 @@ Configuration can be provided via:
   "indexing": {
     "numThreads": null
   },
-  "frameworks": {
-    "i18next": {
-      "preferSelector": false
-    }
-  }
+  "frameworks": {}
 }
 ```
 
@@ -63,7 +59,7 @@ Glob patterns to exclude from translation file detection.
 
 ## includePatterns
 
-`string[]` (default: `["**/*.{js,jsx,ts,tsx}"]`)
+`string[]` (default: `["**/*.{js,jsx,ts,tsx,svelte,vue}"]`)
 
 Glob patterns for source files to analyze.
 
@@ -244,10 +240,12 @@ Examples:
 
 Environment variable with the same syntax as `--log-level`. Used when `--log-level` is not specified.
 
+Priority: `--log-level` > `JS_I18N_LOG` > `RUST_LOG` > default.
+
 ### JS_I18N_LOG_FILE
 
 Environment variable to redirect logs to a file instead of stderr. Takes priority over `--log-file`.
 
 ### Default
 
-`js_i18n_language_server=warn` (errors and warnings only)
+`js_i18n_language_server=info`
