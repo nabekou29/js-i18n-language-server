@@ -28,14 +28,14 @@ impl I18nLibrary for NextIntl {
         func_name: &str,
         string_args: &[Option<String>],
     ) -> Option<ParsedTransFnArgs> {
-        if func_name != "useTranslations" {
-            return None;
+        match func_name {
+            // useTranslations(namespace?) / getTranslations(namespace?)
+            // In next-intl, the namespace parameter acts as a key prefix
+            "useTranslations" | "getTranslations" => Some(ParsedTransFnArgs {
+                namespace: None,
+                key_prefix: string_args.first().and_then(Clone::clone),
+            }),
+            _ => None,
         }
-        // useTranslations(namespace?)
-        // In next-intl, the namespace parameter acts as a key prefix
-        Some(ParsedTransFnArgs {
-            namespace: None,
-            key_prefix: string_args.first().and_then(Clone::clone),
-        })
     }
 }
