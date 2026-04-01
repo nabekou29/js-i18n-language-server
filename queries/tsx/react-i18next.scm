@@ -80,7 +80,7 @@
   )
 )
 
-;; Translation コンポーネント
+;; Translation component
 (jsx_element
   open_tag: (jsx_opening_element
     name: (identifier) @translation (#eq? @translation "Translation")
@@ -100,7 +100,7 @@
   )
 ) @i18n.get_trans_fn
 
-;; Trans コンポーネント (self-closing)
+;; Trans component (self-closing)
 (jsx_self_closing_element
   name: (identifier) @trans (#eq? @trans "Trans")
   attribute: (jsx_attribute
@@ -116,7 +116,7 @@
   )?
 ) @i18n.call_trans_fn
 
-;; Trans コンポーネント (self-closing, Selector API)
+;; Trans component (self-closing, Selector API)
 (jsx_self_closing_element
   name: (identifier) @trans (#eq? @trans "Trans")
   attribute: (jsx_attribute
@@ -131,7 +131,7 @@
   )?
 ) @i18n.call_trans_fn
 
-;; Trans コンポーネント (opening element)
+;; Trans component (opening element)
 (jsx_opening_element
   name: (identifier) @trans (#eq? @trans "Trans")
   attribute: (jsx_attribute
@@ -147,7 +147,7 @@
   )?
 ) @i18n.call_trans_fn
 
-;; Trans コンポーネント (opening element, Selector API)
+;; Trans component (opening element, Selector API)
 (jsx_opening_element
   name: (identifier) @trans (#eq? @trans "Trans")
   attribute: (jsx_attribute

@@ -13,7 +13,7 @@ Support for [next-intl](https://next-intl.dev/).
 | `useTranslations()` | ✅ | With optional namespace |
 | Namespace | ✅ | Via `useTranslations()` argument (acts as key prefix) |
 | `t.has()` | ❌ | Key existence check |
-| `getTranslations()` | ❌ | Server Components async API |
+| `getTranslations()` | ✅ | Server Components async API |
 | Plural (ICU) | ✅ | Embedded in translation values |
 
 > ✅ Supported | 🔜 Planned | ➖ Not applicable | ❌ Not supported
@@ -48,19 +48,30 @@ t.raw("htmlContent")
 
 ### Acquiring Translation Functions
 
+#### Client Components
+
 ```tsx
 const t = useTranslations()
 const t = useTranslations("namespace")
 const t = useTranslations("home.hero") // Nested namespace
 ```
 
-The `useTranslations()` argument acts as a **key prefix** — all keys are automatically prepended:
+#### Server Components
+
+```tsx
+const t = await getTranslations()
+const t = await getTranslations("namespace")
+const t = await getTranslations({ namespace: "common" })
+const t = await getTranslations({ locale: "en", namespace: "common" })
+```
+
+The argument (or `namespace` property) acts as a **key prefix** — all keys are automatically prepended:
 
 ```tsx
 const t = useTranslations("common")
 t("hello")  // -> "common.hello"
 
-const t = useTranslations("home.hero")
+const t = await getTranslations("home.hero")
 t("heading")  // -> "home.hero.heading"
 ```
 

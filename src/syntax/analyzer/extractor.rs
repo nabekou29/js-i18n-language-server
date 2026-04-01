@@ -1292,6 +1292,79 @@ mod tests {
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
     }
 
+    #[rstest]
+    fn test_next_intl_get_translations_string_arg(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = await getTranslations("common");
+            const message = t("hello");
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
+    }
+
+    #[rstest]
+    fn test_next_intl_get_translations_without_arg(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = await getTranslations();
+            const message = t("hello");
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
+    }
+
+    #[rstest]
+    fn test_next_intl_get_translations_object_arg(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = await getTranslations({ locale: "en", namespace: "common" });
+            const message = t("hello");
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
+    }
+
+    #[rstest]
+    fn test_next_intl_get_translations_object_arg_namespace_only(
+        queries: Vec<Query>,
+        js_lang: Language,
+    ) {
+        let code = r#"
+            const t = await getTranslations({ namespace: "common" });
+            const message = t("hello");
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
+    }
+
+    #[rstest]
+    fn test_next_intl_get_translations_t_rich(queries: Vec<Query>, js_lang: Language) {
+        let code = r#"
+            const t = await getTranslations("common");
+            const message = t.rich("hello", { strong: (chunks) => chunks });
+        "#;
+
+        let calls =
+            analyze_trans_fn_calls(code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq("common.hello"))]);
+    }
+
     // ===== react-i18next Trans/Translation component tests =====
 
     #[rstest]
