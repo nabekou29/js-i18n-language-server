@@ -1,5 +1,5 @@
-;; useTranslations 関数呼び出し
-;; 引数: (namespace?)
+;; useTranslations hook
+;; Args: (namespace?)
 (variable_declarator
   name: (identifier) @i18n.get_trans_fn_name
   value:
@@ -9,8 +9,8 @@
     )
 ) @i18n.get_trans_fn
 
-;; getTranslations 関数呼び出し (Server Components)
-;; 引数: (namespace?) または ({ namespace?: string, locale?: string })
+;; getTranslations (Server Components)
+;; Args: (namespace?) or ({ namespace?: string, locale?: string })
 (variable_declarator
   name: (identifier) @i18n.get_trans_fn_name
   value:
@@ -22,9 +22,9 @@
     )
 ) @i18n.get_trans_fn
 
-;; getTranslations オブジェクト引数の namespace 抽出
+;; getTranslations with object argument: namespace extraction
 ;; await getTranslations({ namespace: "common" })
-;; next-intl の namespace は key prefix として機能する
+;; In next-intl, namespace acts as a key prefix
 (variable_declarator
   name: (identifier) @i18n.get_trans_fn_name
   value:

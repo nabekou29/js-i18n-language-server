@@ -1,5 +1,5 @@
-;; getFixedT 関数呼び出し
-;; 引数: (lang, ns?, keyPrefix?)
+;; getFixedT call
+;; Args: (lang, ns?, keyPrefix?)
 (variable_declarator
   name: (identifier) @i18n.get_trans_fn_name
   value:
