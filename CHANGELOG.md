@@ -1,4 +1,22 @@
 
+## [0.6.0] - 2026-04-04
+
+### Documentation
+
+- Restructure supported syntax into per-framework pages (#14)
+
+### Features
+
+- Add svelte-i18n support (#6)
+- Support i18next Selector API (`t($ => $.key)`) (#12)
+- Add vue-i18n support (#13)
+- Support next-intl getTranslations() server API (#15)
+
+### Refactor
+
+- Unify analysis pipeline, introduce I18nLibrary trait, and framework-configurable plurals (#11)
+
+
 ## [0.5.0] - 2026-02-14
 
 ### Bug Fixes
