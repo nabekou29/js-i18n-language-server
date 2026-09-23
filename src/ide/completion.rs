@@ -57,6 +57,57 @@ pub struct CompletionOptions<'a> {
     pub prefer_selector: bool,
 }
 
+/// Returns whether `segment` can be written with dot notation (`$.segment`).
+///
+/// Limited to ASCII identifiers; anything else falls back to bracket notation, which is valid
+/// for every string.
+fn is_dot_accessible(segment: &str) -> bool {
+    let mut chars = segment.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+}
+
+/// Returns whether `segment` is a canonical array index that `[n]` round-trips exactly.
+///
+/// `01` is excluded because `[01]` would denote the index `1`, not the key `01`.
+fn is_array_index(segment: &str) -> bool {
+    !segment.is_empty()
+        && segment.bytes().all(|b| b.is_ascii_digit())
+        && (segment == "0" || !segment.starts_with('0'))
+}
+
+/// Converts a translation key into the member access path of a selector body
+/// (e.g., `foo.hoge-fuga.msg` → `.foo['hoge-fuga'].msg`).
+fn selector_member_path(key: &str, key_separator: &str) -> String {
+    if key.is_empty() {
+        return String::new();
+    }
+    let mut path = String::new();
+    for segment in key.split(key_separator) {
+        if is_dot_accessible(segment) {
+            path.push('.');
+            path.push_str(segment);
+        } else if is_array_index(segment) {
+            path.push('[');
+            path.push_str(segment);
+            path.push(']');
+        } else {
+            path.push_str("['");
+            for c in segment.chars() {
+                match c {
+                    '\\' => path.push_str("\\\\"),
+                    '\'' => path.push_str("\\'"),
+                    '\n' => path.push_str("\\n"),
+                    '\r' => path.push_str("\\r"),
+                    _ => path.push(c),
+                }
+            }
+            path.push_str("']");
+        }
+    }
+    path
+}
+
 /// Creates the text edit for a completion item based on the quote context.
 fn build_text_edit(
     insert_key: &str,
@@ -67,12 +118,7 @@ fn build_text_edit(
     match quote_context {
         QuoteContext::NoQuotes { position } => {
             let new_text = if prefer_selector {
-                let member_key = if key_separator == "." {
-                    insert_key.to_string()
-                } else {
-                    insert_key.split(key_separator).collect::<Vec<_>>().join(".")
-                };
-                format!("($) => $.{member_key}")
+                format!("($) => ${}", selector_member_path(insert_key, key_separator))
             } else {
                 format!("\"{insert_key}\"")
             };
@@ -85,19 +131,12 @@ fn build_text_edit(
             })
         }
         QuoteContext::Selector { body_start, body_end, param_name } => {
-            let member_key = if key_separator == "." {
-                insert_key.to_string()
-            } else {
-                insert_key.split(key_separator).collect::<Vec<_>>().join(".")
-            };
-            let new_text = if member_key.is_empty() {
-                param_name.clone()
-            } else {
-                format!("{param_name}.{member_key}")
-            };
             CompletionTextEdit::Edit(TextEdit {
                 range: Range::new(*body_start, *body_end),
-                new_text,
+                new_text: format!(
+                    "{param_name}{}",
+                    selector_member_path(insert_key, key_separator)
+                ),
             })
         }
     }
@@ -203,6 +242,53 @@ pub fn generate_completions(
     completion_items
 }
 
+/// Parses the member access path of a selector body (e.g., `.foo['hoge-fuga'].ms`) into
+/// key segments (`["foo", "hoge-fuga", "ms"]`).
+///
+/// The path may be cut off anywhere (it ends at the cursor), so an unterminated bracket
+/// yields the text typed so far, and a trailing `.` or `[` yields an empty last segment.
+fn parse_selector_member_path(path: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut chars = path.chars().peekable();
+    while let Some(accessor) = chars.next() {
+        let mut segment = String::new();
+        match accessor {
+            '.' => {
+                while let Some(c) = chars.next_if(|&c| c != '.' && c != '[') {
+                    segment.push(c);
+                }
+            }
+            '[' => {
+                while chars.next_if(|c| c.is_whitespace()).is_some() {}
+                if let Some(quote) = chars.next_if(|&c| c == '\'' || c == '"') {
+                    while let Some(c) = chars.next() {
+                        match c {
+                            '\\' => match chars.next() {
+                                Some('n') => segment.push('\n'),
+                                Some('r') => segment.push('\r'),
+                                Some('t') => segment.push('\t'),
+                                Some(escaped) => segment.push(escaped),
+                                None => {}
+                            },
+                            c if c == quote => break,
+                            c => segment.push(c),
+                        }
+                    }
+                } else {
+                    while let Some(c) = chars.next_if(|&c| c != ']') {
+                        segment.push(c);
+                    }
+                    segment = segment.trim_end().to_string();
+                }
+                while chars.next_if(|&c| c != '.' && c != '[').is_some() {}
+            }
+            _ => break,
+        }
+        segments.push(segment);
+    }
+    segments
+}
+
 /// Extracts selector completion context from selector argument text.
 ///
 /// Handles both full arrow function (`$ => $.common.hello`) and body-only (`$.common.hello`).
@@ -221,19 +307,12 @@ fn extract_selector_context(
     let param_end = body_text.find(['.', '[']).unwrap_or(body_text.len());
     let param_name = &body_text[..param_end];
 
-    let key_text_offset =
-        if body_text.as_bytes().get(param_end) == Some(&b'.') { param_end + 1 } else { param_end };
+    let path_start_char = body_start_char + param_end;
 
-    let key_start_char = body_start_char + key_text_offset;
-
-    let partial_key = if cursor_char >= key_start_char && cursor_char <= arg_end_char {
-        let raw = &arg_text[(arg_text.len() - (arg_end_char - key_start_char))
-            ..(arg_text.len() - (arg_end_char - cursor_char))];
-        if key_separator == "." {
-            raw.to_string()
-        } else {
-            raw.split('.').collect::<Vec<_>>().join(key_separator)
-        }
+    let partial_key = if cursor_char >= path_start_char && cursor_char <= arg_end_char {
+        body_text
+            .get(param_end..param_end + (cursor_char - path_start_char))
+            .map_or_else(String::new, |path| parse_selector_member_path(path).join(key_separator))
     } else {
         String::new()
     };
@@ -1539,5 +1618,151 @@ const msg = t($ => $.common.hello);
         assert_that!(result.is_some(), eq(true));
         let context = result.unwrap();
         assert_that!(context.partial_key, eq("common_"));
+    }
+
+    // ===== Selector API: bracket notation for non-identifier segments =====
+
+    fn selector_edit_text(
+        keys: &[&str],
+        key_separator: &str,
+        key_prefix: Option<&str>,
+    ) -> Vec<String> {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "/test/en.json".to_string(),
+            keys.iter().map(|k| ((*k).to_string(), "v".to_string())).collect(),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let quote_context = QuoteContext::Selector {
+            body_start: Position::new(0, 0),
+            body_end: Position::new(0, 0),
+            param_name: "$".to_string(),
+        };
+        let items = generate_completions(
+            &db,
+            &[en_translation],
+            &CompletionOptions {
+                partial_key: None,
+                quote_context: &quote_context,
+                key_prefix,
+                effective_language: None,
+                key_separator,
+                prefer_selector: false,
+            },
+        );
+        items
+            .into_iter()
+            .map(|item| match item.text_edit {
+                Some(CompletionTextEdit::Edit(edit)) => edit.new_text,
+                _ => panic!("Expected TextEdit"),
+            })
+            .collect()
+    }
+
+    #[rstest]
+    #[case::hyphen("foo.hoge-fuga.msg", ".", "$.foo['hoge-fuga'].msg")]
+    #[case::leading_digit("auth.2fa", ".", "$.auth['2fa']")]
+    #[case::space("hello world", ".", "$['hello world']")]
+    #[case::dot_in_segment_with_other_separator("ns_key.with.dot", "_", "$.ns['key.with.dot']")]
+    #[case::empty_segment("foo..bar", ".", "$.foo[''].bar")]
+    #[case::array_index("items.0.label", ".", "$.items[0].label")]
+    #[case::leading_zero_number("items.01", ".", "$.items['01']")]
+    #[case::quote_and_backslash(r"it's.a\b", ".", r"$['it\'s']['a\\b']")]
+    #[case::identifier_chars("_private.$dollar.camelCase1", ".", "$._private.$dollar.camelCase1")]
+    #[case::reserved_word("default.delete", ".", "$.default.delete")]
+    #[case::non_ascii("挨拶.こんにちは", ".", "$['挨拶']['こんにちは']")]
+    fn generate_completions_selector_bracket_notation(
+        #[case] key: &str,
+        #[case] key_separator: &str,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(selector_edit_text(&[key], key_separator, None), vec![expected.to_string()]);
+    }
+
+    #[rstest]
+    fn generate_completions_selector_bracket_notation_with_key_prefix() {
+        assert_eq!(
+            selector_edit_text(&["common.hoge-fuga"], ".", Some("common")),
+            vec!["$['hoge-fuga']".to_string()]
+        );
+    }
+
+    #[rstest]
+    fn generate_completions_no_quotes_prefer_selector_bracket_notation() {
+        let db = I18nDatabaseImpl::default();
+        let en_translation = Translation::new(
+            &db,
+            "en".to_string(),
+            None,
+            "/test/en.json".to_string(),
+            HashMap::from([("foo.hoge-fuga.msg".to_string(), "Hello".to_string())]),
+            "{}".to_string(),
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let quote_context = QuoteContext::NoQuotes { position: Position::new(1, 5) };
+
+        let items = generate_completions(
+            &db,
+            &[en_translation],
+            &CompletionOptions {
+                partial_key: None,
+                quote_context: &quote_context,
+                key_prefix: None,
+                effective_language: None,
+                key_separator: ".",
+                prefer_selector: true,
+            },
+        );
+
+        assert_eq!(items.len(), 1);
+        if let Some(CompletionTextEdit::Edit(edit)) = &items[0].text_edit {
+            assert_eq!(edit.new_text, "($) => $.foo['hoge-fuga'].msg");
+        } else {
+            panic!("Expected TextEdit");
+        }
+    }
+
+    /// Returns the partial key computed at the position of `|` in `line`.
+    fn selector_partial_key(line: &str, key_separator: &str) -> Option<String> {
+        let cursor = line.find('|').unwrap();
+        let text = format!("const {{ t }} = useTranslation();\n{}\n", line.replacen('|', "", 1));
+        #[allow(clippy::cast_possible_truncation)]
+        let context = extract_completion_context_tree_sitter(
+            &text,
+            ProgrammingLanguage::JavaScript,
+            1,
+            cursor as u32,
+            key_separator,
+        )?;
+        assert_that!(matches!(context.quote_context, QuoteContext::Selector { .. }), eq(true));
+        Some(context.partial_key)
+    }
+
+    #[rstest]
+    #[case::inside_closed_bracket("t($ => $.foo['ho|']);", ".", "foo.ho")]
+    #[case::double_quotes(r#"t($ => $.foo["ho|"]);"#, ".", "foo.ho")]
+    #[case::after_bracket_segment("t($ => $.foo['hoge-fuga'].|);", ".", "foo.hoge-fuga.")]
+    #[case::after_bracket_segment_partial(
+        "t($ => $.foo['hoge-fuga'].ms|g);",
+        ".",
+        "foo.hoge-fuga.ms"
+    )]
+    #[case::after_open_bracket("t($ => $.foo[|);", ".", "foo.")]
+    #[case::numeric_index("t($ => $.items[0].|);", ".", "items.0.")]
+    #[case::first_segment_bracket("t($ => $['hoge-fuga'].|);", ".", "hoge-fuga.")]
+    #[case::non_dot_separator_keeps_dots_in_brackets("t($ => $.ns['a.b'].|);", "_", "ns_a.b_")]
+    #[case::escaped_quote(r"t($ => $['it\'s'].|);", ".", "it's.")]
+    fn extract_completion_context_selector_bracket_notation(
+        #[case] line: &str,
+        #[case] key_separator: &str,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(selector_partial_key(line, key_separator).as_deref(), Some(expected));
     }
 }
