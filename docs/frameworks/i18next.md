@@ -50,6 +50,7 @@ t(($) => $.key)
 t(($) => $.nested.key.path)
 t(($) => $.key, { count: 1 })
 t($ => $.key) // Without parens
+t(($) => $.foo["hoge-fuga"].msg) // Bracket notation for non-identifier segments
 
 // With namespace override
 t(($) => $.key, { ns: "common" })
