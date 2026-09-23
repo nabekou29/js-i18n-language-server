@@ -355,6 +355,30 @@ fn extract_arrow_param_name(arrow_fn: Node<'_>, source_bytes: &[u8]) -> Option<S
     None
 }
 
+/// Returns the value of a `string` node.
+///
+/// Single-character escapes (`\'`, `\\`, `\n`, ...) are resolved; longer ones such as
+/// `\u0041` are kept as written.
+fn string_literal_value(node: Node<'_>, source_bytes: &[u8]) -> Option<String> {
+    let mut value = String::new();
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        let text = child.utf8_text(source_bytes).ok()?;
+        if child.kind() == "escape_sequence" {
+            match text.strip_prefix('\\')? {
+                "n" => value.push('\n'),
+                "r" => value.push('\r'),
+                "t" => value.push('\t'),
+                escaped if escaped.chars().count() == 1 => value.push_str(escaped),
+                _ => value.push_str(text),
+            }
+        } else {
+            value.push_str(text);
+        }
+    }
+    Some(value)
+}
+
 /// Recursively extracts key segments from a selector expression body.
 ///
 /// Walks the `member_expression` / `subscript_expression` chain and collects property names.
@@ -383,10 +407,7 @@ fn extract_selector_key_parts(
             let index = node.child_by_field_name("index")?;
             let index_text = match index.kind() {
                 "number" => index.utf8_text(source_bytes).ok()?.to_string(),
-                "string" => {
-                    // Extract the fragment inside quotes
-                    index.named_child(0)?.utf8_text(source_bytes).ok()?.to_string()
-                }
+                "string" => string_literal_value(index, source_bytes)?,
                 _ => return None,
             };
             let mut parts = extract_selector_key_parts(object, param_name, source_bytes)?;
@@ -2206,6 +2227,27 @@ function Component() {
                 .unwrap();
 
         assert_that!(calls, elements_are![field!(TransFnCall.key, eq("hello"))]);
+    }
+
+    #[rstest]
+    #[case::hyphen("$.foo['hoge-fuga'].msg", "foo.hoge-fuga.msg")]
+    #[case::empty_string("$.foo[''].bar", "foo..bar")]
+    #[case::escaped_quote(r"$['it\'s']", "it's")]
+    #[case::escaped_backslash(r"$['a\\b']", r"a\b")]
+    #[case::double_quoted_escape(r#"$["say \"hi\""]"#, r#"say "hi""#)]
+    fn test_selector_api_subscript_string_literal(
+        queries: Vec<Query>,
+        js_lang: Language,
+        #[case] body: &str,
+        #[case] expected: &str,
+    ) {
+        let code = format!("const {{ t }} = useTranslation();\nconst msg = t($ => {body});\n");
+
+        let calls =
+            analyze_trans_fn_calls(&code, &js_lang, ProgrammingLanguage::JavaScript, &queries, ".")
+                .unwrap();
+
+        assert_that!(calls, elements_are![field!(TransFnCall.key, eq(expected))]);
     }
 
     #[rstest]
