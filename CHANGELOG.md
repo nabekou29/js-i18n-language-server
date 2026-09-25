@@ -1,4 +1,11 @@
 
+## [0.6.1] - 2026-09-25
+
+### Bug Fixes
+
+- Use bracket notation for non-identifier segments in Selector API completion (#18)
+
+
 ## [0.6.0] - 2026-04-04
 
 ### Documentation
